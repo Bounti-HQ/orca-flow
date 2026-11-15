@@ -490,9 +490,9 @@ export default function activate(orca: OrcaWorkerApi): void {
     refreshSoon()
     return result
   })
-  orca.panels.handle('sidebar.removeWorktree', async ({ workspaceId }) => {
+  orca.panels.handle('sidebar.removeWorktree', async ({ workspaceId, force }) => {
     const { rows } = await refresh()
-    const result = await removeWorktree(run, rows.find((r) => r.id === workspaceId))
+    const result = await removeWorktree(run, rows.find((r) => r.id === workspaceId), force === true)
     refreshSoon()
     return result
   })

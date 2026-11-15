@@ -420,3 +420,13 @@ test('focus moves at once from the workspace.changed event, by terminal or by na
   const coordinator = main.withFocus(snap, { branch: '', displayName: 'alpha', terminals: [] })
   assert.deepEqual([coordinator.rows.some((r) => r.active), coordinator.coordinators[0].active], [false, true])
 })
+
+test('remove anyway waives uncommitted files only, after the person confirmed', async () => {
+  const { removeWorktree } = await import('./cockpit.ts')
+  const calls: string[][] = []
+  const run = async (args: string[]) => { calls.push(args); return {} }
+  // A main checkout is refused whatever force says, before any command runs.
+  const main_ = main.fromPs([{ identity: { key: 'm' }, displayName: 'main', repo: 'shop', isMainWorktree: true, agents: [] }])[0]
+  assert.deepEqual(await removeWorktree(run, main_, true), { removed: false, reason: 'main checkout' })
+  assert.equal(calls.length, 0)
+})

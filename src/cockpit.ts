@@ -65,15 +65,18 @@ export function swapUsage(): CockpitStats['swap'] {
 }
 
 /** A worktree is offered for removal only when its checkout is clean and its PR merged on GitHub. */
-export async function checkRemovable(row: WorkspaceRow): Promise<{ ok: boolean; pr?: number; reason?: string }> {
+export async function checkRemovable(row: WorkspaceRow): Promise<{ ok: boolean; pr?: number; reason?: string; dirty?: string[] }> {
   if (row.main || !row.path || !row.branch) return { ok: false, reason: 'main checkout' }
   const status = await sh('git', ['status', '--porcelain'], row.path)
   if (!status.ok) return { ok: false, reason: 'not a git checkout' }
-  if (status.out.trim()) return { ok: false, reason: 'uncommitted changes' }
+  const dirty = status.out.split('\n').filter((l) => l.trim()).map((l) => l.slice(3).trim())
   // Squash merges never make the branch an ancestor of main, so ask GitHub instead of git.
   const pr = await sh('gh', ['pr', 'list', '--head', row.branch, '--state', 'merged', '--json', 'number', '--limit', '1'], row.path)
   const number = pr.ok ? (JSON.parse(pr.out || '[]')[0]?.number as number | undefined) : undefined
-  return number ? { ok: true, pr: number } : { ok: false, reason: 'PR not merged' }
+  if (!number) return { ok: false, reason: 'PR not merged' }
+  // Uncommitted files are the one thing the person may waive (Remove anyway).
+  if (dirty.length) return { ok: false, pr: number, reason: 'uncommitted changes', dirty }
+  return { ok: true, pr: number }
 }
 
 /** Merge checks are slow (network); remember them for ten minutes. */
@@ -131,16 +134,19 @@ export async function closeSessions(run: Run, panes: string[]): Promise<{ closed
 }
 
 /** Re-checks right before removing: the worktree may have changed since the cockpit opened. */
-export async function removeWorktree(run: Run, row: WorkspaceRow | undefined): Promise<{ removed: boolean; reason?: string }> {
+export async function removeWorktree(run: Run, row: WorkspaceRow | undefined, force = false): Promise<{ removed: boolean; reason?: string; dirty?: string[] }> {
   if (!row) return { removed: false, reason: 'workspace not found' }
   if (!row.agents.every(finished)) return { removed: false, reason: 'an agent is still active' }
   const check = await checkRemovable(row)
-  if (!check.ok) return { removed: false, reason: check.reason }
+  // `force` waives uncommitted files only, after the person confirmed losing them; a PR that is
+  // not merged, or anything else, still keeps the worktree.
+  const waived = force && check.dirty?.length && check.reason === 'uncommitted changes'
+  if (!check.ok && !waived) return { removed: false, reason: check.reason, ...(check.dirty ? { dirty: check.dirty } : {}) }
   mergedCache.delete(row.id)
   // Removal stops sessions, runs the repo's orca.yaml archive hook (which can stop the worktree's
   // services and clean up what setup created) and deletes the checkout. A failing hook blocks
   // the removal. It all takes well over the usual timeout.
-  return run(['worktree', 'rm', '--worktree', row.id, '--run-hooks'], { timeoutMs: 180_000 }).then(
+  return run(['worktree', 'rm', '--worktree', row.id, '--run-hooks', ...(waived ? ['--force'] : [])], { timeoutMs: 180_000 }).then(
     () => ({ removed: true }),
     async (e: Error) => {
       // Trust what Orca shows over how the command ended: it may have finished anyway.

@@ -288,9 +288,9 @@ const svgIcon = (name?: string) => (name ? `<svg class="micon" viewBox="0 0 24 2
 
 
 /** Confirms a destructive action unless the person said not to ask again for this kind. */
-async function confirmAction(kind: string, title: string, text: string, okLabel: string, icon = 'trash', tone: 'danger' | 'warn' = 'danger'): Promise<boolean> {
+async function confirmAction(kind: string, title: string, text: string, okLabel: string, icon = 'trash', tone: 'danger' | 'warn' = 'danger', rememberable = true): Promise<boolean> {
   const skip = ((await orca.storage.get('skipConfirm').catch(() => null)) ?? {}) as Record<string, boolean>
-  if (skip[kind]) return true
+  if (rememberable && skip[kind]) return true
   const dialog = $('confirm')
   const form = $('confirm-form') as HTMLFormElement
   const remember = $('confirm-remember') as HTMLInputElement
@@ -301,6 +301,7 @@ async function confirmAction(kind: string, title: string, text: string, okLabel:
   $('confirm-icon').className = `dialog-icon ${tone}`
   $('confirm-icon').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${MI[icon]}</svg>`
   remember.checked = false
+  ;(remember.closest('label') as HTMLElement).hidden = !rememberable
   dialog.hidden = false
   ;($('confirm-cancel') as HTMLButtonElement).focus()
   return new Promise((resolve) => {
@@ -330,7 +331,7 @@ function wake(key: string): Promise<void> {
  * Runs an action and shows its progress on the row itself (keyed like data-menu): a spinner and a
  * verb while it runs, a short confirmation that fades, or the reason in red until the next click.
  */
-async function inline(target: string, pending: string, done: string, call: () => Promise<unknown>): Promise<void> {
+async function inline(target: string, pending: string, done: string, call: () => Promise<unknown>, showResult: () => boolean = () => true): Promise<void> {
   ui.status.set(target, { text: pending, tone: 'pending' })
   draw()
   let ok = true
@@ -343,6 +344,7 @@ async function inline(target: string, pending: string, done: string, call: () =>
     ok = false
     reason = (e as Error).message
   }
+  if (!showResult()) return
   ui.status.set(target, ok ? { text: done, tone: 'ok' } : { text: reason, tone: 'bad' })
   draw()
   if (ok) setTimeout(() => { if (ui.status.get(target)?.tone === 'ok') { ui.status.delete(target); draw() } }, 1800)
@@ -370,10 +372,29 @@ function agentMenu(row: WorkspaceRow, a: AgentInfo): MenuItem[] {
   return items
 }
 
-/** Removes a worktree after a confirm; the menu and the footer's remove button both use it. */
+/**
+ * Removes a worktree after a confirm; the menu and the footer's remove button both use it. When
+ * only uncommitted files stand in the way, asks once more, naming them, and removes anyway on yes.
+ */
 async function removeWorktree(row: WorkspaceRow, target: string): Promise<void> {
-  if (await confirmAction('remove-worktree', `Remove ${row.name}?`, "The checkout is deleted once it's clean and its PR is merged. The branch is kept.", 'Remove'))
-    await inline(target, 'Removing…', 'Removed', () => orca.plugin.request('sidebar.removeWorktree', { workspaceId: row.id }, { timeoutMs: 200_000 }))
+  if (!(await confirmAction('remove-worktree', `Remove ${row.name}?`, "The checkout is deleted once it's clean and its PR is merged. The branch is kept.", 'Remove'))) return
+  const remove = (force: boolean) => orca.plugin.request('sidebar.removeWorktree', { workspaceId: row.id, force }, { timeoutMs: 200_000 })
+  let dirty: string[] = []
+  await inline(target, 'Removing…', 'Removed', async () => {
+    const r = await remove(false)
+    if (!r.removed && r.reason === 'uncommitted changes' && r.dirty?.length) {
+      dirty = r.dirty
+      return { ok: true }
+    }
+    return r
+  }, () => dirty.length === 0)
+  if (!dirty.length) return
+  ui.status.delete(target)
+  draw()
+  const files = dirty.length <= 3 ? dirty.join(', ') : `${dirty.slice(0, 3).join(', ')} and ${dirty.length - 3} more`
+  // Losing work is never remembered: this one always asks.
+  if (await confirmAction('remove-dirty', `Remove ${row.name} anyway?`, `Uncommitted changes will be lost: ${files}. The branch is kept.`, 'Remove anyway', 'trash', 'danger', false))
+    await inline(target, 'Removing…', 'Removed', () => remove(true))
 }
 
 function coordinatorMenu(key: string): MenuItem[] {
