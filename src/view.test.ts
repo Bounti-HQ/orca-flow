@@ -361,3 +361,8 @@ test('the owner of an open PR stays in the tree until it merges; its finished wo
   assert.deepEqual(finishedAgents(at('draft').rows).map((a) => a.paneKey), ['p-rev'])
   assert.deepEqual(finishedAgents(at('merged').rows).map((a) => a.paneKey).sort(), ['p-lead', 'p-rev'], 'merged: both finish')
 })
+
+test('an agent with no title is named after its worktree, not its agent type', () => {
+  const s: Snapshot = { ...snap, rows: [row('untangle-api', 'shop', [agent('p-u', 'claude', 'working')])] }
+  assert.match(render(s, emptyUi()).main, /<span class="t">untangle-api<\/span>/)
+})

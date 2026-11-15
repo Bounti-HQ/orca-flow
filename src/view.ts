@@ -118,7 +118,8 @@ export function character(color: string, shape: Shape, face: Face, size = 16, ba
 }
 
 /** The name a row shows: the agent's title, unless it leaks an id; then the workspace name. */
-const nameOf = (a: AgentInfo, row: WorkspaceRow) => (showable(a.title) ? a.title : row.name)
+// An agent with no title of its own is named after its worktree, not its agent type ("claude").
+const nameOf = (a: AgentInfo, row: WorkspaceRow) => (showable(a.title) && a.title !== a.agentType ? a.title : row.name)
 
 /** A character with a one- or two-word status tooltip (the panel's own tooltip, not the OS one). */
 function tipped(svg: string, tip: string, tone = ''): string {
