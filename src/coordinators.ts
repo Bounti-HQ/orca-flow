@@ -1,0 +1,196 @@
+// Who each agent works for. The user's coordinators are folders under COORDINATOR_HOME, each with
+// a COORDINATOR_FILE, added to Orca as folder workspaces; a coordinator's session is the agent
+// running in its workspace. Orca's orchestration records, for every worker dispatch, the run it
+// belongs to, and every run records the terminal that dispatched it. So: worker pane -> dispatch ->
+// run -> dispatching terminal -> one of the user's coordinators, or another agent whose own
+// coordinator we look up the same way. Anything nobody dispatched belongs to 'you'.
+import { execFile } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import type { Coordinator, Look, WorkspaceRow } from './protocol.ts'
+
+export const COORDINATOR_HOME = join(homedir(), 'orca', 'coordinators')
+export const COORDINATOR_FILE = 'coordinator.json'
+
+export type CoordinatorInfo = Coordinator & { dir: string; about: string }
+
+function readJson<T>(path: string): T | null {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as T
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A coordinator's home: a folder under the coordinator home or one holding a coordinator file. It
+ * has no code checkout, install or dev server, so it never counts against the worktree limit.
+ */
+export function isCoordinatorHome(path: string | null | undefined, root = COORDINATOR_HOME): boolean {
+  if (!path) return false
+  return path === root || path.startsWith(`${root}/`) || existsSync(join(path, COORDINATOR_FILE))
+}
+
+/** The user's coordinators on disk: one folder each under the coordinator home. */
+export function readCoordinators(root = COORDINATOR_HOME): CoordinatorInfo[] {
+  if (!existsSync(root)) return []
+  const out: CoordinatorInfo[] = []
+  for (const name of readdirSync(root).sort()) {
+    const dir = join(root, name)
+    const c = readJson<{ name?: string; repos?: string[]; about?: string; look?: Look }>(join(dir, COORDINATOR_FILE))
+    if (c?.name) out.push({ key: c.name, name: c.name, repos: c.repos ?? [], about: c.about ?? '', dir, workspaceId: null, look: c.look ?? null })
+  }
+  return out
+}
+
+/** Names become folder names and appear in the panel: short, lowercase, no surprises. */
+export function validateName(name: string, existing: string[]): string | null {
+  if (!/^[a-z0-9][a-z0-9-]{0,23}$/.test(name)) return 'Use lowercase letters, digits and dashes'
+  if (existing.includes(name)) return `${name} already exists`
+  return null
+}
+
+/**
+ * Writes a new coordinator's folder. It starts owning every project; it narrows its own scope in
+ * its COORDINATOR_FILE as the user tells it what it is for.
+ */
+export function scaffoldCoordinator(root: string, input: { name: string; look: Look | null }): string {
+  const dir = join(root, input.name)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, COORDINATOR_FILE), JSON.stringify({ name: input.name, repos: [], about: '', look: input.look }, null, 2) + '\n')
+  writeFileSync(join(dir, 'CLAUDE.md'), `# Coordinator: ${input.name}\n\nYour scope is not set yet: you take work for any project. When the user tells you what you are for, record it in ${COORDINATOR_FILE} in this folder (\`repos\`: the Orca project names you own; \`about\`: one sentence) and from then on name the coordinator that owns any other project instead of taking it.\n`)
+  return dir
+}
+
+/** What the orchestration records say: which terminal dispatched each worker pane. */
+export type Lineage = {
+  /** worker pane -> terminal handle of the agent that dispatched it (Orca's run coordinator) */
+  dispatcherOf: Map<string, string>
+  /** terminal handle -> pane */
+  paneOf: Map<string, string>
+  /** closed terminal handle -> the folder it ran in */
+  dirOfTerminal?: Map<string, string>
+}
+
+/**
+ * Pure: the user's coordinator each agent works for and, when some other agent dispatched it, that
+ * agent's pane (so the tree can nest it). Chains are followed a few levels deep.
+ */
+export function assignCoordinators(rows: WorkspaceRow[], coordinators: CoordinatorInfo[], lineage: Lineage): WorkspaceRow[] {
+  // A coordinator's session is whatever agent runs in its own folder workspace.
+  const coordinatorByPane = new Map<string, string>()
+  for (const c of coordinators) for (const row of rows) if (row.path === c.dir) for (const a of row.agents) coordinatorByPane.set(a.paneKey, c.key)
+  const coordinatorByTerminal = new Map([...lineage.paneOf].filter(([, pane]) => coordinatorByPane.has(pane)).map(([handle, pane]) => [handle, coordinatorByPane.get(pane)!]))
+  // A coordinator that slept: its old terminal is closed, but it ran in the coordinator's folder.
+  for (const [handle, dir] of lineage.dirOfTerminal ?? []) {
+    const c = coordinators.find((c) => c.dir === dir)
+    if (c) coordinatorByTerminal.set(handle, c.key)
+  }
+  const coordinatorOfPane = (pane: string, depth = 0): { coordinator: string; leadPane: string | null } => {
+    const dispatcher = lineage.dispatcherOf.get(pane)
+    if (!dispatcher || depth > 4) return { coordinator: 'you', leadPane: null }
+    const coordinator = coordinatorByTerminal.get(dispatcher)
+    if (coordinator) return { coordinator, leadPane: null }
+    const leadPane = lineage.paneOf.get(dispatcher) ?? null
+    return { coordinator: leadPane ? coordinatorOfPane(leadPane, depth + 1).coordinator : 'you', leadPane }
+  }
+  const terminalOf = new Map([...lineage.paneOf].map(([handle, pane]) => [pane, handle]))
+  return rows.map((row) => ({
+    ...row,
+    // Titles stay as Orca and the summary give them (summary, then Orca's conversation name, then its
+    // task title): a worker the user talks to directly drifts from the last task it was handed.
+    agents: row.agents.map((a) => ({ ...a, ...coordinatorOfPane(a.paneKey), terminal: terminalOf.get(a.paneKey) ?? null }))
+  }))
+}
+
+// ---------- loading the lineage from the orca CLI (slow on a busy machine, so cached) ----------
+
+type Run = (args: string[], options?: { timeoutMs?: number }) => Promise<any>
+
+/** Runs `orca <args> --json`; a failure carries Orca's own error message, not just the exit code. */
+export function orcaRunner(bin: string): Run {
+  return (args, options = {}) =>
+    new Promise((resolve, reject) => {
+      execFile(bin, [...args, '--json'], { maxBuffer: 32 * 1024 * 1024, timeout: options.timeoutMs ?? 20_000 }, (err, stdout) => {
+        let parsed: any = null
+        try {
+          parsed = JSON.parse(stdout)
+        } catch {}
+        if (parsed?.ok) return resolve(parsed.result)
+        if (parsed?.error?.message) return reject(new Error(parsed.error.message))
+        if (err && (err as Error & { killed?: boolean }).killed) return reject(new Error(`orca ${args[0]} ${args[1] ?? ''} timed out`))
+        reject(err ?? new Error(`orca ${args.join(' ')} failed`))
+      })
+    })
+}
+
+/** A run whose workers have all ended is checked again only after a while, in case it gets new ones. */
+const quietRuns = new Map<string, number>()
+const QUIET_RECHECK_MS = 5 * 60_000
+/** Where a closed terminal ran never changes, so it is looked up once. */
+const dirOfClosed = new Map<string, string | null>()
+
+/** The folder a terminal ran in, from Orca's record of it (kept after the terminal closes). */
+export function dirOfTerminalRecord(t: { worktreePath?: string; worktreeId?: string } | null | undefined): string | null {
+  return t?.worktreePath || t?.worktreeId?.split('::')[1] || null
+}
+
+/**
+ * Every recent run with live workers: which terminal coordinates it and which panes it dispatched.
+ * `worker-list` alone only shows the caller's own run, so each run is listed by id, one at a time
+ * (each call is a process). A coordinator that slept left its runs on its closed terminal; Orca
+ * still knows which folder that terminal ran in.
+ */
+export async function loadLineage(run: Run, now = Date.now()): Promise<Lineage> {
+  const [terminals, runs] = await Promise.all([run(['terminal', 'list']), run(['orchestration', 'run-list', '--limit', '30', '--full'])])
+  const paneOf = new Map<string, string>()
+  for (const t of terminals.terminals ?? []) if (t.tabId && t.leafId) paneOf.set(t.handle, `${t.tabId}:${t.leafId}`)
+
+  const dispatcherOf = new Map<string, string>()
+  const coordinating = new Set<string>()
+  for (const r of runs.runs ?? []) {
+    const handle: string | null = r.coordinator_handle
+    if (!handle || now - (quietRuns.get(r.id) ?? -Infinity) < QUIET_RECHECK_MS) continue
+    const listed = await run(['orchestration', 'worker-list', '--run', r.id]).catch(() => null)
+    if (!listed) continue
+    const active = (listed.workers ?? []).filter((w: any) => w.terminal && w.terminalState !== 'released')
+    if (active.length === 0) {
+      quietRuns.set(r.id, now)
+      continue
+    }
+    quietRuns.delete(r.id)
+    coordinating.add(handle)
+    for (const w of active) {
+      const pane = paneOf.get(w.terminal)
+      if (pane) dispatcherOf.set(pane, handle)
+    }
+  }
+
+  const dirOfTerminal = new Map<string, string>()
+  for (const handle of coordinating) {
+    if (paneOf.has(handle)) continue
+    if (!dirOfClosed.has(handle)) {
+      const shown = await run(['terminal', 'show', '--terminal', handle]).catch(() => null)
+      dirOfClosed.set(handle, dirOfTerminalRecord(shown?.terminal))
+    }
+    const dir = dirOfClosed.get(handle)
+    if (dir) dirOfTerminal.set(handle, dir)
+  }
+  return { dispatcherOf, paneOf, dirOfTerminal }
+}
+
+/** Changes a coordinator's look in its file, keeping everything else. */
+export function writeLook(dir: string, look: Look): void {
+  const path = join(dir, COORDINATOR_FILE)
+  const data = readJson<Record<string, unknown>>(path) ?? {}
+  writeFileSync(path, JSON.stringify({ ...data, look }, null, 2) + '\n')
+}
+
+/** Deletes a coordinator's folder; refuses anything that is not a direct child of the home. */
+export function deleteFolder(dir: string, root = COORDINATOR_HOME): void {
+  const parent = join(dir, '..')
+  if (parent !== root || dir === root || !existsSync(join(dir, COORDINATOR_FILE))) throw new Error(`refusing to delete ${dir}`)
+  rmSync(dir, { recursive: true, force: true })
+}
+

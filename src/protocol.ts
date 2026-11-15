@@ -1,0 +1,178 @@
+// The panel <-> worker contract, declared once: src/panel.tsx and src/worker.ts both read it.
+export type AgentState = 'working' | 'blocked' | 'waiting' | 'done'
+
+export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
+export type AskType = 'none' | 'decision' | 'approval' | 'review' | 'info'
+
+/** What the end-of-turn summarizer (src/summarize.ts) wrote for one agent after its last turn. */
+export type AgentSummary = {
+  title: string
+  /** One stable sentence on what the workstream is for (summaries before this field lack it). */
+  about?: string
+  /** The ask in about eight words. */
+  glance?: string
+  /** What it waits on that is not the user ("E2E run", "CI"); empty when nothing. */
+  watching?: string
+  goal: string
+  since: string
+  needs: { type: AskType; ask: string; options: string[] }
+  effort: 'quick' | 'deep'
+  priority: Priority
+  role: 'lead' | 'coordinator' | 'worker' | 'solo'
+  updatedAt: number
+}
+
+/** What a coordinator wrote for a workstream with `orca-flow set`. */
+export type WorkstreamCard = {
+  priority?: Priority
+  role?: string
+  /** Parent worktree identity key. */
+  parent?: string
+  goal?: string
+  fits?: string
+}
+
+export type AgentInfo = {
+  paneKey: string
+  /** Orca's working mode; "monitoring" is the dashed circle in Orca's own sidebar. */
+  workingMode: string | null
+  /** Which of the user's coordinators it works for: that coordinator's key, or 'you' for chats nobody dispatched. */
+  coordinator: string
+  /** Pane of the agent that dispatched this one, when that is not one of the user's coordinators. */
+  leadPane: string | null
+  /** Its terminal handle, so a finished session can be closed; null until known. */
+  terminal: string | null
+  /** The question it is waiting on, from Orca's record of its pending question tool call. */
+  question: string | null
+  state: AgentState
+  /** Summary title, else conversation name, task title, or agent kind. */
+  title: string
+  agentType: string | null
+  summary: AgentSummary | null
+}
+
+export type WorkspaceRow = {
+  /** The plugin API's workspace id, accepted by `workspace.open`. */
+  id: string
+  name: string
+  branch: string | null
+  repo: string
+  /** Checkout path and whether it is the repo's main checkout (never offered for removal). */
+  path: string | null
+  main: boolean
+  agents: AgentInfo[]
+  /** Most urgent agent state, or null when no agent is known. */
+  state: AgentState | null
+  /** The card's level, else the highest level any agent's summary guessed. */
+  priority: Priority | null
+  card: WorkstreamCard | null
+  /** The coordinator's workspace id, from Orca's lineage or the card. */
+  parentId: string | null
+  liveTerminals: number
+  pinned: boolean
+  unread: boolean
+  active: boolean
+  /** Orca's own "in-progress" / "in-review" board column. */
+  workspaceStatus: string | null
+  lastActivityAt: number | null
+  /** When the workstream started (Orca's sortOrder); a stable order that activity never changes. */
+  createdAt: number
+  /** The pull request Orca has linked to this workspace. */
+  /** Orca's linked PR: its state (open, merged, closed, draft) and, for an open one, its CI checks. */
+  pr: { number: number; url: string; state: string; checks: 'success' | 'pending' | 'failure' | 'cancelled' | null } | null
+}
+
+export type Capacity = {
+  /** ok: a new workstream with its environment fits; agents-only: another agent fits, an environment not. */
+  verdict: 'ok' | 'agents-only' | 'full' | 'pressure'
+  /** Orca's available memory minus the margin; null until Orca's memory report has loaded. */
+  freeGB: number | null
+  marginGB: number
+  /** Free disk on the volume your home is on; worktrees and their installs live there. */
+  diskFreeGB: number | null
+  /** What another agent costs here (median of open sessions). */
+  agentGB: number
+  /** What a typical project environment (its dev servers) costs here. */
+  envGB: number
+  pressure: 'normal' | 'warn' | 'critical' | 'unknown'
+  /** Agents whose work is done but whose session still holds memory. */
+  finishedOpen: number
+}
+
+/** One of the user's coordinators: a coordinator with its own Orca folder workspace. */
+export type Coordinator = {
+  key: string
+  name: string
+  repos: string[]
+  /** Its folder workspace in Orca, once added; clicking the coordinator opens it. */
+  workspaceId: string | null
+  /** Its own session (the agent in its workspace), when one is open. */
+  session?: AgentInfo | null
+  /** The character it was given at creation. */
+  look?: Look | null
+}
+
+export type LookShape = 'pentagon' | 'hex' | 'shield'
+export type Look = { color: string; shape: LookShape }
+
+export type Snapshot = {
+  rows: WorkspaceRow[]
+  source: 'cli' | 'api'
+  capacity: Capacity | null
+  /** The user's coordinators, from COORDINATOR_HOME; 'you' is implied. */
+  coordinators: Coordinator[]
+}
+
+/** What the opened cockpit shows; loaded on demand because Orca's memory report is slow. */
+export type SessionRef = { paneKey: string; terminal: string | null; workspaceId: string; title: string; repo: string; memMB: number }
+/** Processes an agent started that run outside its session (a dev server), so Orca does not count them. */
+export type StartedGroup = {
+  /** "<worktree path>|<pane>" */
+  key: string
+  path: string
+  /** The pane that started them; it may have gone to sleep since. */
+  paneKey: string | null
+  workspaceId: string
+  worktreeName: string
+  repo: string
+  /** The heaviest process's name, like next-server. */
+  name: string
+  count: number
+  memMB: number
+}
+export type CockpitStats = {
+  swap: { usedGB: number; totalGB: number } | null
+  /** Orca's own figures: used is total minus what macOS reports as available. */
+  ram: { usedGB: number; totalGB: number } | null
+  started: StartedGroup[]
+  heaviest: SessionRef[]
+  finished: SessionRef[]
+  merged: { workspaceId: string; name: string; repo: string; pr: number }[]
+}
+
+declare module 'orca' {
+  interface PluginRequests {
+    /** Every workspace with its live agent status. */
+    'sidebar.list': { output: Snapshot }
+    /** Memory, heaviest sessions, finished sessions and merged worktrees, for the opened cockpit. */
+    'sidebar.cockpit': { output: CockpitStats }
+    /** Ends agent sessions by pane; the worker looks up their terminals at that moment. Transcripts stay resumable. */
+    'sidebar.closeSessions': { input: { panes: string[] }; output: { closed: number } }
+    /** Removes a worktree after re-checking that it is clean and its PR merged. */
+    'sidebar.removeWorktree': { input: { workspaceId: string }; output: { removed: boolean; reason?: string } }
+    /** Creates a coordinator with a name and a look, starts its session and opens it. */
+    'sidebar.createCoordinator': { input: { name: string; look: Look }; output: { ok: boolean; error?: string } }
+    /** Sets a workstream's priority on its card (null clears it); Up next re-ranks. */
+    'sidebar.setPriority': { input: { workspaceId: string; priority: Priority | null }; output: { ok: boolean; error?: string } }
+    /** A coordinator's menu actions: a new look, a fresh session, ending its session, or deleting it. */
+    'sidebar.coordinatorAction': { input: { key: string; action: 'look' | 'restart' | 'end' | 'delete' }; output: { ok: boolean; error?: string } }
+    /** Opens a coordinator's session, starting Claude there if it is not running. */
+    'sidebar.openCoordinator': { input: { key: string }; output: { ok: boolean; error?: string } }
+    /** Shows a workspace in Orca, as clicking it in the left sidebar does. */
+    'sidebar.open': { input: { workspaceId: string }; output: { opened: boolean } }
+  }
+  interface PluginPanelEvents {
+    /** Posted to open panels when a workspace or agent status changes. */
+    'sidebar.changed': Snapshot
+  }
+}

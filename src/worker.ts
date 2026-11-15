@@ -1,0 +1,617 @@
+// The plugin's own worker. Orca starts it on the panel's first plugin.request or on an event,
+// and transpiles this file when it loads.
+//
+// The plugin API only reports agent status *changes*, so a fresh panel would show no status.
+// `orca worktree ps --json` has the full live snapshot (agents, pinned, unread, last activity),
+// so the worker reads that and re-reads it whenever Orca fires an agent or workspace event.
+// It is the CLI's JSON, not the plugin API, so it falls back to `workspace.list` if it fails.
+//
+// Cards (coordinator's goal and priority) come from ~/.orca-flow/cards, written by `orca-flow set`.
+// Summaries (end-of-turn status by Haiku) are written to ~/.orca-flow/agents by this worker when
+// Orca reports a finished turn (src/summarize.ts). The worker watches that folder.
+import { execFile, execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import type { OrcaWorkerApi } from 'orca/worker'
+import { costsOf, decide, DEFAULT_CONFIG, diskFreeOf, FALLBACK, type Pressure } from './capacity.ts'
+import { closeSessions, loadCockpit, removeWorktree } from './cockpit.ts'
+import { assignCoordinators, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, loadLineage, orcaRunner, readCoordinators, scaffoldCoordinator, validateName, writeLook, type Lineage } from './coordinators.ts'
+import { freeLooks } from './view.ts'
+import type { AgentInfo, AgentState, AgentSummary, Capacity, Priority, Snapshot, WorkspaceRow, WorkstreamCard } from './protocol.ts'
+import { claimsAsk, finished, nextTarget, waitingQueue } from './rank.ts'
+import { summarizePane, turnSummarizer } from './summarize.ts'
+import { ensureLinks, ensureSeeds, linksFor, pluginDir, seedsFor } from './install.ts'
+import { readFootprint, readProcs, startedGroups } from './started.ts'
+
+const ORCA_BIN = ['/Applications/Orca.app/Contents/Resources/bin/orca'].find(existsSync) ?? 'orca'
+const DATA_DIR = join(homedir(), '.orca-flow')
+
+/** Most urgent first: what needs the person outranks what is running. */
+const URGENCY: AgentState[] = ['blocked', 'waiting', 'working', 'done']
+
+type PsAgent = {
+  paneKey?: string
+  toolName?: string | null
+  toolInput?: string | null
+  state?: string
+  workingMode?: string | null
+  agentType?: string | null
+  conversationName?: string | null
+  taskTitle?: string | null
+  displayName?: string | null
+}
+
+export type PsWorktree = {
+  path?: string
+  isMainWorktree?: boolean
+  worktreeId?: string
+  parentWorktreeId?: string | null
+  identity?: { key?: string }
+  displayName?: string
+  repo?: string
+  branch?: string | null
+  isArchived?: boolean
+  isPinned?: boolean
+  unread?: boolean
+  isActive?: boolean
+  liveTerminalCount?: number
+  workspaceStatus?: string | null
+  lastActivityAt?: number | null
+  sortOrder?: number
+  linkedPR?: { number?: number; url?: string; state?: string; checksStatus?: string | null; checksSummary?: { state?: string } | null } | null
+  agents?: PsAgent[]
+}
+
+function shortBranch(branch: string | null | undefined): string | null {
+  return branch ? branch.replace(/^refs\/heads\//, '') : null
+}
+
+/** Files are keyed by the id with anything unsafe for a filename replaced, as orca-flow writes them. */
+const fileKey = (key: string) => key.replace(/[^A-Za-z0-9._-]/g, '_')
+
+export type Store = { cards: Record<string, WorkstreamCard>; summaries: Record<string, AgentSummary> }
+
+function readFolder<T>(dir: string): Record<string, T> {
+  if (!existsSync(dir)) return {}
+  const out: Record<string, T> = {}
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.json')) continue
+    try {
+      out[file.slice(0, -5)] = JSON.parse(readFileSync(join(dir, file), 'utf8'))
+    } catch {
+      // A file mid-write or hand-edited badly; the next change reads it again.
+    }
+  }
+  return out
+}
+
+export function readStore(dir = DATA_DIR): Store {
+  return { cards: readFolder(join(dir, 'cards')), summaries: readFolder(join(dir, 'agents')) }
+}
+
+/** Orca's CI checks for a PR, as its worktree card reads them. */
+function checksOf(pr: { checksStatus?: string | null; checksSummary?: { state?: string } | null }): 'success' | 'pending' | 'failure' | 'cancelled' | null {
+  const s = pr.checksStatus ?? pr.checksSummary?.state ?? null
+  return s === 'success' || s === 'pending' || s === 'failure' || s === 'cancelled' ? s : null
+}
+
+/** The first question of a pending AskUserQuestion call, from Orca's toolInput (JSON or plain text). */
+export function questionOf(a: PsAgent): string | null {
+  if (a.state !== 'waiting' || a.toolName !== 'AskUserQuestion' || !a.toolInput) return null
+  try {
+    const input = JSON.parse(a.toolInput)
+    const q = input?.questions?.[0]?.question ?? input?.question
+    if (typeof q === 'string' && q.trim()) return q.trim()
+  } catch {}
+  const m = /"question"\s*:\s*"([^"]+)/.exec(a.toolInput)
+  return m ? m[1] : null
+}
+
+function toAgent(a: PsAgent, store: Store): AgentInfo | null {
+  const state = a.state as AgentState
+  if (!URGENCY.includes(state)) return null
+  const summary = (a.paneKey && store.summaries[fileKey(a.paneKey)]) || null
+  return {
+    paneKey: a.paneKey ?? '',
+    workingMode: a.workingMode ?? null,
+    coordinator: 'you',
+    leadPane: null,
+    terminal: null,
+    question: questionOf(a),
+    state,
+    title: summary?.title || a.conversationName || a.taskTitle || a.displayName || a.agentType || 'Agent',
+    agentType: a.agentType ?? null,
+    summary
+  }
+}
+
+const highest = (levels: (Priority | undefined)[]) =>
+  (levels.filter(Boolean) as Priority[]).sort()[0] ?? null
+
+/** A workspace's plugin id: its identity key, or (folder workspaces have none) the id the plugin API lists for its path. */
+const workspaceId = (w: PsWorktree, idByPath: Map<string, string>) =>
+  w.identity?.key ? `identity:${w.identity.key}` : (w.path && idByPath.get(w.path)) || null
+
+export function fromPs(worktrees: PsWorktree[], store: Store = { cards: {}, summaries: {} }, idByPath = new Map<string, string>()): WorkspaceRow[] {
+  const idOf = new Map(worktrees.map((w) => [w.worktreeId, workspaceId(w, idByPath)]))
+  return worktrees
+    .filter((w) => !w.isArchived && workspaceId(w, idByPath))
+    .map((w) => {
+      const agents = (w.agents ?? []).map((a) => toAgent(a, store)).filter((a): a is AgentInfo => a !== null)
+      const state = URGENCY.find((s) => agents.some((a) => a.state === s)) ?? null
+      const card = w.identity?.key ? (store.cards[fileKey(w.identity.key)] ?? null) : null
+      return {
+        id: workspaceId(w, idByPath)!,
+        name: w.displayName ?? '',
+        branch: shortBranch(w.branch),
+        repo: w.repo ?? '',
+        path: w.path ?? null,
+        main: Boolean(w.isMainWorktree),
+        agents,
+        state,
+        priority: card?.priority ?? highest(agents.map((a) => a.summary?.priority)),
+        card,
+        parentId: (w.parentWorktreeId && idOf.get(w.parentWorktreeId)) || (card?.parent ? `identity:${card.parent}` : null),
+        liveTerminals: w.liveTerminalCount ?? 0,
+        pinned: !!w.isPinned,
+        unread: !!w.unread,
+        active: !!w.isActive,
+        workspaceStatus: w.workspaceStatus ?? null,
+        lastActivityAt: w.lastActivityAt ?? null,
+        createdAt: w.sortOrder ?? 0,
+        pr: w.linkedPR?.number && w.linkedPR.url ? { number: w.linkedPR.number, url: w.linkedPR.url, state: w.linkedPR.state ?? '', checks: checksOf(w.linkedPR) } : null
+      }
+    })
+}
+
+function runPs(): Promise<PsWorktree[]> {
+  return new Promise((resolve, reject) => {
+    execFile(ORCA_BIN, ['worktree', 'ps', '--json'], { maxBuffer: 32 * 1024 * 1024, timeout: 10_000 }, (err, stdout) => {
+      if (err) return reject(err)
+      try {
+        const parsed = JSON.parse(stdout)
+        if (!parsed.ok) return reject(new Error(parsed.error?.message ?? 'orca worktree ps failed'))
+        resolve(parsed.result.worktrees)
+      } catch (e) {
+        reject(e)
+      }
+    })
+  })
+}
+
+async function fromApi(orca: OrcaWorkerApi): Promise<WorkspaceRow[]> {
+  const { workspaces } = await orca.host.call('workspace.list')
+  return workspaces.map((w) => ({
+    id: w.id,
+    name: w.name,
+    branch: shortBranch(w.branch),
+    repo: w.path.split('/').filter(Boolean).at(-1) ?? w.path,
+    path: w.path,
+    main: false,
+    agents: [],
+    state: null,
+    priority: null,
+    card: null,
+    parentId: null,
+    liveTerminals: 0,
+    pinned: false,
+    unread: false,
+    active: false,
+    workspaceStatus: null,
+    lastActivityAt: null,
+    createdAt: 0,
+    pr: null
+  }))
+}
+
+function pressureLevel(): Pressure {
+  try {
+    const level = Number(execFileSync('sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { encoding: 'utf8' }).trim())
+    return level >= 4 ? 'critical' : level >= 2 ? 'warn' : 'normal'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** What capacity is computed from; refreshed in the background so a snapshot never waits on it. */
+export type MemoryFacts = { availableGB: number | null; totalGB: number | null; agentGB: number; envGB: Record<string, number>; diskFreeGB?: number | null }
+let memory: MemoryFacts = { availableGB: null, totalGB: null, agentGB: FALLBACK.agentGB, envGB: {} }
+let memoryAt = 0
+let envAt = 0
+let memoryLoading = false
+
+/** Orca's memory report every 15 s; what each project's environment costs every 5 min (a process scan). */
+function refreshMemory(rows: WorkspaceRow[], onLoaded: () => void): void {
+  const now = Date.now()
+  if (memoryLoading || now - memoryAt < 15_000) return
+  memoryLoading = true
+  const run = orcaRunner(ORCA_BIN)
+  ;(async () => {
+    const mem = await run(['diagnostics', 'memory'])
+    const sessions: { paneKey: string; memory: number; pid?: number }[] = (mem?.worktrees ?? []).flatMap((w: any) => w.sessions ?? [])
+    const agentPanes = new Set(rows.flatMap((r) => r.agents.map((a) => a.paneKey)))
+    const gb = (b: number) => b / 1024 ** 3
+    let envGB = memory.envGB
+    if (now - envAt >= 5 * 60_000) {
+      const [procs, footprint] = await Promise.all([readProcs(), readFootprint()])
+      const pids = sessions.map((s) => s.pid).filter((p): p is number => typeof p === 'number')
+      const perWorktree = new Map<string, { repo: string; gb: number }>()
+      for (const g of startedGroups(procs, footprint, pids, rows)) {
+        const w = perWorktree.get(g.path) ?? { repo: g.repo, gb: 0 }
+        w.gb += g.memMB / 1024
+        perWorktree.set(g.path, w)
+      }
+      envGB = costsOf([], [...perWorktree.values()]).envGB
+      envAt = now
+    }
+    const df = await new Promise<string>((resolve) => execFile('df', ['-k', '-P', homedir()], { timeout: 5000 }, (_e, out) => resolve(String(out ?? ''))))
+    memory = {
+      diskFreeGB: diskFreeOf(df),
+      availableGB: mem?.host?.availableMemory ? gb(mem.host.availableMemory) : null,
+      totalGB: mem?.host?.totalMemory ? gb(mem.host.totalMemory) : null,
+      agentGB: costsOf(sessions.filter((s) => agentPanes.has(s.paneKey)).map((s) => gb(s.memory)), []).agentGB,
+      envGB
+    }
+    memoryAt = now
+    onLoaded()
+  })()
+    .catch(() => {})
+    .finally(() => (memoryLoading = false))
+}
+
+/** The same decision `orca-flow capacity` makes, from facts the worker keeps. */
+export function capacityOf(rows: WorkspaceRow[], pressure: Pressure, facts: MemoryFacts = memory, dir = DATA_DIR, isHome: (path: string | null) => boolean = isCoordinatorHome): Capacity {
+  let config = DEFAULT_CONFIG
+  try {
+    config = { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')) }
+  } catch {}
+  // In general, "can a new workstream start?" prices the typical environment of the projects here.
+  const known = Object.values(facts.envGB).sort((a, b) => a - b)
+  const envGB = known.length ? known[Math.floor((known.length - 1) / 2)] : FALLBACK.envGB
+  const { verdict, freeGB } = decide({ availableGB: facts.availableGB, pressure, config, agentGB: facts.agentGB, envGB })
+  const checkouts = rows.filter((r) => r.liveTerminals > 0 && !isHome(r.path))
+  return {
+    verdict,
+    freeGB,
+    marginGB: config.marginGB,
+    diskFreeGB: facts.diskFreeGB ?? null,
+    agentGB: facts.agentGB,
+    envGB,
+    pressure,
+    finishedOpen: checkouts.flatMap((r) => r.agents).filter(finished).length
+  }
+}
+
+/**
+ * Waking a coordinator should continue its last conversation, but the plugin API cannot pass
+ * `--continue` to agent.launch. Orca's agent.launch.before hook can change the command, so a launch
+ * the plugin marked here gets `--continue` added; nothing else is touched.
+ */
+const resumeNext = new Set<string>()
+export function resumeCommand(event: { agent: string; workspaceId: string | null; command: string }, pending: Set<string>): string | null {
+  if (event.agent !== 'claude' || !event.workspaceId || !pending.has(event.workspaceId)) return null
+  pending.delete(event.workspaceId)
+  return /(^|\s)--continue(\s|$)/.test(event.command) ? event.command : `${event.command} --continue`
+}
+
+/** What a coordinator is told when it wakes from sleep. */
+export const WAKE_PROMPT = 'You slept and are awake again. Follow the start-of-session steps in the orca-flow skill (roles/coordinator.md): resume, then greet.'
+
+/** Whether Claude kept a conversation for this folder (any Orca profile, or ~/.claude). */
+export function hasHistory(dir: string, roots = claudeProjectRoots()): boolean {
+  const encoded = dir.replace(/[^A-Za-z0-9]/g, '-')
+  return roots.some((root) => {
+    try {
+      return readdirSync(join(root, encoded)).some((f) => f.endsWith('.jsonl'))
+    } catch {
+      return false
+    }
+  })
+}
+
+function claudeProjectRoots(): string[] {
+  const profiles = join(homedir(), 'Library', 'Application Support', 'orca', 'claude-profiles')
+  const roots = [join(homedir(), '.claude', 'projects')]
+  try {
+    for (const p of readdirSync(profiles)) roots.push(join(profiles, p, 'home', 'projects'))
+  } catch {}
+  return roots
+}
+
+/** Every row of the last snapshot, coordinator workspaces included (the panel's rows leave them out). */
+let allRows: WorkspaceRow[] = []
+
+/** A coordinator's workspace has a live session: an open terminal with an agent in it. */
+export function isLive(dir: string, rows = allRows): boolean {
+  return rows.some((r) => r.path === dir && r.liveTerminals > 0 && r.agents.length > 0)
+}
+
+/** The last lineage loaded; refreshed in the background so a snapshot never waits on it. */
+let lineage: Lineage = { dispatcherOf: new Map(), paneOf: new Map() }
+let lineageAt = 0
+let lineageLoading = false
+
+function refreshLineage(orca: OrcaWorkerApi, onLoaded: () => void): void {
+  if (lineageLoading || Date.now() - lineageAt < 60_000) return
+  lineageLoading = true
+  loadLineage(orcaRunner(ORCA_BIN))
+    .then((next) => {
+      lineage = next
+      lineageAt = Date.now()
+      onLoaded()
+    })
+    .catch((e: Error) => orca.log(`coordinator lineage failed: ${e.message}`))
+    .finally(() => (lineageLoading = false))
+}
+
+export async function snapshot(
+  orca: OrcaWorkerApi,
+  ps: () => Promise<PsWorktree[]> = runPs,
+  onLineage: () => void = () => {}
+): Promise<Snapshot> {
+  const onDisk = readCoordinators()
+  const coordinators = onDisk.map(({ key, name, repos, look }) => ({ key, name, repos, look, workspaceId: null as string | null, session: null as AgentInfo | null }))
+  try {
+    refreshLineage(orca, onLineage)
+    refreshMemory(allRows, onLineage)
+    const worktrees = await ps()
+    // Folder workspaces (your coordinators live in them) have no identity key; ask the plugin API for their ids.
+    const idByPath = new Map<string, string>()
+    if (worktrees.some((w) => !w.identity?.key)) {
+      const listed = await orca.host.call('workspace.list').catch(() => null)
+      for (const w of listed?.workspaces ?? []) idByPath.set(w.path, w.id)
+    }
+    const all = assignCoordinators(fromPs(worktrees, readStore(), idByPath), onDisk, lineage)
+    allRows = all
+    // A coordinator's own workspace is its row in the panel, not an agent in the tree.
+    const dirs = new Map(onDisk.map((c, i) => [c.dir, i]))
+    for (const row of all) {
+      const i = row.path ? dirs.get(row.path) : undefined
+      // Its session counts only while a terminal is open with an agent in it.
+      if (i !== undefined) { coordinators[i].workspaceId = row.id; coordinators[i].session = row.liveTerminals > 0 ? (row.agents[0] ?? null) : null }
+    }
+    const rows = all.filter((r) => !r.path || !dirs.has(r.path))
+    return { rows, source: 'cli', capacity: capacityOf(all, pressureLevel()), coordinators }
+  } catch (e) {
+    orca.log(`orca worktree ps failed, using workspace.list: ${(e as Error).message}`)
+    return { rows: await fromApi(orca), source: 'api', capacity: null, coordinators }
+  }
+}
+
+const LEVEL_WORD: Record<Priority, string> = { P0: 'now', P1: 'today', P2: 'soon', P3: 'someday' }
+
+/** The status bar item: how much is waiting, how urgent the top is, and whether there is room. */
+export function statusOf({ rows, capacity }: Snapshot) {
+  const queue = waitingQueue(rows)
+  const top = queue[0]
+  const full = capacity && (capacity.verdict === 'full' || capacity.verdict === 'pressure')
+  const ask = top?.agents.find(claimsAsk)?.summary?.glance
+  const lines = [
+    top ? `Next: ${top.repo}/${top.name}${top.priority ? ` (${top.priority} ${LEVEL_WORD[top.priority]})` : ''}` : 'Nothing is waiting on you',
+    ask,
+    capacity?.freeGB != null && `${capacity.freeGB} GB free (after a ${capacity.marginGB} GB margin)${capacity.pressure === 'warn' || capacity.pressure === 'critical' ? ` · memory pressure ${capacity.pressure}` : ''}`
+  ]
+  return {
+    id: 'queue',
+    text: `${queue.length ? `${queue.length} waiting` : 'clear'}${full ? ' · memory full' : ''}`,
+    tone: (top?.priority === 'P0' ? 'danger' : top?.priority === 'P1' || full ? 'warning' : 'neutral') as 'danger' | 'warning' | 'neutral',
+    tooltip: lines.filter(Boolean).join('\n')
+  }
+}
+
+/** Things that keep the process alive; deactivate ends them so Orca (and tests) can stop it. */
+const disposers: (() => void)[] = []
+
+export default function activate(orca: OrcaWorkerApi): void {
+  const dir = pluginDir(import.meta.url)
+  if (!dir) orca.log(`plugin folder not found from ${import.meta.url}; skill and coordinator CLAUDE.md not set up`)
+  else for (const line of [...ensureLinks(linksFor(dir)), ...ensureSeeds(seedsFor(dir))]) orca.log(line)
+
+  let timer: ReturnType<typeof setTimeout> | null = null
+  disposers.push(() => timer && clearTimeout(timer))
+  // Agent events arrive in bursts; one snapshot per burst is enough.
+  let latest: Snapshot | null = null
+  const refresh = async (): Promise<Snapshot> => {
+    // When the coordinator lineage finishes loading, draw again with it.
+    latest = await snapshot(orca, runPs, () => void refresh())
+    orca.panels.post('sidebar.changed', latest)
+    void orca.host.call('statusBar.update', statusOf(latest)).catch((e: Error) => orca.log(`statusBar.update failed: ${e.message}`))
+    return latest
+  }
+  const refreshSoon = () => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = null
+      void refresh()
+    }, 300)
+  }
+
+  orca.panels.handle('sidebar.list', () => refresh())
+
+  orca.hooks.on('agent.launch.before', (event, next) => {
+    const command = resumeCommand(event, resumeNext)
+    return command ? next({ ...event, command }) : undefined
+  })
+
+  // ⌘⇧N and the status bar item: open the next workspace waiting on the person.
+  let lastJump: { id: string; at: number } | null = null
+  orca.commands.register('sidebar.next', async () => {
+    const { rows } = latest ?? (await refresh())
+    const target = nextTarget(waitingQueue(rows), lastJump, Date.now())
+    if (!target) return 'Nothing is waiting on you.'
+    lastJump = { id: target.id, at: Date.now() }
+    await orca.host.call('workspace.open', { workspaceId: target.id })
+    return `${target.repo}/${target.name}`
+  })
+  // The status bar item keeps this worker running, so it can fill the item in right away.
+  void refresh()
+
+  // The opened cockpit and its two actions. Each action redraws the panel afterwards.
+  const run = orcaRunner(ORCA_BIN)
+  orca.panels.handle('sidebar.cockpit', async () => {
+    const stats = await loadCockpit(run, (latest ?? (await refresh())).rows)
+    // The top bar and the opened details read the same Orca report, so they show the same numbers.
+    if (stats.ram) {
+      memory = { ...memory, availableGB: stats.ram.totalGB - stats.ram.usedGB }
+      memoryAt = Date.now()
+      refreshSoon()
+    }
+    return stats
+  })
+  orca.panels.handle('sidebar.closeSessions', async ({ panes }) => {
+    const result = await closeSessions(run, panes)
+    refreshSoon()
+    return result
+  })
+  orca.panels.handle('sidebar.removeWorktree', async ({ workspaceId }) => {
+    const { rows } = await refresh()
+    const result = await removeWorktree(run, rows.find((r) => r.id === workspaceId))
+    refreshSoon()
+    return result
+  })
+
+  // ---------- coordinators: create and open ----------
+  /** The coordinator's workspace id, adding its folder to Orca first if it is not there yet. */
+  async function workspaceFor(dir: string): Promise<string | null> {
+    const find = async () => (await orca.host.call('workspace.list')).workspaces.find((w) => w.path === dir)?.id ?? null
+    let id = await find()
+    if (!id) {
+      await run(['repo', 'add', '--path', dir, '--kind', 'folder'])
+      for (let i = 0; i < 10 && !id; i++) {
+        id = await find()
+        if (!id) await new Promise((r) => setTimeout(r, 500))
+      }
+    }
+    return id
+  }
+
+  async function openSession(dir: string, start: boolean, fresh = false): Promise<{ ok: boolean; error?: string }> {
+    const workspaceId = await workspaceFor(dir)
+    if (!workspaceId) return { ok: false, error: 'Orca did not add the folder' }
+    if (start) {
+      if (!fresh && hasHistory(dir)) {
+        // Waking from sleep: continue the last conversation (the hook adds --continue). Orca lets
+        // only the coordinator's own terminal take back the runs its old one coordinated.
+        resumeNext.add(workspaceId)
+        await orca.host.call('agent.launch', { workspaceId, agent: 'claude', prompt: WAKE_PROMPT })
+      } else {
+        // A first or fresh session: the first prompt makes it greet with the queue.
+        await orca.host.call('agent.launch', { workspaceId, agent: 'claude', prompt: 'Start your session.' })
+      }
+    }
+    await orca.host.call('workspace.open', { workspaceId })
+    refreshSoon()
+    return { ok: true }
+  }
+
+  orca.panels.handle('sidebar.createCoordinator', async ({ name, look }) => {
+    const existing = readCoordinators().map((c) => c.name)
+    const invalid = validateName(name.trim(), existing)
+    if (invalid) return { ok: false, error: invalid }
+    const dir = scaffoldCoordinator(COORDINATOR_HOME, { name: name.trim(), look })
+    return openSession(dir, true).catch((e: Error) => ({ ok: false, error: e.message }))
+  })
+
+  // Opening must never launch a second session on a live one: decide from fresh Orca data, not the
+  // last snapshot (it can predate a wake or a worker restart), and ignore repeat clicks in flight.
+  const opening = new Map<string, Promise<{ ok: boolean; error?: string }>>()
+  orca.panels.handle('sidebar.openCoordinator', async ({ key }) => {
+    const c = readCoordinators().find((x) => x.key === key)
+    if (!c) return { ok: false, error: `No coordinator ${key}` }
+    const inFlight = opening.get(key)
+    if (inFlight) return inFlight
+    const job = (async () => {
+      await refresh()
+      return openSession(c.dir, !isLive(c.dir))
+    })().catch((e: Error) => ({ ok: false, error: e.message })).finally(() => opening.delete(key))
+    opening.set(key, job)
+    return job
+  })
+
+  // ---------- context menu actions ----------
+  orca.panels.handle('sidebar.setPriority', async ({ workspaceId, priority }) => {
+    if (!workspaceId.startsWith('identity:')) return { ok: false, error: 'Only worktrees have a priority card' }
+    const key = workspaceId.slice('identity:'.length)
+    const path = join(DATA_DIR, 'cards', `${fileKey(key)}.json`)
+    let card: Record<string, unknown> = {}
+    try {
+      card = JSON.parse(readFileSync(path, 'utf8'))
+    } catch {}
+    const next: Record<string, unknown> = { ...card, worktree: key, updatedAt: Date.now() }
+    if (priority) next.priority = priority
+    else delete next.priority
+    mkdirSync(join(DATA_DIR, 'cards'), { recursive: true })
+    writeFileSync(path, JSON.stringify(next, null, 2))
+    refreshSoon()
+    return { ok: true }
+  })
+
+  orca.panels.handle('sidebar.coordinatorAction', async ({ key, action }) => {
+    const c = readCoordinators().find((x) => x.key === key)
+    if (!c) return { ok: false, error: `No coordinator ${key}` }
+    const panes = allRows.filter((r) => r.path === c.dir).flatMap((r) => r.agents.map((a) => a.paneKey))
+    try {
+      if (action === 'look') {
+        const others = readCoordinators().filter((x) => x.key !== key)
+        const free = freeLooks(others).filter((l) => !c.look || l.color !== c.look.color || l.shape !== c.look.shape)
+        if (free.length) writeLook(c.dir, free[Math.floor(Math.random() * free.length)])
+      } else if (action === 'end') {
+        await closeSessions(run, panes)
+      } else if (action === 'restart') {
+        await closeSessions(run, panes)
+        await openSession(c.dir, true, true)
+      } else if (action === 'delete') {
+        await closeSessions(run, panes)
+        // Close every terminal it still has (Orca refuses to remove a project with open ones), then
+        // forget its project. Orca always keeps saved details for a used workspace, so removal needs
+        // --force; the person already confirmed the delete. Only then is the folder deleted.
+        await run(['terminal', 'close', '--worktree', `path:${c.dir}`, '--all']).catch(() => null)
+        const setups = await run(['project', 'setups']).catch(() => null)
+        const list: any[] = setups?.setups ?? setups ?? []
+        const setup = list.find((x) => x.path === c.dir)
+        if (setup) await run(['project', 'setup-delete', '--setup', setup.id, '--force'])
+        deleteFolder(c.dir)
+      }
+      refreshSoon()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  orca.panels.handle('sidebar.open', async ({ workspaceId }) => {
+    await orca.host.call('workspace.open', { workspaceId })
+    return { opened: true }
+  })
+
+  const summarizer = turnSummarizer({
+    run: (job) => summarizePane({ ...job, goal: job.worktreeId ? readStore().cards[fileKey(job.worktreeId)]?.goal : undefined }),
+    log: (m) => orca.log(m)
+  })
+  disposers.push(() => summarizer.dispose())
+
+  // The summarizer and `orca-flow set` write here; a new summary should show without an event.
+  try {
+    mkdirSync(DATA_DIR, { recursive: true })
+    const watcher = watch(DATA_DIR, { recursive: true }, refreshSoon)
+    disposers.push(() => watcher.close())
+  } catch (e) {
+    orca.log(`not watching ${DATA_DIR}: ${(e as Error).message}`)
+  }
+
+  // Orca may stop an idle worker, and the watcher with it. An agent's summary lands ~10 s after
+  // its turn ends, so look again then.
+  orca.events.on('agent.status.changed', (event) => {
+    summarizer.onStatus(event)
+    refreshSoon()
+    const later = setTimeout(refreshSoon, 15_000)
+    disposers.push(() => clearTimeout(later))
+  })
+  orca.events.on('workspace.created', refreshSoon)
+  orca.events.on('workspace.removed', refreshSoon)
+}
+
+export function deactivate(): void {
+  for (const dispose of disposers.splice(0)) dispose()
+}

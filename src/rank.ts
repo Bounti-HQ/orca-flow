@@ -1,0 +1,66 @@
+// Which workspaces need the person, and in what order. Shared by the panel's sections and,
+// later, the Next-up card. The order is the coordinator skill's: level, then asks that unblock
+// other agents, then quick asks, then longest waiting.
+import type { AgentInfo, WorkspaceRow } from './protocol.ts'
+
+/**
+ * A summary may claim an ask only if it was written under the current rules (it carries
+ * `glance`); older ones produced junk asks like terminal ids.
+ */
+export const claimsAsk = (a: AgentInfo) =>
+  a.summary !== null && typeof a.summary.glance === 'string' && a.summary.needs.type !== 'none'
+
+/**
+ * The one rule for "this agent needs you", mirroring Orca: its blocked (permission prompt) and
+ * waiting (a question) states always do; a working agent never does; a finished turn does when its
+ * summary asks something.
+ */
+export const asksYou = (a: AgentInfo) =>
+  // A working agent has its answer: the last summary's ask is stale until its next turn ends.
+  a.state === 'blocked' || a.state === 'waiting' || (a.state !== 'working' && claimsAsk(a))
+
+/** Orca marks it monitoring (its dashed circle): waiting on tests, CI, a deploy or its workers. */
+export const monitoring = (a: AgentInfo) => a.workingMode === 'monitoring' && !asksYou(a)
+
+/** Done, nothing asked, not monitoring: a session that only holds memory. */
+export const finished = (a: AgentInfo) => a.state !== 'working' && !asksYou(a) && !monitoring(a)
+
+/** The agent that speaks for the workspace: the one asking, else the most urgent state. */
+export function leadAgent(row: WorkspaceRow): AgentInfo | undefined {
+  return row.agents.find(asksYou) ??
+    row.agents.find((a) => a.state === row.state)
+}
+
+/** A workspace needs you when one of its agents asks you something. */
+export const needsYou = (row: WorkspaceRow): boolean => row.agents.some(asksYou)
+
+const LEVEL = { P0: 0, P1: 1, P2: 2, P3: 3 }
+
+export function byUrgency(a: WorkspaceRow, b: WorkspaceRow): number {
+  const level = (r: WorkspaceRow) => (r.priority ? LEVEL[r.priority] : 4)
+  const unblocks = (r: WorkspaceRow) => (r.agents.some((x) => x.summary?.role === 'coordinator' || x.summary?.role === 'lead') ? 0 : 1)
+  const quick = (r: WorkspaceRow) => (leadAgent(r)?.summary?.effort === 'quick' ? 0 : 1)
+  return (
+    level(a) - level(b) ||
+    unblocks(a) - unblocks(b) ||
+    quick(a) - quick(b) ||
+    (a.lastActivityAt ?? 0) - (b.lastActivityAt ?? 0)
+  )
+}
+
+/** Everything waiting on the person, most urgent first. */
+export const waitingQueue = (rows: WorkspaceRow[]) => rows.filter(needsYou).sort(byUrgency)
+
+/**
+ * Where "jump to next" goes: the top of the queue, or, when the person jumped to that one moments
+ * ago and is pressing again, the one after it, so skipping an item never traps them on it.
+ */
+export function nextTarget(
+  queue: WorkspaceRow[],
+  last: { id: string; at: number } | null,
+  now: number
+): WorkspaceRow | undefined {
+  if (queue.length === 0) return undefined
+  const i = last && now - last.at < 10 * 60_000 ? queue.findIndex((r) => r.id === last.id) : -1
+  return queue[(i + 1) % queue.length]
+}

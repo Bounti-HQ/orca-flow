@@ -1,0 +1,160 @@
+---
+name: orca-flow
+description: >-
+  How agents in Orca split, prioritize, delegate and track work on a memory-constrained machine,
+  in three roles: the user's home coordinators, workstream leads and workers. Use when acting as a
+  coordinator or lead, when your prompt names your role, when splitting work across agents, when
+  spawning or handing work to another agent or worktree, when the user sets or asks about
+  priority (P0-P3, now/today/soon/someday), when asked what to work on next, and always when
+  running in one of the user's coordinator folders under ~/orca/coordinators.
+---
+
+# Orca Flow
+
+Work flows through three roles so the user can switch between workstreams cheaply and never has to
+decide what is next:
+
+| Role            | Owns                                          | Does the work itself?       |
+| --------------- | --------------------------------------------- | --------------------------- |
+| **Coordinator** | The user's projects, worktree capacity, order | Never edits code            |
+| **Lead**        | One workstream: its worktree, branch and PR   | Small fixes only            |
+| **Worker**      | One task                                      | Yes, then reports and ends  |
+
+The user talks to coordinators to start work and to leads to steer it. Leads hand tasks to workers
+and stay free for the next request.
+
+**Find your role, then read its file:**
+
+- Your working directory is inside `~/orca/coordinators`: **coordinator**, read
+  [roles/coordinator.md](roles/coordinator.md).
+- Your prompt says `Your role: lead`: **lead**, read [roles/lead.md](roles/lead.md).
+- You were dispatched with a Task and Dispatch id and no role line: **worker**, read
+  [roles/worker.md](roles/worker.md).
+- The user started this chat themselves (no Task or Dispatch id): do the work yourself; if it needs
+  more than one agent, act as a lead **without a coordinator** (see the end of
+  [roles/lead.md](roles/lead.md)).
+
+Everything below applies to every role. Load the `orchestration` skill for command details
+(`orca skills get orchestration`): this skill decides *what* to do, that one says *how*.
+
+`orca-flow` below is the script that ships with this skill: run it as
+`node <this skill's base directory>/scripts/orca-flow.mjs <command>`. It reads the same data as the
+user's Orca Flow sidebar, so what you rank and report matches what they see.
+
+## Priority vocabulary
+
+Use these words exactly, in cards, specs, summaries and when talking to the user.
+
+| Level | Word        | Meaning                                                               |
+| ----- | ----------- | --------------------------------------------------------------------- |
+| P0    | **now**     | Blocking production, a customer or a release. Drop everything.        |
+| P1    | **today**   | On the critical path of what the user is focused on.                  |
+| P2    | **soon**    | Matters, but nothing breaks if it waits a day.                        |
+| P3    | **someday** | Background, exploration, nice-to-have.                                |
+
+- Whoever creates a workstream sets its level. Tasks inherit it unless clearly different; say why
+  when you change it.
+- The user overrides by saying so ("make this P0", "that's someday"). Their word wins; update the
+  card at once.
+- When unsure between two levels, pick the lower one and say so in one line.
+
+Every time you need the user, classify the ask:
+
+| Ask type   | Meaning                                       |
+| ---------- | --------------------------------------------- |
+| `decision` | Pick between options; needs thought.          |
+| `approval` | Yes/no on something already prepared.         |
+| `review`   | Look at a diff, PR, artifact or result.       |
+| `info`     | A fact only the user has.                     |
+
+Queue order for the user: level, then asks that unblock other agents, then `approval`/`info`
+before `decision`/`review`, then longest waiting. Ask one question at a time.
+
+## Spawning
+
+- **Claude subagent (Agent tool):** only read-only lookups that return an answer to you and edit
+  nothing (search, read docs, summarize code). No tracking, no extra memory.
+- **Orca worker (`orca orchestration worker-start`):** when you hand off work that edits files,
+  takes more than a few minutes, or the user may want to watch or talk to.
+- **Agent:** always `--agent claude`. Use Codex only when the user names it.
+
+**Worker lifecycle is Orca's job.** A finished worker closes on its own and frees its memory.
+`orca orchestration send --to dispatch:<id>` reaches it in any state: a closed one is reopened with
+its whole conversation, so follow-up work on the same area goes to the same worker instead of a new
+one. Never release or close workers yourself, and use `--keep-open` only for an agent whose chat
+the user will keep using (a lead).
+
+**Only coordinators create worktrees.** A worktree costs a setup run (install) and usually a dev
+server; that, not the checkout, is what slows the machine. Leads and workers work in `current`;
+when a task truly needs its own branch, ask your coordinator with `orca orchestration ask`.
+
+### Capacity gate
+
+Capacity is memory, not counts: a worktree on disk costs nothing, while agents (about 0.5 GB each)
+and dev servers (often 2 GB or more per project) are what slow the machine. Before **every**
+`worker-start`:
+
+```sh
+orca-flow capacity --json                 # in general
+orca-flow capacity --repo <name> --json   # before creating a worktree for that project
+```
+
+It compares free memory (what Orca reports as available, minus a 2 GB margin) with what starting
+costs on this machine: an agent, and per project the environment its worktrees run.
+
+- `ok`: a new worktree with its environment fits; start anything.
+- `agents-only`: another agent fits in an existing worktree; queue anything that needs a new one.
+- `full`: not even an agent fits; queue the task.
+- `pressure`: macOS reports memory pressure; queue everything except P0.
+
+When the answer is no, `reclaimable` names what would free memory: `idleEnvironments` (a
+worktree's dev servers running while no agent there works, usually the biggest win) and
+`finishedSessions`. Offer the largest as an `approval` ask; never stop anything without a yes.
+
+**Queue, don't squeeze.** When the gate says no, queue the task instead of starting it, and tell
+the user it is queued and why in one line. A task needs a Run: if `orca orchestration run-current`
+shows none, `run-create --objective "<goal>"` first. Then `orca orchestration task-create
+--task-title "<outcome>" --spec-file -`. Queued tasks show in `orca orchestration task-list
+--ready`; start the highest first when a slot frees, with `worker-start --task <id>` plus the place
+flags it needs. **P0 preempts:** if a P0 is queued, propose pausing
+the lowest-priority idle agent as an `approval` ask; never stop one without the user's yes.
+
+## Workstream cards
+
+Each worktree has one card that answers the user's four switch questions. The coordinator writes
+it when it creates the workstream; the sidebar's summarizer fills the rest after every turn.
+
+| Field   | Answers                                       | Written by                 |
+| ------- | --------------------------------------------- | -------------------------- |
+| `goal`  | What did I ask for?                           | Coordinator, at creation   |
+| `fits`  | Which project, which coordinator, what's next | Coordinator, at creation   |
+| `since` | What happened while I was away?               | Summarizer, each turn      |
+| `needs` | What does it want from me, with options?      | Summarizer, each turn      |
+
+```sh
+orca-flow set --worktree <selector> --priority today \
+  --goal "<one sentence: the outcome, not the steps>" \
+  --fits "<one sentence: what this unblocks>"
+```
+
+`<selector>` is any Orca worktree selector: `name:<name>`, `path:<path>` (a `worker-start` receipt's
+`workspace` is `<repoId>::<path>`), or `current`. A lead updates its worktree's card when the goal
+or level changes (`orca-flow set --worktree current --priority now`). Workers never write cards: they
+share their worktree's, and the first line of a worker's spec is its goal, so write that line as a
+one-sentence outcome. `orca-flow get --worktree <selector>` shows a card.
+
+## Keeping the user's attention cheap
+
+- Relay outcomes, not logs: what changed, the evidence in one line, what is next.
+- End your turn as soon as work is handed off; Orca wakes you when workers report. Never poll.
+- Answer a worker's question yourself when it follows from the task or the user's instructions;
+  bring the user only what only they can decide.
+
+## Never
+
+- Spawn without running the capacity gate.
+- Use priority words other than now/today/soon/someday.
+- Create a worktree unless you are a coordinator.
+- Release or close workers; Orca does that.
+- Remove a worktree without the user's yes.
+- Poll workers or run watch scripts.

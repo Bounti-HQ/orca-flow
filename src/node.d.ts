@@ -1,0 +1,66 @@
+// Just the Node APIs the worker uses, so `tsc` passes without @types/node.
+declare module 'node:child_process' {
+  export function execFile(
+    file: string,
+    args: readonly string[],
+    options: { maxBuffer?: number; timeout?: number },
+    callback: (error: Error | null, stdout: string, stderr: string) => void
+  ): unknown
+}
+declare module 'node:fs' {
+  export function existsSync(path: string): boolean
+}
+declare module 'node:fs' {
+  export function mkdirSync(path: string, options?: { recursive?: boolean }): unknown
+  export function readdirSync(path: string): string[]
+  export function readFileSync(path: string, encoding: 'utf8'): string
+  export function watch(path: string, options: { recursive?: boolean }, listener: () => void): { close(): void }
+}
+declare module 'node:os' {
+  export function homedir(): string
+}
+declare module 'node:path' {
+  export function join(...parts: string[]): string
+}
+declare module 'node:child_process' {
+  export function execFileSync(file: string, args: readonly string[], options: { encoding: 'utf8' }): string
+}
+declare module 'node:fs' {
+  export function readdirSync(path: string): string[]
+}
+declare module 'node:fs' {
+  export function mkdtempSync(prefix: string): string
+  export function writeFileSync(path: string, data: string): void
+}
+declare module 'node:os' {
+  export function tmpdir(): string
+}
+declare module 'node:child_process' {
+  export function execFile(file: string, args: readonly string[], options: { cwd?: string; timeout?: number; maxBuffer?: number }, callback: (error: Error | null, stdout: string, stderr: string) => void): unknown
+}
+declare module 'node:fs' {
+  export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void
+}
+declare module 'node:child_process' {
+  export function execFile(file: string, args: readonly string[], options: { cwd?: string; timeout?: number; maxBuffer?: number; env?: Record<string, string> }, callback: (error: Error | null, stdout: string, stderr: string) => void): unknown
+}
+declare module 'node:fs' {
+  export function renameSync(from: string, to: string): void
+}
+declare const process: { env: Record<string, string | undefined>; pid: number }
+declare module 'node:child_process' {
+  export function execFile(file: string, args: readonly string[], options: { cwd?: string; timeout?: number; maxBuffer?: number; env?: Record<string, string> }, callback: (error: Error | null, stdout: string, stderr: string) => void): { stdin: { end(data: string): void } | null }
+}
+declare module 'node:os' {
+  export function userInfo(): { username: string }
+}
+declare module 'node:fs' {
+  export function lstatSync(path: string): { isSymbolicLink(): boolean }
+  export function readlinkSync(path: string): string
+  export function symlinkSync(target: string, path: string): void
+  export function unlinkSync(path: string): void
+}
+interface ImportMeta { url: string }
+declare module 'node:fs' {
+  export function copyFileSync(from: string, to: string): void
+}

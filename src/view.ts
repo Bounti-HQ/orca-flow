@@ -1,0 +1,451 @@
+// The panel as pure functions: a snapshot and the UI state in, HTML out. No DOM, so it is tested
+// in Node; src/panel/app.ts only wires clicks and redraws.
+//
+// Layout (agreed in the mockup): a one-row cockpit; Up next as collapsible briefings, the first
+// open (what it is about, the ask at a glance, one button to jump); then the coordinators tree.
+// Characters carry everything: color = project, shape = role, face = state.
+import type { AgentInfo, Capacity, CockpitStats, Coordinator, LookShape, Look, Snapshot, StartedGroup, WorkspaceRow } from './protocol.ts'
+import { asksYou, claimsAsk, monitoring, needsYou, waitingQueue } from './rank.ts'
+
+export type UiState = {
+  /** Up-next items the person opened, and ones they closed (the first is open by default). */
+  opened: Set<string>
+  closed: Set<string>
+  /** Coordinator groups folded away, and bottom folds (finished, idle) opened. */
+  folded: Set<string>
+  unfolded: Set<string>
+  query: string
+  now: number
+  /** The opened cockpit: its stats ('loading' while Orca's memory report runs), the action awaiting
+   *  Yes/No, and the last action's result. */
+  cockpitOpen: boolean
+  stats: CockpitStats | null
+  statsLoading: boolean
+  confirming: string | null
+  /** The confirmed action still running. */
+  pending: string | null
+  /** A row's inline action status: running, done, or failed (keyed like data-menu). */
+  status: Map<string, { text: string; tone: 'pending' | 'ok' | 'bad' }>
+  notice: { key: string; text: string; ok: boolean } | null
+}
+
+export const emptyUi = (): UiState => ({
+  opened: new Set(), closed: new Set(), folded: new Set(), unfolded: new Set(), query: '', now: Date.now(),
+  cockpitOpen: false, stats: null, statsLoading: false, confirming: null, pending: null, notice: null, status: new Map()
+})
+
+// ---------- small helpers ----------
+
+export const esc = (s: unknown) =>
+  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s)
+const WORD = { P0: 'now', P1: 'today', P2: 'soon', P3: 'someday' } as const
+
+export function ago(ms: number | null, now: number): string {
+  if (!ms) return ''
+  const m = Math.max(0, Math.round((now - ms) / 60_000))
+  return m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`
+}
+
+// ---------- characters ----------
+
+export type Face = 'working' | 'monitoring' | 'asks' | 'done' | 'failed' | 'idle' | 'queued'
+export type Shape = 'solo' | 'lead' | 'worker' | LookShape
+
+const PALETTE = ['#5b8def', '#e0a04a', '#4cb782', '#b07cf0', '#e06c8a', '#4fbfc8', '#c9b458', '#7c8cff', '#e07b4f', '#8fbf5a']
+/** A stable color per project name. */
+export function colorOf(project: string): string {
+  let h = 0
+  for (const ch of project) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return PALETTE[h % PALETTE.length]
+}
+const NEUTRAL = '#a6a6b0'
+
+/** An SVG character. */
+export function character(color: string, shape: Shape, face: Face, size = 16, badge = true): string {
+  const s = size, ink = '#141416', sw = Math.max(1, s * 0.07)
+  const queued = face === 'queued'
+  const paint = queued ? `fill="none" stroke="${color}" stroke-width="${Math.max(1, s * 0.06)}" stroke-dasharray="${s * 0.12} ${s * 0.09}"` : `fill="${color}"`
+  const body =
+    shape === 'lead'
+      ? `<rect x="${s * 0.06}" y="${s * 0.14}" width="${s * 0.88}" height="${s * 0.8}" rx="${s * 0.2}" ${paint}/>${queued ? '' : `<path d="M${s * 0.3} ${s * 0.16} l${s * 0.1} -${s * 0.12} l${s * 0.1} ${s * 0.1} l${s * 0.1} -${s * 0.1} l${s * 0.1} ${s * 0.12}" fill="${color}"/>`}`
+      : shape === 'worker'
+        ? `<circle cx="${s / 2}" cy="${s * 0.55}" r="${s * 0.38}" ${paint}/>`
+        : shape === 'pentagon'
+          ? `<path d="M${s / 2} ${s * 0.04} L${s * 0.95} ${s * 0.4} L${s * 0.78} ${s * 0.95} L${s * 0.22} ${s * 0.95} L${s * 0.05} ${s * 0.4} Z" ${paint}/>`
+          : shape === 'hex'
+            ? `<path d="M${s * 0.27} ${s * 0.08} H${s * 0.73} L${s * 0.96} ${s * 0.5} L${s * 0.73} ${s * 0.92} H${s * 0.27} L${s * 0.04} ${s * 0.5} Z" ${paint}/>`
+            : shape === 'shield'
+              ? `<path d="M${s * 0.1} ${s * 0.12} Q${s / 2} ${s * 0.02} ${s * 0.9} ${s * 0.12} V${s * 0.5} Q${s * 0.9} ${s * 0.82} ${s / 2} ${s * 0.97} Q${s * 0.1} ${s * 0.82} ${s * 0.1} ${s * 0.5} Z" ${paint}/>`
+          : `<rect x="${s * 0.08}" y="${s * 0.1}" width="${s * 0.84}" height="${s * 0.84}" rx="${s * 0.42}" ${paint}/>`
+  const eye = (x: number, y: number, r = 0.07) => `<circle cx="${s * x}" cy="${s * y}" r="${s * r}" fill="${queued ? color : ink}"/>`
+  const line = (d: string) => `<path d="${d}" stroke="${ink}" stroke-width="${sw}" fill="none" stroke-linecap="round"/>`
+  const faces: Record<Face, string> = {
+    working: eye(0.4, 0.52) + eye(0.64, 0.52) + line(`M${s * 0.44} ${s * 0.7} h${s * 0.14}`),
+    monitoring: eye(0.42, 0.4) + eye(0.66, 0.4) + line(`M${s * 0.42} ${s * 0.66} h${s * 0.14}`),
+    asks: eye(0.37, 0.46, 0.09) + eye(0.61, 0.46, 0.09) + `<circle cx="${s * 0.49}" cy="${s * 0.68}" r="${s * 0.06}" fill="${ink}"/>`,
+    done:
+      line(`M${s * 0.3} ${s * 0.5} q${s * 0.07} -${s * 0.09} ${s * 0.14} 0`) +
+      line(`M${s * 0.55} ${s * 0.5} q${s * 0.07} -${s * 0.09} ${s * 0.14} 0`) +
+      line(`M${s * 0.38} ${s * 0.64} q${s * 0.12} ${s * 0.1} ${s * 0.24} 0`),
+    failed:
+      line(`M${s * 0.31} ${s * 0.41} l${s * 0.12} ${s * 0.12} M${s * 0.43} ${s * 0.41} l-${s * 0.12} ${s * 0.12}`) +
+      line(`M${s * 0.56} ${s * 0.41} l${s * 0.12} ${s * 0.12} M${s * 0.68} ${s * 0.41} l-${s * 0.12} ${s * 0.12}`) +
+      line(`M${s * 0.4} ${s * 0.7} h${s * 0.2}`),
+    idle: line(`M${s * 0.31} ${s * 0.5} h${s * 0.12}`) + line(`M${s * 0.56} ${s * 0.5} h${s * 0.12}`),
+    queued: eye(0.38, 0.5, 0.055) + eye(0.62, 0.5, 0.055)
+  }
+  // The raised hand reaches outside the body, so the drawing gets room on the right and top.
+  const hand = face === 'asks' ? `<path d="M${s * 0.84} ${s * 0.52} L${s * 1.02} ${s * 0.14}" stroke="${color}" stroke-width="${s * 0.11}" stroke-linecap="round"/><circle cx="${s * 1.03}" cy="${s * 0.1}" r="${s * 0.1}" fill="${color}"/>` : ''
+  // Status badge at the bottom-right, like Orca's own status icons, ringed in the panel color.
+  const bx = s * 0.86, by = s * 0.86, br = s * 0.25, r2 = br * 0.72
+  const rim = `<circle cx="${bx}" cy="${by}" r="${br + s * 0.06}" class="rim"/>`
+  const spin = (cls: string, inner: string) => `${rim}<g class="${cls}" style="transform-origin:${bx}px ${by}px">${inner}</g>`
+  const badges: Partial<Record<Face, string>> = {
+    working: spin('spin', `<circle cx="${bx}" cy="${by}" r="${r2}" fill="none" class="track" stroke-width="${s * 0.09}"/><path d="M${bx} ${by - r2} a${r2} ${r2} 0 0 1 ${r2} ${r2}" fill="none" stroke="#e8b64c" stroke-width="${s * 0.09}" stroke-linecap="round"/>`),
+    monitoring: spin('spin slow', `<circle cx="${bx}" cy="${by}" r="${r2}" fill="none" stroke="#e8b64c" stroke-width="${s * 0.08}" stroke-dasharray="${s * 0.07} ${s * 0.07}"/>`),
+    done: `${rim}<circle cx="${bx}" cy="${by}" r="${br}" fill="#5fbf8a"/><path d="M${bx - br * 0.45} ${by} l${br * 0.32} ${br * 0.32} l${br * 0.6} -${br * 0.62}" fill="none" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round" stroke-linejoin="round"/>`,
+    asks: `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="ask-badge"/><text x="${bx}" y="${by + br * 0.42}" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="${br * 1.3}" font-weight="800" fill="#161618">?</text>`,
+    failed: `${rim}<circle cx="${bx}" cy="${by}" r="${br}" fill="#ec6a52"/><path d="M${bx - br * 0.4} ${by - br * 0.4} l${br * 0.8} ${br * 0.8} M${bx + br * 0.4} ${by - br * 0.4} l-${br * 0.8} ${br * 0.8}" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round"/>`
+  }
+  // The hand and the badge reach past the body to the top-right; only then does the frame make room
+  // there. Without them (the New coordinator preview, the loader) the body sits centered.
+  const pad = s * 0.16
+  const reaches = face === 'asks' || (badge && Boolean(badges[face]))
+  const box = reaches ? `${-pad / 2} ${-pad} ${s + pad * 1.5} ${s + pad * 1.5}` : `0 0 ${s} ${s}`
+  const svg = `<svg class="ch${face === 'idle' ? ' faded' : ''}" width="${s}" height="${s}" viewBox="${box}" aria-hidden="true">${body}${faces[face]}${hand}${badge ? (badges[face] ?? '') : ''}</svg>`
+  return svg
+}
+
+/** The name a row shows: the agent's title, unless it leaks an id; then the workspace name. */
+const nameOf = (a: AgentInfo, row: WorkspaceRow) => (showable(a.title) ? a.title : row.name)
+
+/** A character with a one- or two-word status tooltip (the panel's own tooltip, not the OS one). */
+function tipped(svg: string, tip: string, tone = ''): string {
+  return `<span class="who" data-tip="${esc(tip)}"${tone ? ` data-tone="${tone}"` : ''}>${svg}</span>`
+}
+
+const STATUS: Record<Face, string> = { working: 'Working', monitoring: 'Monitoring', asks: 'Waiting on you', done: 'Done', failed: 'Failed', idle: 'Idle', queued: 'Queued' }
+
+/** An agent's character with its status: what Orca shows, in at most two words. */
+function agentCharacter(a: AgentInfo, row: WorkspaceRow, all: AgentInfo[], size = 20): string {
+  const face = faceOf(a)
+  const tip = a.state === 'blocked' ? 'Needs approval' : STATUS[face]
+  return tipped(character(colorOf(row.repo), shapeOf(a, all), face, size), tip, face === 'asks' ? 'ask' : '')
+}
+
+// ---------- reading the model ----------
+
+/**
+ * Only summaries written under the current rules (they carry `glance`) may claim an ask; older ones
+ * produced junk like terminal ids. Orca's own blocked/waiting states always count.
+ */
+const trusted = (a: AgentInfo) => a.summary !== null && typeof a.summary.glance === 'string'
+
+/** Text that leaks ids, hashes or paths is never shown. */
+const LEAK = /term_[0-9a-f]|[_-][0-9a-f]{10,}\b|[0-9a-f]{8}-[0-9a-f]{4}|\b[0-9a-f]{12,}\b|(?:^|\s)(?:~|\.)?\/[\w.-]+\//i
+export const showable = (text: string | undefined): text is string => Boolean(text) && !LEAK.test(text!)
+
+/** The face shows what Orca shows: its monitoring mode, otherwise its state. */
+export function faceOf(a: AgentInfo): Face {
+  if (asksYou(a)) return 'asks'
+  if (monitoring(a)) return 'monitoring'
+  return a.state === 'working' ? 'working' : 'done'
+}
+
+/** Agents that dispatched someone wear the coordinator shape; workers were dispatched; everyone else works alone. */
+export function shapeOf(a: AgentInfo, all: AgentInfo[]): Shape {
+  // A lead (told so at spawn) or any agent with workers under it wears the crowned square.
+  if (a.summary?.role === 'lead' || a.summary?.role === 'coordinator' || all.some((b) => b.leadPane === a.paneKey)) return 'lead'
+  if (a.leadPane || a.summary?.role === 'worker') return 'worker'
+  return 'solo'
+}
+
+type Placed = { a: AgentInfo; row: WorkspaceRow }
+
+function coordinatorName(key: string, coordinators: Coordinator[]): string {
+  return key === 'you' ? 'You' : (coordinators.find((c) => c.key === key)?.name ?? key)
+}
+
+/** What the briefing says the workstream is about; older summaries fall back to their goal. */
+const aboutOf = ({ a, row }: Placed) => [a.summary?.about, row.card?.goal, a.summary?.goal].find(showable) ?? ''
+
+/** The ask in about eight words, or why the agent is waiting when no summary says. */
+export function glanceOf({ a }: Placed): string {
+  if (a.state === 'waiting' && a.question) return clip(a.question, 90)
+  if (claimsAsk(a) && showable(a.summary?.glance)) return a.summary!.glance!
+  if (trusted(a) && a.summary!.needs.type !== 'none' && showable(a.summary!.needs.ask)) return clip(a.summary!.needs.ask, 60)
+  return a.state === 'blocked' ? 'Approve a permission prompt.' : a.state === 'waiting' ? 'Answer its question.' : 'Waiting for your input.'
+}
+
+const askType = ({ a }: Placed) =>
+  a.state === 'waiting' ? 'question' : a.state === 'blocked' ? 'approval' : a.summary && a.summary.needs.type !== 'none' ? a.summary.needs.type : 'info'
+
+// ---------- cockpit ----------
+
+type Gauge = { key: string; icon: string; text: string; tone: '' | 'warn' | 'danger'; tip: string }
+
+/** Gauge tooltips stay within five words. */
+export function gaugesOf(c: Capacity): Gauge[] {
+  const out: Gauge[] = []
+  if (c.freeGB !== null || c.verdict === 'pressure') {
+    const free = Math.max(0, c.freeGB ?? 0)
+    const tip = {
+      ok: `Memory, after ${c.marginGB} GB margin`,
+      'agents-only': 'Room for agents, not environments',
+      full: 'Full: new work queues',
+      pressure: 'Memory pressure: only P0 starts'
+    }[c.verdict]
+    out.push({ key: 'memory', icon: 'chip', text: `${free} GB free`, tone: c.verdict === 'ok' ? '' : c.verdict === 'agents-only' ? 'warn' : 'danger', tip })
+  }
+  if (c.diskFreeGB != null) {
+    const d = c.diskFreeGB
+    out.push({ key: 'disk', icon: 'disk', text: `${d >= 100 ? Math.round(d) : d} GB free`, tone: d < 10 ? 'danger' : d < 25 ? 'warn' : '',
+      tip: d < 10 ? 'Disk nearly full' : d < 25 ? 'Disk low: worktrees need space' : 'Disk free on this Mac' })
+  }
+  if (c.finishedOpen > 0) {
+    out.push({ key: 'idle', icon: 'pause', text: String(c.finishedOpen), tone: '',
+      tip: `${c.finishedOpen} finished ${c.finishedOpen === 1 ? 'session' : 'sessions'} still open` })
+  }
+  return out
+}
+
+const ICON: Record<string, string> = {
+  chip: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="8" rx="1.5"/><rect x="6.5" y="6.5" width="3" height="3" rx=".5"/><path d="M6.5 1.5V4M9.5 1.5V4M6.5 12v2.5M9.5 12v2.5M1.5 6.5H4M1.5 9.5H4M12 6.5h2.5M12 9.5h2.5"/></svg>',
+  disk: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="8" rx="2"/><path d="M5 9.5h3"/><circle cx="11" cy="9.5" r=".6" fill="currentColor"/></svg>',
+  pause: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 4v8M10 4v8"/></svg>',
+  search: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>',
+  chev: '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 2l3 3-3 3"/></svg>',
+  plus: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3.5v9M3.5 8h9"/></svg>'
+}
+
+const size = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`)
+
+/** A row's inline status, shown where its time or count normally sits; null when it has none. */
+function rowStatus(ui: UiState, key: string): string | null {
+  const st = ui.status.get(key)
+  if (!st) return null
+  return `<span class="rstatus ${st.tone}">${st.tone === 'pending' ? '<span class="refreshing"></span>' : ''}${esc(st.text)}</span>`
+}
+
+/** An action that asks "Yes · No" in place (unless `ask` is false), then shows its result. */
+function action(key: string, label: string, question: string, ui: UiState, ask = true): string {
+  if (ui.pending === key) return `<span class="pending"><span class="refreshing"></span>${key.startsWith('remove:') ? 'Removing…' : 'Sleeping…'}</span>`
+  if (ui.notice?.key === key) return `<span class="notice ${ui.notice.ok ? 'ok' : 'bad'}">${esc(ui.notice.text)}</span>`
+  if (ui.confirming === key) return `<span class="confirm">${esc(question)} <button class="yes" data-yes="${esc(key)}">Yes</button> <button class="no" data-no>No</button></span>`
+  return ask ? `<button class="act" data-act="${esc(key)}">${esc(label)}</button>` : `<button class="act" data-yes="${esc(key)}">${esc(label)}</button>`
+}
+
+/** While Orca's memory report runs the first time: three characters hop in turn over a quiet line. */
+export function crew(text: string): string {
+  const faces = [character(PALETTE[0], 'solo', 'done', 18, false), character(PALETTE[1], 'lead', 'done', 18, false), character(PALETTE[2], 'worker', 'done', 18, false)]
+  return `<div class="loader" aria-busy="true" aria-label="${esc(text)}"><div class="crew">${faces.map((c) => `<span class="hop">${c}</span>`).join('')}</div><span class="shimmer-text">${esc(text)}</span></div>`
+}
+
+/** While Orca's memory report runs the first time. */
+function loader(): string {
+  return `<div class="copen">${crew('Checking what’s running…')}</div><div class="hair"></div>`
+}
+
+function cockpitOpen(snap: Snapshot, ui: UiState): string {
+  if (!ui.stats) return loader()
+  const st = ui.stats
+  const all = snap.rows.flatMap((r) => r.agents)
+  const placed = (pane: string) => snap.rows.flatMap((row) => row.agents.map((a) => ({ a, row }))).find((p) => p.a.paneKey === pane)
+  const swap = st.swap && st.swap.totalGB > 0 ? st.swap : null
+  const pct = swap ? Math.round((swap.usedGB / swap.totalGB) * 100) : 0
+  const ram = st.ram ?? null
+  const ramPct = ram ? Math.min(100, Math.round((ram.usedGB / ram.totalGB) * 100)) : 0
+  // A labelled bar: neutral until it is nearly full.
+  const meter = (label: string, pct: number, text: string) =>
+    `<div class="swap"><span class="meter-label">${label}</span><span class="bar${pct >= 85 ? ' warn' : ''}"><span style="width:${pct}%"></span></span><span class="${pct >= 85 ? 'warn' : 'muted'}">${text}</span></div>`
+  const placedAll = snap.rows.flatMap((row) => row.agents.map((a) => ({ a, row })))
+  const stat = (n: number, label: string, cls = '', attrs = '') =>
+    n > 0 ? `<${attrs ? 'button' : 'div'} class="stat ${cls}"${attrs}><span class="n">${n}</span><span class="l">${label}</span></${attrs ? 'button' : 'div'}>` : ''
+  const counts = [
+    stat(all.filter((a) => faceOf(a) === 'asks').length, 'asking', 'ask'),
+    stat(all.filter((a) => faceOf(a) === 'working').length, 'working'),
+    stat(all.filter((a) => faceOf(a) === 'monitoring').length, 'monitoring'),
+    stat(finishedOf(placedAll).length, 'finished ›', 'more', ' data-show-finished')
+  ].join('')
+  // What a session started outside itself (a dev server) sits under it; Orca does not count it.
+  const startedName = (g: StartedGroup) => (g.count > 1 ? `${g.name} +${g.count - 1}` : g.name)
+  const startedLine = (g: StartedGroup, ch = '', where = '') =>
+    `<div class="item static${ch ? '' : ' started'}">${ch || '<span class="sub-mark">↳</span>'}<span class="t">${esc(startedName(g))}${where ? ` <span class="soft">${esc(where)}</span>` : ''}</span><span class="r">${size(g.memMB)}</span></div>`
+  const started = st.started ?? []
+  const heavy = st.heaviest.map((h) => {
+    const p = placed(h.paneKey)
+    const ch = p ? character(colorOf(p.row.repo), shapeOf(p.a, all), faceOf(p.a), 16) : character(colorOf(h.repo), 'solo', 'done', 16)
+    return `<div class="item static">${ch}<span class="t">${esc(h.title)}</span><span class="r">${size(h.memMB)}</span>${action(`close:${h.paneKey}`, 'sleep', '', ui, false)}</div>` +
+      started.filter((g) => g.paneKey === h.paneKey).map((g) => startedLine(g)).join('')
+  }).join('')
+  // Started by an agent that is not open any more (it slept): still running, still costing memory.
+  const live = new Set(all.map((a) => a.paneKey))
+  const orphans = started.filter((g) => !g.paneKey || !live.has(g.paneKey)).map((g) => startedLine(g, character(colorOf(g.repo), 'solo', 'idle', 16), g.worktreeName)).join('')
+  const actions = [
+    ...st.merged.map((m) => `<div class="merged">${action(`remove:${m.workspaceId}`, `Remove ${m.name}`, `Remove ${m.name}?`, ui)}<span class="soft">PR #${m.pr} merged · clean</span></div>`)
+  ].filter(Boolean).join('')
+  return `<div class="copen">
+    <div class="cgroup"><span class="label">Memory${ui.statsLoading ? ' <span class="refreshing" aria-label="Refreshing"></span>' : ''}</span>
+      ${ram ? meter('RAM', ramPct, `${ram.usedGB} of ${ram.totalGB} GB used`) : ''}
+      ${swap ? meter('Swap', pct, `${swap.usedGB} of ${swap.totalGB} GB`) : ''}
+    </div>
+    ${heavy || orphans ? `<div class="cgroup"><span class="label">Heaviest</span>${heavy}${orphans}</div>` : ''}
+    ${counts ? `<div class="cgroup"><span class="label">Agents</span><div class="stats">${counts}</div></div>` : ''}
+    ${actions ? `<div class="cactions">${actions}</div>` : ''}
+  </div><div class="hair"></div>`
+}
+
+function cockpit(snap: Snapshot, ui: UiState): string {
+  const gauges = snap.capacity ? gaugesOf(snap.capacity) : []
+  return `<div class="cockpit" data-cockpit role="button" tabindex="0" aria-expanded="${ui.cockpitOpen}">${gauges
+    .map((g) => `<span class="gauge ${g.tone}" data-tip="${esc(g.tip)}" data-tone="${g.tone}" aria-label="${esc(g.tip)}">${ICON[g.icon]}<span>${esc(g.text)}</span></span>`)
+    .join('')}<span class="spacer"></span><span class="chev">${ICON.chev}</span></div>`
+}
+
+// ---------- up next ----------
+
+function upNext(placed: Placed[], all: AgentInfo[], coordinators: Coordinator[], ui: UiState): string {
+  if (placed.length === 0) return ''
+  const items = placed.map((p, i) => {
+    const key = p.a.paneKey || p.row.id
+    const open = (i === 0 && !ui.closed.has(key)) || ui.opened.has(key)
+    const head = `<button class="item" data-brief="${esc(key)}" data-menu="agent:${esc(p.a.paneKey)}" aria-expanded="${open}">${agentCharacter(p.a, p.row, all)}<span class="t${open ? ' strong' : ''}">${esc(nameOf(p.a, p.row))}</span><span class="r">${rowStatus(ui, `agent:${p.a.paneKey}`) ?? `${esc(coordinatorName(p.a.coordinator, coordinators))}${p.row.priority ? ` · ${p.row.priority}` : ''}`}</span></button>`
+    if (!open) return head
+    const about = aboutOf(p)
+    return `${head}<div class="brief">${about ? `<div class="about">${esc(about)}</div>` : ''}<div class="glance"><span class="kicker">Asks · ${esc(askType(p))}</span><span>${esc(glanceOf(p))}</span></div><button class="jump" data-open="${esc(p.row.id)}">Jump to session</button></div>`
+  })
+  return `<section class="upnext"><div class="label">Up next · ${placed.length}</div><div class="group">${items.join('')}</div></section><div class="hair"></div>`
+}
+
+// ---------- your coordinators ----------
+
+/**
+ * The worktree's PR the way Orca's own workspace card shows it: the icon says the state (open,
+ * merged, closed, draft); an open PR is colored by its checks (failed red, pending yellow, passed
+ * green), anything else by its state (merged purple, closed and draft grey).
+ */
+export function prBadge(pr: WorkspaceRow['pr']): string {
+  if (!pr) return ''
+  const state = pr.state === 'merged' || pr.state === 'closed' || pr.state === 'draft' ? pr.state : 'open'
+  const tone = state === 'open' ? { failure: 'fail', pending: 'pending', success: 'ok', cancelled: 'closed' }[pr.checks ?? 'success'] ?? 'ok' : state
+  const word = state === 'merged' ? 'merged' : state === 'closed' ? 'closed' : state === 'draft' ? 'draft' : pr.checks === 'failure' ? 'checks failed' : pr.checks === 'pending' ? 'checks pending' : 'open'
+  return `<span class="pr pr-${tone}" role="link" data-pr="${esc(pr.url)}" data-tip="PR #${pr.number} ${word}">${PR_ICON[state]}</span>`
+}
+
+const PR_ICON: Record<string, string> = {
+  open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M6 9v12"/></svg>',
+  merged: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>',
+  closed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><path d="M6 9v12"/><path d="m21 3-6 6"/><path d="m21 9-6-6"/><path d="M18 11.5V15"/><circle cx="18" cy="18" r="3"/></svg>',
+  draft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M18 6V5"/><path d="M18 11v-1"/><path d="M6 9v12"/></svg>'
+}
+
+function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], soft: boolean, indent: boolean, ui: UiState): string {
+  const status = rowStatus(ui, `agent:${p.a.paneKey}`)
+  const right = status ?? `${soft ? `<span class="soft">${esc(p.row.repo)}</span>` : ''}${prBadge(p.row.pr)}<span>${ago(p.row.lastActivityAt, ui.now)}</span>`
+  return `<button class="item${indent ? ' indent' : ''}" data-open="${esc(p.row.id)}" data-menu="agent:${esc(p.a.paneKey)}">${agentCharacter(p.a, p.row, all)}<span class="t">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span></button>`
+}
+
+/** Finished sessions that still hold a terminal: what the footer lists and the cockpit counts. */
+const finishedOf = (placed: Placed[]) => placed.filter((p) => faceOf(p.a) === 'done' && p.row.liveTerminals > 0)
+
+/** Rows keep the order their workstreams started in; agent activity never moves them. */
+const byStart = (x: Placed, y: Placed) => x.row.createdAt - y.row.createdAt || x.a.paneKey.localeCompare(y.a.paneKey)
+
+function coordinatorBlock(c: Coordinator & { you?: boolean }, mine: Placed[], all: AgentInfo[], coordinators: Coordinator[], ui: UiState): string {
+  // You only shows when you have chats; a coordinator always shows, so you can open it.
+  if (c.you && mine.length === 0) return ''
+  mine = [...mine].sort(byStart)
+  const single = c.repos.length === 1 ? c.repos[0] : null
+  const color = c.look?.color ?? (single ? colorOf(single) : NEUTRAL)
+  const shape: Shape = c.you ? 'solo' : (c.look?.shape ?? 'pentagon')
+  const sub = single ?? (c.you ? 'chats you started' : c.repos.length ? c.repos.join(', ') : 'all projects')
+  // A coordinator shows its own state only; its workers show theirs below it. You has no session of
+  // its own, so it shows the busiest of your chats.
+  const face: Face = c.you
+    ? ((['asks', 'working', 'monitoring'] as Face[]).find((f) => mine.some((p) => faceOf(p.a) === f)) ?? 'done')
+    : c.session ? faceOf(c.session) : 'idle'
+  const tip = face === 'idle' ? 'Sleeping' : face === 'done' && !c.you ? 'Available' : STATUS[face]
+  const panes = new Set(mine.map((p) => p.a.paneKey))
+  const roots = mine.filter((p) => !p.a.leadPane || !panes.has(p.a.leadPane))
+  const body = roots
+    .map((p) => agentLine(p, all, coordinators, !single, false, ui) + mine.filter((w) => w.a.leadPane === p.a.paneKey).map((w) => agentLine(w, all, coordinators, !single, true, ui)).join(''))
+    .join('')
+  const folded = ui.folded.has(c.key)
+  const head = `${tipped(character(color, shape, face, 28), tip, face === 'asks' ? 'ask' : '')}<span class="grow"><span class="name">${esc(c.name)}</span><span class="sub">${esc(sub)}</span></span><span class="r">${rowStatus(ui, `coordinator:${c.key}`) ?? ''}</span>`
+  // A coordinator's row opens its session; the chevron folds its team. You only folds.
+  const row = c.you
+    ? `<button class="item coord" data-fold="${esc(c.key)}" aria-expanded="${!folded}">${head}</button>`
+    : `<div class="item coord" data-menu="coordinator:${esc(c.key)}"><button class="coord-open" data-coordinator="${esc(c.key)}" aria-label="Open ${esc(c.name)}">${head}</button>${mine.length ? `<button class="coord-fold" data-fold="${esc(c.key)}" aria-expanded="${!folded}" aria-label="Fold ${esc(c.name)}">${ICON.chev}</button>` : ''}</div>`
+  return `<section class="coordinator">${row}${folded || !body ? '' : `<div class="group">${body}</div>`}</section>`
+}
+
+function foldList(key: string, title: string, rows: string[], ui: UiState, count = rows.length): string {
+  if (count === 0) return ''
+  const open = ui.unfolded.has(key)
+  return `<button class="fold" data-unfold="${key}" aria-expanded="${open}">${ICON.chev}${esc(title)} · ${count}</button>${open ? `<div class="group fold-list">${rows.join('')}</div>` : ''}`
+}
+
+// ---------- the panel ----------
+
+/** The parts the page places separately: the cockpit row (beside the static search control in the
+ *  top bar), its opened stats below the bar, the scrolling middle, and the pinned footer. */
+export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: string; main: string; footer: string } {
+  const copen = ui.cockpitOpen && !ui.query ? cockpitOpen(snap, ui) : ''
+  const all = snap.rows.flatMap((r) => r.agents)
+  const placed: Placed[] = snap.rows.flatMap((row) => row.agents.map((a) => ({ a, row })))
+  const queueRows = waitingQueue(snap.rows)
+  // One briefing per asking agent, workspaces in urgency order; several agents in one workspace each get one.
+  const asking = queueRows.flatMap((row) => placed.filter((p) => p.row === row && asksYou(p.a)))
+
+  if (ui.query) {
+    const q = ui.query.toLowerCase()
+    const found = snap.rows.filter((r) => [r.name, r.repo, r.branch, ...r.agents.map((a) => a.title)].some((f) => f?.toLowerCase().includes(q)))
+    return { cockpit: cockpit(snap, ui), copen, main: `<div class="group found">${
+      found.length
+        ? found.map((r) => `<button class="item" data-open="${esc(r.id)}">${character(colorOf(r.repo), 'solo', r.agents.length ? faceOf(r.agents[0]) : 'idle', 20)}<span class="t">${esc(r.agents[0]?.title ?? r.name)}</span><span class="r soft">${esc(r.repo)}</span></button>`).join('')
+        : '<div class="empty">No matching workspaces</div>'
+    }</div>`, footer: '' }
+  }
+
+  const live = placed.filter((p) => faceOf(p.a) !== 'done')
+  const finished = finishedOf(placed)
+  const idleRows = snap.rows.filter((r) => r.agents.length === 0 && !needsYou(r)).sort((x, y) => x.createdAt - y.createdAt)
+  // Active coordinators (a session or a team) and You lead; sleeping coordinators follow, just above
+  // New coordinator. Each group keeps a stable order, so nothing moves until a
+  // coordinator wakes up or goes to sleep.
+  const teamOf = (key: string) => live.filter((p) => p.a.coordinator === key)
+  const awake = (c: Coordinator) => Boolean(c.session) || teamOf(c.key).length > 0
+  const active = snap.coordinators.filter(awake)
+  const sleeping = snap.coordinators.filter((c) => !awake(c))
+  const you = { key: 'you', name: 'You', repos: [], workspaceId: null, you: true }
+  // Sleeping coordinators use the same full row; they only come after the active ones.
+  const tree = [...active, you, ...sleeping].map((c) => coordinatorBlock(c, teamOf(c.key), all, snap.coordinators, ui)).join('')
+
+  const memOf = (pane: string) => (ui.stats ? [...ui.stats.finished, ...ui.stats.heaviest].find((f) => f.paneKey === pane)?.memMB : undefined)
+  const finishedRows = [...finished].sort(byStart).map((p) => {
+    const mb = memOf(p.a.paneKey)
+    // Memory by default; a small spinner until the first report arrives.
+    const mem = mb ? size(mb) : ui.statsLoading && !ui.stats ? '<span class="refreshing" aria-label="Reading memory"></span>' : ''
+    return `<div class="item" data-menu="agent:${esc(p.a.paneKey)}">${agentCharacter(p.a, p.row, all)}<span class="t" data-open="${esc(p.row.id)}" role="button" tabindex="0">${esc(nameOf(p.a, p.row))}</span><span class="r">${mem}</span>${action(`close:${p.a.paneKey}`, 'sleep', '', ui, false)}</div>`
+  })
+  const closable = finished
+  const freedMb = closable.reduce((n, p) => n + (memOf(p.a.paneKey) ?? 0), 0)
+  if (closable.length > 1) finishedRows.unshift(`<div class="closeall">${action('closeall', `Sleep all${freedMb ? ` · ${size(freedMb)}` : ''}`, `Sleep ${closable.length} sessions?`, ui)}</div>`)
+  const idle = idleRows.map((r) => `<button class="item" data-open="${esc(r.id)}">${tipped(character(colorOf(r.repo), 'solo', 'idle', 20), 'Idle')}<span class="t muted">${esc(r.name)}</span><span class="r soft">${esc(r.repo)}</span></button>`)
+
+  return { cockpit: cockpit(snap, ui), copen, main: [
+    upNext(asking, all, snap.coordinators, ui),
+    `<div class="tree"><div class="label">Coordinators</div>${tree || '<div class="empty">No agents running</div>'}<button class="newcoord" data-new-coordinator>${ICON.plus}New coordinator</button></div>`
+  ].join(''), footer: `<div class="folds">${foldList('finished', 'Finished', finishedRows, ui, finished.length)}${foldList('idle', 'Idle', idle, ui)}</div>` }
+}
+
+// ---------- looks for new coordinators ----------
+
+export const LOOK_SHAPES: LookShape[] = ['pentagon', 'hex', 'shield']
+
+/** Every color and shape no coordinator uses yet; new coordinators are offered one of these. */
+export function freeLooks(coordinators: Coordinator[]): Look[] {
+  const taken = new Set(coordinators.map((c) => (c.look ? `${c.look.color}/${c.look.shape}` : '')))
+  return PALETTE.flatMap((color) => LOOK_SHAPES.map((shape) => ({ color, shape }))).filter((l) => !taken.has(`${l.color}/${l.shape}`))
+}

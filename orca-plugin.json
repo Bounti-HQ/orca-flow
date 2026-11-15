@@ -1,0 +1,72 @@
+{
+  "manifestVersion": 2,
+  "id": "flow",
+  "name": "Orca Flow",
+  "version": "0.2.0",
+  "description": "What needs you next, room to run more, and coordinators that delegate to workers.",
+  "engines": {
+    "orca": ">=1.4.254"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "orca-flow",
+        "title": "Orca Flow",
+        "icon": "layers",
+        "entry": "src/panel/index.html",
+        "ui": "html"
+      }
+    ],
+    "events": [
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.created"
+      },
+      {
+        "on": "workspace.removed"
+      }
+    ],
+    "commands": [
+      {
+        "id": "sidebar.next",
+        "title": "Jump to next waiting workspace"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "queue",
+        "text": "\u2026",
+        "icon": "bell",
+        "tooltip": "Workspaces waiting on you",
+        "command": "sidebar.next"
+      }
+    ],
+    "hooks": [
+      {
+        "event": "agent.launch.before"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "workspace:write"
+    },
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "agent:launch"
+    }
+  ]
+}
