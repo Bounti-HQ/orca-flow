@@ -1,7 +1,7 @@
 // Wires the panel: asks the worker for snapshots, redraws with src/view.ts, handles clicks.
 // All UI state (what is open or folded) lives here; the worker only sends data.
 import type { AgentInfo, CockpitStats, Look, Priority, Snapshot, WorkspaceRow } from '../protocol.ts'
-import { character, crew, emptyUi, faceOf, freeLooks, render } from '../view.ts'
+import { character, crew, emptyUi, faceOf, finishedAgents, freeLooks, render } from '../view.ts'
 
 const ui = emptyUi()
 let snap: Snapshot | null = null
@@ -107,8 +107,8 @@ async function runAction(key: string): Promise<void> {
   draw()
   try {
     if (key === 'closeall' && snap) {
-      // The footer's finished list: done agents in workspaces that still have a terminal open.
-      const panes = snap.rows.filter((r) => r.liveTerminals > 0).flatMap((r) => r.agents).filter((a) => faceOf(a) === 'done').map((a) => a.paneKey)
+      // The footer's finished list, the same agents it shows (a lead waiting on its workers is not one).
+      const panes = finishedAgents(snap.rows).map((a) => a.paneKey)
       const { closed } = await orca.plugin.request('sidebar.closeSessions', { panes })
       ui.notice = { key, text: `${closed} asleep`, ok: closed > 0 }
     } else if (key.startsWith('close:')) {

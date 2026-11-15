@@ -38,8 +38,10 @@ free memory and continues it later in a new terminal):
      orca orchestration worker-start --worktree path:<path> --agent claude --keep-open \
        --task-title "<outcome>" --spec-file - <<'EOF'
      Your role: lead. Load the orca-flow skill and follow roles/lead.md.
+     As a lead, send worker_done only when the user says this workstream is done or its PR is merged,
+     not when a first version or the PR is ready; until then end turns without reporting.
      <one sentence: the outcome>
-     <context, constraints, what done looks like>
+     <context, constraints, the first deliverable>
      EOF
      ```
 3. **New workstream: start a lead.** Set the level, run the capacity gate, then:
@@ -49,8 +51,10 @@ free memory and continues it later in a new terminal):
      --name <short-kebab> --agent claude --keep-open \
      --task-title "<outcome>" --spec-file - <<'EOF'
    Your role: lead. Load the orca-flow skill and follow roles/lead.md.
+   As a lead, send worker_done only when the user says this workstream is done or its PR is merged,
+   not when a first version or the PR is ready; until then end turns without reporting.
    <one sentence: the outcome>
-   <what you know: context, constraints, what done looks like>
+   <what you know: context, constraints, the first deliverable>
    EOF
    ```
 
@@ -63,8 +67,11 @@ free memory and continues it later in a new terminal):
 4. **Confirm in one line:** which lead is on it, at what level, where. End your turn.
 
 A lead ends turns without reporting while it waits on its workers or the user; Orca may tell you
-it "stopped without reporting". That is normal for a lead: leave it. It reports `worker_done` to
-you when the workstream is finished.
+it "stopped without reporting". That is normal for a lead: leave it. Along the way it may send you
+`status` notes (the PR opened, a blocker); those are not completion. It reports `worker_done` only
+when the user says the workstream is done or its PR is merged. Never describe a lead's spec as a
+finish checklist ("done when the PR is open"): describe the first deliverable, and leave finishing
+to the user.
 
 **A lead asks for a separate branch** (with `orca orchestration ask`): treat it as a new
 workstream (step 3), then `orca orchestration reply --id <message_id>` with the new lead's name.

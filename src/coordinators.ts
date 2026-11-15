@@ -156,7 +156,8 @@ export async function loadLineage(run: Run, now = Date.now()): Promise<Lineage> 
     if (!listed) continue
     const active = (listed.workers ?? []).filter((w: any) => w.terminal && w.terminalState !== 'released')
     if (active.length === 0) {
-      quietRuns.set(r.id, now)
+      // A new run gets its first worker a moment after it is created; only an older one is quiet.
+      if (now - Date.parse(r.created_at ?? '') > 30 * 60_000) quietRuns.set(r.id, now)
       continue
     }
     quietRuns.delete(r.id)

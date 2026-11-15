@@ -17,7 +17,7 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import { costsOf, decide, DEFAULT_CONFIG, diskFreeOf, FALLBACK, type Pressure } from './capacity.ts'
 import { closeSessions, loadCockpit, removeWorktree } from './cockpit.ts'
 import { assignCoordinators, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, loadLineage, orcaRunner, readCoordinators, scaffoldCoordinator, validateName, writeLook, type Lineage } from './coordinators.ts'
-import { freeLooks } from './view.ts'
+import { freeLooks, showable } from './view.ts'
 import type { AgentInfo, AgentState, AgentSummary, Capacity, Priority, Snapshot, WorkspaceRow, WorkstreamCard } from './protocol.ts'
 import { claimsAsk, finished, nextTarget, waitingQueue } from './rank.ts'
 import { summarizePane, turnSummarizer } from './summarize.ts'
@@ -120,7 +120,8 @@ function toAgent(a: PsAgent, store: Store): AgentInfo | null {
     terminal: null,
     question: questionOf(a),
     state,
-    title: summary?.title || a.conversationName || a.taskTitle || a.displayName || a.agentType || 'Agent',
+    // Orca names a worker's conversation after its task id (worker-task_…); skip names that are ids.
+    title: [summary?.title, a.conversationName, a.taskTitle, a.displayName].find((t) => showable(t ?? undefined)) || a.agentType || 'Agent',
     agentType: a.agentType ?? null,
     summary
   }
@@ -332,11 +333,17 @@ let lineage: Lineage = { dispatcherOf: new Map(), paneOf: new Map() }
 let lineageAt = 0
 let lineageLoading = false
 
-function refreshLineage(orca: OrcaWorkerApi, onLoaded: () => void): void {
-  if (lineageLoading || Date.now() - lineageAt < 60_000) return
+/** Agent panes that existed when the lineage last loaded: a new one may be a freshly started worker. */
+let lineagePanes = new Set<string>()
+
+function refreshLineage(orca: OrcaWorkerApi, onLoaded: () => void, panes: string[] = []): void {
+  const unseen = panes.some((p) => !lineagePanes.has(p))
+  if (lineageLoading || Date.now() - lineageAt < (unseen ? 10_000 : 60_000)) return
   lineageLoading = true
+  const seen = new Set(panes)
   loadLineage(orcaRunner(ORCA_BIN))
     .then((next) => {
+      lineagePanes = seen
       lineage = next
       lineageAt = Date.now()
       onLoaded()
@@ -353,7 +360,7 @@ export async function snapshot(
   const onDisk = readCoordinators()
   const coordinators = onDisk.map(({ key, name, repos, look }) => ({ key, name, repos, look, workspaceId: null as string | null, session: null as AgentInfo | null }))
   try {
-    refreshLineage(orca, onLineage)
+    refreshLineage(orca, onLineage, allRows.flatMap((r) => r.agents.map((a) => a.paneKey)))
     refreshMemory(allRows, onLineage)
     const worktrees = await ps()
     // Folder workspaces (your coordinators live in them) have no identity key; ask the plugin API for their ids.

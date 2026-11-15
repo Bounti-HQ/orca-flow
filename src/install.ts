@@ -24,7 +24,7 @@ export function linksFor(dir: string, home = homedir(), claudeDir = claudeConfig
 
 /** Files copied once from a template, then left to the user. */
 export function seedsFor(dir: string, home = COORDINATOR_HOME): Link[] {
-  return [{ from: join(home, 'CLAUDE.md'), to: join(dir, 'coordinator', 'CLAUDE.md') }]
+  return [{ from: join(home, 'CLAUDE.md'), to: join(dir, 'skills', 'orca-flow', 'templates', 'coordinators-CLAUDE.md') }]
 }
 
 /** Writes each missing file from its template; a link left by an older version becomes a real copy. */

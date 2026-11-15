@@ -295,7 +295,7 @@ test('setup links the CLI, skill and coordinator CLAUDE.md, repoints old links, 
   const links = [
     { from: join(t, 'bin', 'tool'), to: '/new/bin/tool.mjs' },
     { from: join(t, 'skills', 'orca-flow'), to: '/new/skills/orca-flow' },
-    { from: join(t, 'CLAUDE.md'), to: '/new/coordinator/CLAUDE.md' }
+    { from: join(t, 'CLAUDE.md'), to: '/new/templates/CLAUDE.md' }
   ]
   const log = ensureLinks(links)
   assert.equal(readlinkSync(join(t, 'bin', 'tool')), '/new/bin/tool.mjs')
@@ -398,4 +398,11 @@ test('the coordinator CLAUDE.md is copied once, replaces an old link, then stays
   symlinkSync(join(t, 'template.md'), join(t, 'linked.md'))
   ensureSeeds(old)
   assert.equal(lstatSync(join(t, 'linked.md')).isSymbolicLink(), false, 'an old link becomes a real copy')
+})
+
+test('a worker named after its task id shows its task title instead', () => {
+  const [row] = main.fromPs([{ identity: { key: 'w' }, displayName: 'onboarding', repo: 'shop', agents: [
+    { paneKey: 'p', state: 'working', conversationName: 'worker-task_77145d6691b3', taskTitle: 'Review PR #1770' }
+  ] }])
+  assert.equal(row.agents[0].title, 'Review PR #1770')
 })

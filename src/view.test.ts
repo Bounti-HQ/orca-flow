@@ -1,7 +1,7 @@
 // The panel's HTML from a snapshot, checked in Node.
 import { assert, test } from 'orca/testing'
 import type { AgentInfo, AgentSummary, Snapshot, WorkspaceRow } from './protocol.ts'
-import { character, emptyUi, faceOf, freeLooks, gaugesOf, prBadge, render } from './view.ts'
+import { character, emptyUi, faceOf, finishedAgents, freeLooks, gaugesOf, prBadge, render } from './view.ts'
 import type { CockpitStats } from './protocol.ts'
 
 const noMatch = (text: string, re: RegExp, message?: string) => assert.ok(!re.test(text), message ?? `unexpected ${re}`)
@@ -337,4 +337,16 @@ test('PR indicators match Orca: checks color an open PR, the state colors the re
   assert.equal(prBadge(null), '')
   const withPr: Snapshot = { ...snap, rows: [row('w', 'shop', [agent('p-w', 'Checkout', 'working')], { pr: { number: 12, url: 'u', state: 'open', checks: 'pending' } })] }
   assert.match(render(withPr, emptyUi()).main, /Checkout<\/span><span class="r">[\s\S]*?class="pr pr-pending"/, 'the row shows its worktree\'s PR')
+})
+
+test('a lead whose worker is still working stays in the tree as available, with the worker under it', () => {
+  const lead = agent('p-lead', 'Onboarding', 'done', { coordinator: 'alpha' })
+  const reviewer = agent('p-rev', 'Review PR', 'working', { coordinator: 'alpha', leadPane: 'p-lead' })
+  const s: Snapshot = { ...snap, rows: [row('ob', 'shop', [reviewer, lead])] }
+  const { main, footer } = render(s, emptyUi())
+  assert.match(main, /data-tip="Available"[\s\S]*?Onboarding[\s\S]*?class="item indent"[\s\S]*?Review PR/, 'the lead heads the tree and its worker nests under it')
+  noMatch(footer, /Onboarding/)
+  assert.deepEqual(finishedAgents(s.rows).map((a) => a.paneKey), [], 'Sleep all leaves the lead alone')
+  const done: Snapshot = { ...snap, rows: [row('ob', 'shop', [{ ...reviewer, state: 'done' }, lead])] }
+  assert.deepEqual(finishedAgents(done.rows).map((a) => a.paneKey).sort(), ['p-lead', 'p-rev'], 'once its workers are done, it is finished too')
 })

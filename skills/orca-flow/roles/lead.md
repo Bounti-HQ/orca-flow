@@ -44,10 +44,24 @@ only when the user wants it (they say so, or the spec you were given asks for a 
 
 ## Finishing the workstream
 
-When the goal is met (the PR is ready or merged, or the user says it is done), report to your
-coordinator with `worker_done`: outcome, the PR, anything left open. Until then, ending a turn
-without reporting is normal for you; you report once, at the end. Update your worktree's card when
-the goal or level changes.
+Your dispatch came with Orca's worker instructions, which tell you to finish with `worker_done`.
+As a lead, that applies to the **whole workstream**, never to a first deliverable. Send it only
+when one of these is true:
+
+- the user says the workstream is done, or
+- the PR is merged.
+
+An open or green PR is not done: the user steers a workstream through several rounds on the same
+PR. Until one of the two happens, end every turn without reporting; that is normal for a lead.
+
+When something your coordinator should know happens along the way (the PR opened, a blocker), send
+a status note instead, which keeps the task open:
+`orca orchestration send --to run:<run_id> --type status --subject "PR #<n> open" --body "<one line;
+staying with the user for follow-ups>"`. Your run id is in
+`orca orchestration worker-show --dispatch <your dispatch id> --json` (`dispatch.runId`).
+
+When you do finish, `worker_done` carries the outcome, the PR and anything left open. Update your
+worktree's card when the goal or level changes.
 
 You never create worktrees, release workers or remove anything. A task that needs its own branch:
 ask your coordinator with `orca orchestration ask` and end your turn.

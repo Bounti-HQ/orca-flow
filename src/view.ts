@@ -130,7 +130,7 @@ const STATUS: Record<Face, string> = { working: 'Working', monitoring: 'Monitori
 /** An agent's character with its status: what Orca shows, in at most two words. */
 function agentCharacter(a: AgentInfo, row: WorkspaceRow, all: AgentInfo[], size = 20): string {
   const face = faceOf(a)
-  const tip = a.state === 'blocked' ? 'Needs approval' : STATUS[face]
+  const tip = a.state === 'blocked' ? 'Needs approval' : face === 'done' && leadsOpenWork(a, all) ? 'Available' : STATUS[face]
   return tipped(character(colorOf(row.repo), shapeOf(a, all), face, size), tip, face === 'asks' ? 'ask' : '')
 }
 
@@ -347,7 +347,18 @@ function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], sof
 }
 
 /** Finished sessions that still hold a terminal: what the footer lists and the cockpit counts. */
-const finishedOf = (placed: Placed[]) => placed.filter((p) => faceOf(p.a) === 'done' && p.row.liveTerminals > 0)
+/** A done agent with agents still open under it (a lead waiting on its workers) is available, not finished. */
+const leadsOpenWork = (a: AgentInfo, all: AgentInfo[]) => all.some((b) => b.leadPane === a.paneKey && faceOf(b) !== 'done')
+
+/** Finished sessions that still hold a terminal: what the footer lists and "Sleep all" puts to sleep. */
+export function finishedAgents(rows: WorkspaceRow[]): AgentInfo[] {
+  const all = rows.flatMap((r) => r.agents)
+  return rows.filter((r) => r.liveTerminals > 0).flatMap((r) => r.agents).filter((a) => faceOf(a) === 'done' && !leadsOpenWork(a, all))
+}
+const finishedOf = (placed: Placed[]) => {
+  const all = placed.map((p) => p.a)
+  return placed.filter((p) => faceOf(p.a) === 'done' && p.row.liveTerminals > 0 && !leadsOpenWork(p.a, all))
+}
 
 /** Rows keep the order their workstreams started in; agent activity never moves them. */
 const byStart = (x: Placed, y: Placed) => x.row.createdAt - y.row.createdAt || x.a.paneKey.localeCompare(y.a.paneKey)
@@ -408,7 +419,8 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
     }</div>`, footer: '' }
   }
 
-  const live = placed.filter((p) => faceOf(p.a) !== 'done')
+  // The tree holds what is running, and any lead whose workers still are, so they nest under it.
+  const live = placed.filter((p) => faceOf(p.a) !== 'done' || leadsOpenWork(p.a, all))
   const finished = finishedOf(placed)
   const idleRows = snap.rows.filter((r) => r.agents.length === 0 && !needsYou(r)).sort((x, y) => x.createdAt - y.createdAt)
   // Active coordinators (a session or a team) and You lead; sleeping coordinators follow, just above
