@@ -112,6 +112,8 @@ export type Coordinator = {
   session?: AgentInfo | null
   /** The character it was given at creation. */
   look?: Look | null
+  /** Its workspace is the one focused in Orca. */
+  active?: boolean
 }
 
 export type LookShape = 'pentagon' | 'hex' | 'shield'

@@ -29,6 +29,9 @@
       },
       {
         "on": "workspace.removed"
+      },
+      {
+        "on": "workspace.changed"
       }
     ],
     "commands": [

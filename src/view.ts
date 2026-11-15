@@ -352,7 +352,7 @@ const PR_ICON: Record<string, string> = {
 function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], soft: boolean, indent: boolean, ui: UiState): string {
   const status = rowStatus(ui, `agent:${p.a.paneKey}`)
   const right = status ?? `${soft ? `<span class="soft">${esc(p.row.repo)}</span>` : ''}${prBadge(p.row.pr)}<span>${ago(p.row.lastActivityAt, ui.now)}</span>`
-  return `<button class="item${indent ? ' indent' : ''}" data-open="${esc(p.row.id)}" data-menu="agent:${esc(p.a.paneKey)}">${agentCharacter(p.a, p.row, all)}<span class="t">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span></button>`
+  return `<button class="item${indent ? ' indent' : ''}${p.row.active ? ' current' : ''}" data-open="${esc(p.row.id)}" data-menu="agent:${esc(p.a.paneKey)}"${p.row.active ? ' aria-current="true"' : ''}>${agentCharacter(p.a, p.row, all)}<span class="t">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span></button>`
 }
 
 /** Finished sessions that still hold a terminal: what the footer lists and the cockpit counts. */
@@ -408,7 +408,7 @@ function coordinatorBlock(c: Coordinator & { you?: boolean }, mine: Placed[], al
   // A coordinator's row opens its session; the chevron folds its team. You only folds.
   const row = c.you
     ? `<button class="item coord" data-fold="${esc(c.key)}" aria-expanded="${!folded}">${head}</button>`
-    : `<div class="item coord" data-menu="coordinator:${esc(c.key)}"><button class="coord-open" data-coordinator="${esc(c.key)}" aria-label="Open ${esc(c.name)}">${head}</button>${mine.length ? `<button class="coord-fold" data-fold="${esc(c.key)}" aria-expanded="${!folded}" aria-label="Fold ${esc(c.name)}">${ICON.chev}</button>` : ''}</div>`
+    : `<div class="item coord${c.active ? ' current' : ''}" data-menu="coordinator:${esc(c.key)}"${c.active ? ' aria-current="true"' : ''}><button class="coord-open" data-coordinator="${esc(c.key)}" aria-label="Open ${esc(c.name)}">${head}</button>${mine.length ? `<button class="coord-fold" data-fold="${esc(c.key)}" aria-expanded="${!folded}" aria-label="Fold ${esc(c.name)}">${ICON.chev}</button>` : ''}</div>`
   return `<section class="coordinator">${row}${folded || !body ? '' : `<div class="group">${body}</div>`}</section>`
 }
 
@@ -460,7 +460,10 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
     const mb = memOf(p.a.paneKey)
     // Memory by default; a small spinner until the first report arrives.
     const mem = mb ? size(mb) : ui.statsLoading && !ui.stats ? '<span class="refreshing" aria-label="Reading memory"></span>' : ''
-    return `<div class="item" data-menu="agent:${esc(p.a.paneKey)}">${agentCharacter(p.a, p.row, all)}<span class="t" data-open="${esc(p.row.id)}" role="button" tabindex="0">${esc(nameOf(p.a, p.row))}</span><span class="r">${mem}</span>${action(`close:${p.a.paneKey}`, 'sleep', '', ui, false)}</div>`
+    // Sleep frees the session and keeps the worktree; remove deletes the checkout (not for the main one).
+    const status = rowStatus(ui, `agent:${p.a.paneKey}`)
+    const acts = status ?? `<span class="r">${mem}</span>${action(`close:${p.a.paneKey}`, 'sleep', '', ui, false)}${p.row.main ? '' : `<button class="act" data-remove="${esc(p.row.id)}" data-target="agent:${esc(p.a.paneKey)}">remove</button>`}`
+    return `<div class="item" data-menu="agent:${esc(p.a.paneKey)}">${agentCharacter(p.a, p.row, all)}<span class="t" data-open="${esc(p.row.id)}" role="button" tabindex="0">${esc(nameOf(p.a, p.row))}</span>${acts}</div>`
   })
   const closable = finished
   const freedMb = closable.reduce((n, p) => n + (memOf(p.a.paneKey) ?? 0), 0)

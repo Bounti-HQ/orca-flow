@@ -50,6 +50,13 @@ orca.plugin.on('sidebar.changed', (s) => ((snap = s as Snapshot), draw()))
 setInterval(draw, 60_000)
 
 document.addEventListener('click', (event) => {
+  // A finished row's remove button: the same confirm and inline progress as the menu's Remove worktree.
+  const rm = (event.target as Element).closest<HTMLElement>('[data-remove]')
+  if (rm?.dataset.remove && snap) {
+    const row = snap.rows.find((r) => r.id === rm.dataset.remove)
+    if (row) void removeWorktree(row, rm.dataset.target ?? `agent:${row.id}`)
+    return
+  }
   // A row's PR icon opens the PR, not the row's session.
   const pr = (event.target as Element).closest<HTMLElement>('[data-pr]')
   if (pr?.dataset.pr) {
@@ -359,14 +366,14 @@ function agentMenu(row: WorkspaceRow, a: AgentInfo): MenuItem[] {
   if (row.pr) items.push({ label: `Open PR #${row.pr.number}`, icon: 'pr', run: () => void orca.shell?.openExternal(row.pr!.url) })
   // Sleep is reversible (the chat is kept), so it neither looks destructive nor asks first.
   items.push({ label: 'Sleep', icon: 'moon', run: () => inline(target, 'Sleeping…', 'Asleep', () => orca.plugin.request('sidebar.closeSessions', { panes: [a.paneKey] })) }, 'separator')
-  if (!row.main) items.push({
-    label: 'Remove worktree', icon: 'trash', danger: true,
-    run: async () => {
-      if (await confirmAction('remove-worktree', `Remove ${row.name}?`, "The checkout is deleted once it's clean and its PR is merged. The branch is kept.", 'Remove'))
-        await inline(target, 'Removing…', 'Removed', () => orca.plugin.request('sidebar.removeWorktree', { workspaceId: row.id }, { timeoutMs: 200_000 }))
-    }
-  })
+  if (!row.main) items.push({ label: 'Remove worktree', icon: 'trash', danger: true, run: () => removeWorktree(row, target) })
   return items
+}
+
+/** Removes a worktree after a confirm; the menu and the footer's remove button both use it. */
+async function removeWorktree(row: WorkspaceRow, target: string): Promise<void> {
+  if (await confirmAction('remove-worktree', `Remove ${row.name}?`, "The checkout is deleted once it's clean and its PR is merged. The branch is kept.", 'Remove'))
+    await inline(target, 'Removing…', 'Removed', () => orca.plugin.request('sidebar.removeWorktree', { workspaceId: row.id }, { timeoutMs: 200_000 }))
 }
 
 function coordinatorMenu(key: string): MenuItem[] {

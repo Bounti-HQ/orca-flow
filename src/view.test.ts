@@ -377,3 +377,23 @@ test('loading states: gauges hold their place while measuring, and failed detail
   assert.match(render(snap, ui).copen, /Could not check what’s running: orca diagnostics timed out/)
   noMatch(render(snap, ui).copen, /class="loader"/)
 })
+
+test('the agent in the workspace focused in Orca, and a focused coordinator, get the current border', () => {
+  const s: Snapshot = { ...snap, coordinators: [{ ...snap.coordinators[0], active: true }, snap.coordinators[1]],
+    rows: [row('a', 'shop', [agent('p-a', 'Checkout', 'working')], { active: true }), row('b', 'shop', [agent('p-b', 'Search', 'working')])] }
+  const { main } = render(s, emptyUi())
+  assert.match(main, /class="item current" data-open="a"[^>]*aria-current="true"/)
+  noMatch(main, /class="item current" data-open="b"/)
+  assert.match(main, /class="item coord current" data-menu="coordinator:alpha"/)
+})
+
+test('a finished row offers sleep and remove; the main checkout offers sleep only; progress shows in the row', () => {
+  const ui = emptyUi()
+  ui.unfolded.add('finished')
+  const s: Snapshot = { ...snap, rows: [row('ob', 'shop', [agent('p-ob', 'Onboarding', 'done', { terminal: 'term-1' })]), row('home', 'shop', [agent('p-m', 'Main chat', 'done', { terminal: 'term-2' })], { main: true })] }
+  const { footer } = render(s, ui)
+  assert.match(footer, /Onboarding[\s\S]*?data-yes="close:p-ob">sleep<\/button><button class="act" data-remove="ob" data-target="agent:p-ob">remove/)
+  noMatch(footer, /data-remove="home"/)
+  ui.status.set('agent:p-ob', { text: 'Removing…', tone: 'pending' })
+  assert.match(render(s, ui).footer, /Onboarding<\/span><span class="rstatus pending"><span class="refreshing"><\/span>Removing…/)
+})

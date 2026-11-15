@@ -406,3 +406,17 @@ test('a worker named after its task id shows its task title instead', () => {
   ] }])
   assert.equal(row.agents[0].title, 'Review PR #1770')
 })
+
+test('focus moves at once from the workspace.changed event, by terminal or by name and branch', () => {
+  const rows = main.fromPs([
+    { identity: { key: 'a' }, displayName: 'checkout', repo: 'shop', branch: 'refs/heads/checkout', isActive: true, agents: [{ paneKey: 'pa', state: 'working' }] },
+    { identity: { key: 'b' }, displayName: 'search', repo: 'shop', branch: 'refs/heads/search', agents: [{ paneKey: 'pb', state: 'working' }] }
+  ]).map((r) => ({ ...r, agents: r.agents.map((a) => ({ ...a, terminal: a.paneKey === 'pb' ? 'term-b' : null })) }))
+  const snap = { rows, source: 'cli' as const, capacity: null, coordinators: [{ key: 'alpha', name: 'alpha', repos: [], workspaceId: 'w', session: null }] }
+  const byTerminal = main.withFocus(snap, { branch: 'x', displayName: 'x', terminals: [{ id: 'term-b' }] })
+  assert.deepEqual(byTerminal.rows.map((r) => r.active), [false, true])
+  const byName = main.withFocus(snap, { branch: 'checkout', displayName: 'checkout', terminals: [] })
+  assert.deepEqual(byName.rows.map((r) => r.active), [true, false])
+  const coordinator = main.withFocus(snap, { branch: '', displayName: 'alpha', terminals: [] })
+  assert.deepEqual([coordinator.rows.some((r) => r.active), coordinator.coordinators[0].active], [false, true])
+})

@@ -360,7 +360,7 @@ export async function snapshot(
   onLineage: () => void = () => {}
 ): Promise<Snapshot> {
   const onDisk = readCoordinators()
-  const coordinators = onDisk.map(({ key, name, repos, look }) => ({ key, name, repos, look, workspaceId: null as string | null, session: null as AgentInfo | null }))
+  const coordinators = onDisk.map(({ key, name, repos, look }) => ({ key, name, repos, look, workspaceId: null as string | null, session: null as AgentInfo | null, active: false }))
   try {
     refreshLineage(orca, onLineage, allRows.flatMap((r) => r.agents.map((a) => a.paneKey)))
     refreshMemory(allRows, onLineage)
@@ -378,13 +378,30 @@ export async function snapshot(
     for (const row of all) {
       const i = row.path ? dirs.get(row.path) : undefined
       // Its session counts only while a terminal is open with an agent in it.
-      if (i !== undefined) { coordinators[i].workspaceId = row.id; coordinators[i].session = row.liveTerminals > 0 ? (row.agents[0] ?? null) : null }
+      if (i !== undefined) { coordinators[i].workspaceId = row.id; coordinators[i].active = row.active; coordinators[i].session = row.liveTerminals > 0 ? (row.agents[0] ?? null) : null }
     }
     const rows = all.filter((r) => !r.path || !dirs.has(r.path))
     return { rows, source: 'cli', capacity: capacityOf(all, pressureLevel()), coordinators, ready: lineageAt > 0 }
   } catch (e) {
     orca.log(`orca worktree ps failed, using workspace.list: ${(e as Error).message}`)
     return { rows: await fromApi(orca), source: 'api', capacity: null, coordinators }
+  }
+}
+
+/**
+ * Pure: the snapshot with focus moved to the workspace Orca just reported, so the panel's border
+ * follows at once instead of after the next CLI read. A workspace matches by one of its agents'
+ * terminals, else by name and branch.
+ */
+export function withFocus(snap: Snapshot, context: { branch: string; displayName: string; terminals: { id: string }[] } | null): Snapshot {
+  const ids = new Set((context?.terminals ?? []).map((t) => t.id))
+  const branchOf = (b: string) => b.replace(/^refs\/heads\//, '')
+  const focused = (name: string, branch: string | null, agents: AgentInfo[]) =>
+    !!context && (agents.some((a) => a.terminal !== null && ids.has(a.terminal)) || (name === context.displayName && branchOf(branch ?? '') === branchOf(context.branch)))
+  return {
+    ...snap,
+    rows: snap.rows.map((r) => ({ ...r, active: focused(r.name, r.branch, r.agents) })),
+    coordinators: snap.coordinators.map((c) => ({ ...c, active: focused(c.name, null, c.session ? [c.session] : []) || (!!context && c.name === context.displayName) }))
   }
 }
 
@@ -619,6 +636,14 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
   orca.events.on('workspace.created', refreshSoon)
   orca.events.on('workspace.removed', refreshSoon)
+  // Focus moved to another workspace: move the border at once, then refresh the rest.
+  orca.events.on('workspace.changed', (event) => {
+    if (latest) {
+      latest = withFocus(latest, event.context)
+      orca.panels.post('sidebar.changed', latest)
+    }
+    refreshSoon()
+  })
 }
 
 export function deactivate(): void {
