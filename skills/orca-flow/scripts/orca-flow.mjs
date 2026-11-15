@@ -153,9 +153,12 @@ async function capacity(args = {}) {
     .sort((x, y) => y.gb - x.gb)
     .map((w) => ({ worktree: `${w.repo}/${w.name}`, process: w.top, gb: gb(w.gb * 1024 ** 3) }))
   const memByPane = Object.fromEntries(sessions.map((x) => [x.paneKey, x.memory]))
-  const finishedSessions = rows
-    .filter((r) => r.liveTerminals > 0 && !isCoordinatorHome(r.path))
-    .flatMap((r) => r.agents.filter((a) => a.state === 'done').map((a) => ({ worktree: `${r.repo}/${r.name}`, title: a.title, gb: gb(memByPane[a.paneKey] ?? 0) })))
+  // The sessions the sidebar lists as finished: an open PR's owner, or a lead with open workers, is still at work.
+  const { finishedAgents } = await import(new URL('../../../src/view.ts', import.meta.url).href)
+  const checkouts = rows.filter((r) => !isCoordinatorHome(r.path))
+  const done = new Set(finishedAgents(checkouts).map((a) => a.paneKey))
+  const finishedSessions = checkouts
+    .flatMap((r) => r.agents.filter((a) => done.has(a.paneKey)).map((a) => ({ worktree: `${r.repo}/${r.name}`, title: a.title, gb: gb(memByPane[a.paneKey] ?? 0) })))
     .filter((x) => x.gb > 0)
   return {
     verdict,

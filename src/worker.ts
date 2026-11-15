@@ -17,9 +17,9 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import { costsOf, decide, DEFAULT_CONFIG, diskFreeOf, FALLBACK, type Pressure } from './capacity.ts'
 import { closeSessions, loadCockpit, removeWorktree } from './cockpit.ts'
 import { assignCoordinators, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, loadLineage, orcaRunner, readCoordinators, scaffoldCoordinator, validateName, writeLook, type Lineage } from './coordinators.ts'
-import { freeLooks, showable } from './view.ts'
+import { finishedAgents, freeLooks, showable } from './view.ts'
 import type { AgentInfo, AgentState, AgentSummary, Capacity, Priority, Snapshot, WorkspaceRow, WorkstreamCard } from './protocol.ts'
-import { claimsAsk, finished, nextTarget, waitingQueue } from './rank.ts'
+import { claimsAsk, nextTarget, waitingQueue } from './rank.ts'
 import { summarizePane, turnSummarizer } from './summarize.ts'
 import { ensureLinks, ensureSeeds, linksFor, pluginDir, seedsFor } from './install.ts'
 import { readFootprint, readProcs, startedGroups } from './started.ts'
@@ -280,7 +280,8 @@ export function capacityOf(rows: WorkspaceRow[], pressure: Pressure, facts: Memo
     agentGB: facts.agentGB,
     envGB,
     pressure,
-    finishedOpen: checkouts.flatMap((r) => r.agents).filter(finished).length
+    // The same finished sessions the panel's footer lists (an open PR's owner is still at work).
+    finishedOpen: finishedAgents(checkouts).length
   }
 }
 

@@ -350,3 +350,14 @@ test('a lead whose worker is still working stays in the tree as available, with 
   const done: Snapshot = { ...snap, rows: [row('ob', 'shop', [{ ...reviewer, state: 'done' }, lead])] }
   assert.deepEqual(finishedAgents(done.rows).map((a) => a.paneKey).sort(), ['p-lead', 'p-rev'], 'once its workers are done, it is finished too')
 })
+
+test('the owner of an open PR stays in the tree until it merges; its finished workers still finish', () => {
+  const pr = (state: string) => ({ number: 1770, url: 'u', state, checks: 'success' as const })
+  const lead = agent('p-lead', 'Onboarding', 'done', { coordinator: 'alpha' })
+  const reviewer = agent('p-rev', 'Review PR', 'done', { coordinator: 'alpha', leadPane: 'p-lead' })
+  const at = (state: string) => ({ ...snap, rows: [row('ob', 'shop', [lead, reviewer], { pr: pr(state) })] }) as Snapshot
+  assert.deepEqual(finishedAgents(at('open').rows).map((a) => a.paneKey), ['p-rev'], 'open PR: the lead stays, its done reviewer finishes')
+  assert.match(render(at('open'), emptyUi()).main, /data-tip="Available"[\s\S]*?Onboarding/)
+  assert.deepEqual(finishedAgents(at('draft').rows).map((a) => a.paneKey), ['p-rev'])
+  assert.deepEqual(finishedAgents(at('merged').rows).map((a) => a.paneKey).sort(), ['p-lead', 'p-rev'], 'merged: both finish')
+})
