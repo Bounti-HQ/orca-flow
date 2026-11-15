@@ -88,6 +88,8 @@ export type Capacity = {
   /** Orca's available memory minus the margin; null until Orca's memory report has loaded. */
   freeGB: number | null
   marginGB: number
+  /** True until the first memory and disk reading has come in. */
+  measuring?: boolean
   /** Free disk on the volume your home is on; worktrees and their installs live there. */
   diskFreeGB: number | null
   /** What another agent costs here (median of open sessions). */
@@ -121,6 +123,8 @@ export type Snapshot = {
   capacity: Capacity | null
   /** The user's coordinators, from COORDINATOR_HOME; 'you' is implied. */
   coordinators: Coordinator[]
+  /** False until the worker knows which coordinator each agent works for. */
+  ready?: boolean
 }
 
 /** What the opened cockpit shows; loaded on demand because Orca's memory report is slow. */

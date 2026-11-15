@@ -173,10 +173,10 @@ test('the opened cockpit: memory, heaviest, counts and actions that confirm in p
   assert.match(open, /<button class="stat more" data-show-finished><span class="n">1<\/span>/)
   assert.match(open, /Remove state-cleanup[\s\S]*PR #1753 merged · clean/)
   ui.pending = 'remove:cleanup'
-  assert.match(render(snap, ui).copen, /class="pending"><span class="refreshing"><\/span>Removing…/)
+  assert.match(render(snap, ui).copen, /class="rstatus pending"><span class="refreshing"><\/span>Removing…/, 'the same inline style as row actions')
   ui.pending = null
   ui.notice = { key: 'remove:cleanup', text: 'Removed', ok: true }
-  assert.match(render(snap, ui).copen, /class="notice ok">Removed/)
+  assert.match(render(snap, ui).copen, /class="rstatus ok">Removed/)
 })
 
 test('the footer\'s finished list closes one by one or all at once, confirming in place', () => {
@@ -365,4 +365,15 @@ test('the owner of an open PR stays in the tree until it merges; its finished wo
 test('an agent with no title is named after its worktree, not its agent type', () => {
   const s: Snapshot = { ...snap, rows: [row('untangle-api', 'shop', [agent('p-u', 'claude', 'working')])] }
   assert.match(render(s, emptyUi()).main, /<span class="t">untangle-api<\/span>/)
+})
+
+test('loading states: gauges hold their place while measuring, and failed details say so', () => {
+  const measuring = { ...snap.capacity!, measuring: true, freeGB: null, diskFreeGB: null }
+  assert.deepEqual(gaugesOf(measuring).map((g) => [g.key, g.loading ?? false]), [['memory', true], ['disk', true], ['idle', false]])
+  assert.match(render({ ...snap, capacity: measuring }, emptyUi()).cockpit, /data-tip="Measuring memory"[^>]*>[\s\S]*?<span class="refreshing"><\/span>/)
+  const ui = emptyUi()
+  ui.cockpitOpen = true
+  ui.notice = { key: 'load', text: 'orca diagnostics timed out', ok: false }
+  assert.match(render(snap, ui).copen, /Could not check what’s running: orca diagnostics timed out/)
+  noMatch(render(snap, ui).copen, /class="loader"/)
 })

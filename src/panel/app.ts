@@ -1,7 +1,7 @@
 // Wires the panel: asks the worker for snapshots, redraws with src/view.ts, handles clicks.
 // All UI state (what is open or folded) lives here; the worker only sends data.
 import type { AgentInfo, CockpitStats, Look, Priority, Snapshot, WorkspaceRow } from '../protocol.ts'
-import { character, crew, emptyUi, faceOf, finishedAgents, freeLooks, render } from '../view.ts'
+import { busy, character, crew, emptyUi, faceOf, finishedAgents, freeLooks, render } from '../view.ts'
 
 const ui = emptyUi()
 let snap: Snapshot | null = null
@@ -14,8 +14,18 @@ const searchBox = $('searchbox')
 const searchOpen = $('search-open')
 const copenEl = $('copen')
 
+const openedAt = Date.now()
+/** How long the panel waits for the coordinator lineage before showing agents without it. */
+const LINEAGE_WAIT_MS = 8000
+
 function draw(): void {
   if (!snap) return
+  // Until the worker knows who each agent works for, agents would show under You and then jump to
+  // their coordinator; keep the loader instead, for a few seconds at most.
+  if (snap.ready === false && Date.now() - openedAt < LINEAGE_WAIT_MS) {
+    mainEl.innerHTML = crew('Loading workspaces…')
+    return
+  }
   ui.now = Date.now()
   const { cockpit, copen, main, footer } = render(snap, ui)
   cockpitEl.innerHTML = cockpit
@@ -33,6 +43,7 @@ function toggle(set: Set<string>, key: string): void {
 
 // The first snapshot can take a few seconds (Orca's CLI is slow on a busy machine).
 mainEl.innerHTML = crew('Loading workspaces…')
+setTimeout(draw, LINEAGE_WAIT_MS)
 orca.plugin.request('sidebar.list').then((s) => ((snap = s as Snapshot), draw())).catch((e: Error) => (mainEl.innerHTML = `<div class="empty">Could not load workspaces: ${e.message}</div>`))
 orca.plugin.on('sidebar.changed', (s) => ((snap = s as Snapshot), draw()))
 // Relative times ("4m") stay current.
@@ -235,7 +246,7 @@ form.addEventListener('submit', async (e) => {
   const name = nameEl.value.trim()
   if (!/^[a-z0-9][a-z0-9-]{0,23}$/.test(name)) { showError('Lowercase letters, digits and dashes'); nameEl.focus(); return }
   createEl.disabled = true
-  createEl.textContent = 'Creating…'
+  createEl.innerHTML = busy('Creating…')
   try {
     const r = await orca.plugin.request('sidebar.createCoordinator', { name, look: look! }, { timeoutMs: 90_000 })
     if (r.ok) closeModal()

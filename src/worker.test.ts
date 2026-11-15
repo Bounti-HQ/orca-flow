@@ -84,7 +84,7 @@ test('capacity and the status bar item come from the same rows', () => {
   ])
   const facts = { availableGB: 6.1, totalGB: 16, agentGB: 0.5, envGB: { 'shop': 2.6 }, diskFreeGB: 31 }
   const capacity = main.capacityOf(rows, 'normal', facts, '/nonexistent', () => false)
-  assert.deepEqual(capacity, { verdict: 'ok', freeGB: 4.1, marginGB: 2, diskFreeGB: 31, agentGB: 0.5, envGB: 2.6, pressure: 'normal', finishedOpen: 1 })
+  assert.deepEqual(capacity, { verdict: 'ok', freeGB: 4.1, marginGB: 2, measuring: false, diskFreeGB: 31, agentGB: 0.5, envGB: 2.6, pressure: 'normal', finishedOpen: 1 })
   const status = main.statusOf({ rows, source: 'cli', capacity, coordinators: [] })
   assert.equal(status.text, '1 waiting')
   assert.match(status.tooltip, /Next: shop\/a/)

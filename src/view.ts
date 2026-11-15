@@ -184,12 +184,16 @@ const askType = ({ a }: Placed) =>
 
 // ---------- cockpit ----------
 
-type Gauge = { key: string; icon: string; text: string; tone: '' | 'warn' | 'danger'; tip: string }
+type Gauge = { key: string; icon: string; text: string; tone: '' | 'warn' | 'danger'; tip: string; loading?: boolean }
 
 /** Gauge tooltips stay within five words. */
 export function gaugesOf(c: Capacity): Gauge[] {
   const out: Gauge[] = []
-  if (c.freeGB !== null || c.verdict === 'pressure') {
+  if (c.measuring) {
+    out.push({ key: 'memory', icon: 'chip', text: '', tone: '', tip: 'Measuring memory', loading: true })
+    out.push({ key: 'disk', icon: 'disk', text: '', tone: '', tip: 'Measuring disk', loading: true })
+  }
+  if (!c.measuring && (c.freeGB !== null || c.verdict === 'pressure')) {
     const free = Math.max(0, c.freeGB ?? 0)
     const tip = {
       ok: `Memory, after ${c.marginGB} GB margin`,
@@ -199,7 +203,7 @@ export function gaugesOf(c: Capacity): Gauge[] {
     }[c.verdict]
     out.push({ key: 'memory', icon: 'chip', text: `${free} GB free`, tone: c.verdict === 'ok' ? '' : c.verdict === 'agents-only' ? 'warn' : 'danger', tip })
   }
-  if (c.diskFreeGB != null) {
+  if (!c.measuring && c.diskFreeGB != null) {
     const d = c.diskFreeGB
     out.push({ key: 'disk', icon: 'disk', text: `${d >= 100 ? Math.round(d) : d} GB free`, tone: d < 10 ? 'danger' : d < 25 ? 'warn' : '',
       tip: d < 10 ? 'Disk nearly full' : d < 25 ? 'Disk low: worktrees need space' : 'Disk free on this Mac' })
@@ -222,17 +226,20 @@ const ICON: Record<string, string> = {
 
 const size = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`)
 
+/** Something in progress, inline: a small spinner and a verb. The one inline loading style. */
+export const busy = (text: string) => `<span class="rstatus pending"><span class="refreshing"></span>${esc(text)}</span>`
+
 /** A row's inline status, shown where its time or count normally sits; null when it has none. */
 function rowStatus(ui: UiState, key: string): string | null {
   const st = ui.status.get(key)
   if (!st) return null
-  return `<span class="rstatus ${st.tone}">${st.tone === 'pending' ? '<span class="refreshing"></span>' : ''}${esc(st.text)}</span>`
+  return st.tone === 'pending' ? busy(st.text) : `<span class="rstatus ${st.tone}">${esc(st.text)}</span>`
 }
 
 /** An action that asks "Yes · No" in place (unless `ask` is false), then shows its result. */
 function action(key: string, label: string, question: string, ui: UiState, ask = true): string {
-  if (ui.pending === key) return `<span class="pending"><span class="refreshing"></span>${key.startsWith('remove:') ? 'Removing…' : 'Sleeping…'}</span>`
-  if (ui.notice?.key === key) return `<span class="notice ${ui.notice.ok ? 'ok' : 'bad'}">${esc(ui.notice.text)}</span>`
+  if (ui.pending === key) return busy(key.startsWith('remove:') ? 'Removing…' : 'Sleeping…')
+  if (ui.notice?.key === key) return `<span class="rstatus ${ui.notice.ok ? 'ok' : 'bad'}">${esc(ui.notice.text)}</span>`
   if (ui.confirming === key) return `<span class="confirm">${esc(question)} <button class="yes" data-yes="${esc(key)}">Yes</button> <button class="no" data-no>No</button></span>`
   return ask ? `<button class="act" data-act="${esc(key)}">${esc(label)}</button>` : `<button class="act" data-yes="${esc(key)}">${esc(label)}</button>`
 }
@@ -249,6 +256,7 @@ function loader(): string {
 }
 
 function cockpitOpen(snap: Snapshot, ui: UiState): string {
+  if (!ui.stats && ui.notice?.key === 'load') return `<div class="copen"><div class="empty">Could not check what’s running: ${esc(ui.notice.text)}</div></div><div class="hair"></div>`
   if (!ui.stats) return loader()
   const st = ui.stats
   const all = snap.rows.flatMap((r) => r.agents)
@@ -300,7 +308,7 @@ function cockpitOpen(snap: Snapshot, ui: UiState): string {
 function cockpit(snap: Snapshot, ui: UiState): string {
   const gauges = snap.capacity ? gaugesOf(snap.capacity) : []
   return `<div class="cockpit" data-cockpit role="button" tabindex="0" aria-expanded="${ui.cockpitOpen}">${gauges
-    .map((g) => `<span class="gauge ${g.tone}" data-tip="${esc(g.tip)}" data-tone="${g.tone}" aria-label="${esc(g.tip)}">${ICON[g.icon]}<span>${esc(g.text)}</span></span>`)
+    .map((g) => `<span class="gauge ${g.tone}" data-tip="${esc(g.tip)}" data-tone="${g.tone}" aria-label="${esc(g.tip)}">${ICON[g.icon]}${g.loading ? '<span class="refreshing"></span>' : `<span>${esc(g.text)}</span>`}</span>`)
     .join('')}<span class="spacer"></span><span class="chev">${ICON.chev}</span></div>`
 }
 

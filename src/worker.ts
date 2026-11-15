@@ -276,6 +276,7 @@ export function capacityOf(rows: WorkspaceRow[], pressure: Pressure, facts: Memo
     verdict,
     freeGB,
     marginGB: config.marginGB,
+    measuring: facts === memory && memoryAt === 0,
     diskFreeGB: facts.diskFreeGB ?? null,
     agentGB: facts.agentGB,
     envGB,
@@ -380,7 +381,7 @@ export async function snapshot(
       if (i !== undefined) { coordinators[i].workspaceId = row.id; coordinators[i].session = row.liveTerminals > 0 ? (row.agents[0] ?? null) : null }
     }
     const rows = all.filter((r) => !r.path || !dirs.has(r.path))
-    return { rows, source: 'cli', capacity: capacityOf(all, pressureLevel()), coordinators }
+    return { rows, source: 'cli', capacity: capacityOf(all, pressureLevel()), coordinators, ready: lineageAt > 0 }
   } catch (e) {
     orca.log(`orca worktree ps failed, using workspace.list: ${(e as Error).message}`)
     return { rows: await fromApi(orca), source: 'api', capacity: null, coordinators }
