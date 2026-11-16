@@ -17,7 +17,7 @@ const ORCA_DATA = join(homedir(), 'Library', 'Application Support', 'orca')
  * starts, it re-summarizes live agents whose card an older summarizer wrote (no field = 0), so the
  * fix shows at once instead of at the agent's next turn.
  */
-export const SUMMARIZER_VERSION = 1
+export const SUMMARIZER_VERSION = 2
 
 export const SUMMARY_SCHEMA = {
   type: 'object',
@@ -58,6 +58,7 @@ Rules:
 - "since" is what changed in the latest turn only.
 - "needs": what the agent is waiting on from the user right now. "none" if the turn ended with work finished and nothing asked, and "none" when it is waiting on something else: workers it started, a background job, a long-running command, CI. Only a question or decision for the user counts. "approval" = yes/no on something prepared; "decision" = choose between options; "review" = look at a diff/PR/result; "info" = a fact only the user has. Ask ONE question in at most 25 words; if the agent asked several, ask the most important and say "(+2 more)". Options are 1-5 word labels like "Merge", "Keep both", "Ask each time", never sentences.
 - An ask needs a question the user can answer RIGHT NOW. A heads-up about a later step is not one: "releasing waits for your go-ahead", "I'll ask you once the PR is up", "merging needs your OK later" while the work it depends on is still running or not yet there means needs.type "none" and glance "", with what it waits on first in "watching". Never turn such a statement into a question.
+- An ask the user has already taken on is not an ask. When the user's latest message takes it on ("ok reviewing", "on it", "will look", "checking now", "give me a minute") and the agent's reply only acknowledges and waits, the ask is acknowledged: needs.type "none" and glance "", with what it waits on in "watching" ("your review of the PR"). It is an ask again only when the agent asks something new.
 - "effort": "quick" if the user can answer in under a minute.
 - "priority" guess: P0 now = blocking production, a customer or a release; P1 today = critical path of current focus; P2 soon = matters but can wait a day; P3 someday = exploration. When unsure pick the lower level.
 Write in English even if the conversation is in another language.`

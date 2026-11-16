@@ -357,6 +357,17 @@ test('a heads-up about a later go-ahead is not an ask, for every role', async ()
   assert.match(SYSTEM_PROMPT, /"releasing waits for your go-ahead"[\s\S]*?needs\.type "none"[\s\S]*?"watching"/)
 })
 
+test('an ask the user already took on ("ok reviewing") is not an ask while the agent only waits', async () => {
+  const { SYSTEM_PROMPT, SUMMARIZER_VERSION } = await import('./summarize.ts')
+  // The mono lead asked for a review of #6227; the user said "ok reviewing" and the lead answered
+  // "I'll wait for your comments", yet Up next still showed "ASKS · REVIEW".
+  assert.match(SYSTEM_PROMPT, /"ok reviewing", "on it", "will look", "checking now", "give me a minute"/)
+  assert.match(SYSTEM_PROMPT, /only acknowledges and waits, the ask is acknowledged: needs\.type "none" and glance ""/)
+  assert.match(SYSTEM_PROMPT, /"watching" \("your review of the PR"\)/)
+  assert.match(SYSTEM_PROMPT, /an ask again only when the agent asks something new/)
+  assert.ok(SUMMARIZER_VERSION >= 2, 'the version went up, so cards written under the old rules refresh')
+})
+
 test("a transcript Claude creates a moment after the turn's status is found on a retry, without a warning", async () => {
   const { turnSummarizer } = await import('./summarize.ts')
   const runs: string[] = []
