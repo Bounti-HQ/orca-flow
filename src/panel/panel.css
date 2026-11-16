@@ -7,10 +7,11 @@
   --hover: var(--orca-accent, #1f1f23);
   --bg: var(--orca-background, #161618);
   --ask: #8fb3ff;
+  --review: #c39bff;
   --warn: #e8b64c;
   --danger: #ec6a52;
 }
-html.light { --ask: #2f55d4; --warn: #a8700b; --danger: #c43d27; }
+html.light { --ask: #2f55d4; --review: #7c3aed; --warn: #a8700b; --danger: #c43d27; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body { user-select: none; -webkit-user-select: none; cursor: default; margin: 0; padding: 12px 12px 0; overflow: hidden; background: var(--bg); color: var(--ink); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; display: flex; flex-direction: column; gap: 14px; }
@@ -101,6 +102,8 @@ html.light .pr-merged { color: rgb(147 51 234 / .7); }
 .ch.faded { opacity: .45; }
 .ch .rim { fill: var(--bg); }
 .ch .ask-badge { fill: var(--ask); }
+.ch .review-badge { fill: var(--review); }
+.ch .approval-badge { fill: var(--warn); }
 .ch .track { stroke: color-mix(in srgb, var(--ink) 22%, transparent); }
 .spin { animation: spin 1s linear infinite; }
 .spin.slow { animation-duration: 4s; }
@@ -112,6 +115,7 @@ html.light .pr-merged { color: rgb(147 51 234 / .7); }
 .glance { display: grid; gap: 1px; font-size: 13.5px; font-weight: 500; }
 .kicker { color: var(--faint); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; font-weight: 400; }
 .jump { justify-self: start; padding: 5px 10px; border-radius: 6px; background: color-mix(in srgb, var(--ink) 9%, transparent); font-size: 12.5px; font-weight: 500; }
+.jumps { display: flex; gap: 6px; justify-self: start; }
 .jump:hover { background: color-mix(in srgb, var(--ink) 14%, transparent); }
 
 /* coordinators */
@@ -140,6 +144,7 @@ html.light .pr-merged { color: rgb(147 51 234 / .7); }
 .tip.on { opacity: 1; transform: none; }
 .tip.warn { color: var(--warn); }
 .tip.ask { color: var(--ask); }
+.tip.review { color: var(--review); }
 .tip.danger { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
 

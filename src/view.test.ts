@@ -1,7 +1,7 @@
 // The panel's HTML from a snapshot, checked in Node.
 import { assert, test } from 'orca/testing'
 import type { AgentInfo, AgentSummary, Snapshot, WorkspaceRow } from './protocol.ts'
-import { character, emptyUi, faceOf, finishedAgents, freeLooks, gaugesOf, prBadge, render } from './view.ts'
+import { askKindOf, character, emptyUi, faceOf, finishedAgents, freeLooks, gaugesOf, prBadge, render } from './view.ts'
 import type { CockpitStats } from './protocol.ts'
 import { pressGate } from './panel/press.ts'
 
@@ -244,10 +244,10 @@ test('new coordinators are offered looks nobody has; rows wear their look', () =
 
 test('characters carry a one- or two-word status tooltip', () => {
   const { main } = render(snap, emptyUi())
-  assert.match(main, /data-tip="Waiting on you" data-tone="ask">/)
+  assert.match(main, /data-tip="Asks a question" data-tone="ask">/)
   assert.match(main, /data-tip="Working">/)
   const blocked: Snapshot = { ...snap, rows: [row('b', 'shop', [agent('p-b', 'Permission', 'blocked')])] }
-  assert.match(render(blocked, emptyUi()).main, /data-tip="Needs approval"/)
+  assert.match(render(blocked, emptyUi()).main, /data-tip="Needs a yes\/no" data-tone="warn"/)
   for (const tip of main.match(/data-tip="[^"]*"/g) ?? []) assert.ok(tip.split(' ').length <= 4, `${tip} is too long`)
 })
 
@@ -455,4 +455,40 @@ test('a redraw between pointerdown and pointerup waits until the click has run',
   assert.equal(fired.length, 3, 'a release after the safety flush schedules nothing')
   gate.draw()
   assert.equal(paints.length, 4, 'and drawing is immediate again')
+})
+
+test('an ask wears its kind: an eye for a review, a check on amber for a yes/no, ? for a question', () => {
+  const needs = (type: 'review' | 'approval' | 'decision' | 'info') => summary({ glance: 'Look?', needs: { type, ask: 'Look?', options: [] } })
+  const cases: [AgentInfo, string, RegExp, string][] = [
+    [agent('p1', 'Checkout', 'done', { summary: needs('review') }), 'review', /class="review-badge"/, 'Wants a review'],
+    [agent('p2', 'Checkout', 'done', { summary: needs('approval') }), 'approval', /class="approval-badge"/, 'Needs a yes\/no'],
+    [agent('p3', 'Checkout', 'blocked'), 'approval', /class="approval-badge"/, 'Needs a yes\/no'],
+    [agent('p4', 'Checkout', 'done', { summary: needs('decision') }), 'question', /class="ask-badge"/, 'Asks a question'],
+    [agent('p5', 'Checkout', 'done', { summary: needs('info') }), 'question', /class="ask-badge"/, 'Asks a question'],
+    [agent('p6', 'Checkout', 'waiting', { summary: needs('review') }), 'question', /class="ask-badge"/, 'Asks a question']
+  ]
+  for (const [a, kind, badge, tip] of cases) {
+    assert.equal(faceOf(a), 'asks', `${a.paneKey} still counts as asking`)
+    assert.equal(askKindOf(a), kind, a.paneKey)
+    const main = render({ ...snap, rows: [row('w', 'shop', [a])] }, emptyUi()).main
+    const line = /<button class="item[^"]*" data-open[\s\S]*?<\/button>/.exec(main)![0]
+    assert.match(line, badge, `${a.paneKey} badge`)
+    assert.match(line, new RegExp(`data-tip="${tip}"`), `${a.paneKey} tooltip`)
+  }
+  assert.match(character('#fff', 'solo', 'asks', 20), /class="ask-badge"/, 'a question by default')
+})
+
+test("a coordinator's badge is the kind of the ask it shows; a review with a PR offers Open PR", () => {
+  const review = summary({ glance: 'Review the PR?', needs: { type: 'review', ask: 'Review the PR?', options: [] } })
+  const session = agent('p-home', 'Home', 'done', { summary: review })
+  const s: Snapshot = { ...snap, coordinators: [{ ...snap.coordinators[0], session }, snap.coordinators[1]] }
+  const head = /<button class="coord-open"[^>]*>[\s\S]*?<\/button>/.exec(render(s, emptyUi()).main.split('data-menu="coordinator:alpha"')[1])![0]
+  assert.match(head, /data-tip="Wants a review" data-tone="review"[\s\S]*?class="review-badge"/)
+  const lead = agent('p-l', 'Checkout', 'done', { summary: review })
+  const pr = { number: 7, url: 'https://pr/7', state: 'open', checks: 'success' as const }
+  const withPr = render({ ...snap, rows: [row('w', 'shop', [lead], { pr })] }, emptyUi()).main
+  assert.match(withPr, /class="jump" data-open="w">Jump to session<\/button><button class="jump" data-pr="https:\/\/pr\/7">Open PR<\/button>/)
+  noMatch(render({ ...snap, rows: [row('w', 'shop', [lead])] }, emptyUi()).main, /Open PR/, 'no PR, no button')
+  const question = agent('p-q', 'Checkout', 'waiting', { question: 'Which one?' })
+  noMatch(render({ ...snap, rows: [row('w', 'shop', [question], { pr })] }, emptyUi()).main, /Open PR/, 'a question is answered in the session')
 })

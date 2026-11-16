@@ -61,8 +61,8 @@ export function colorOf(project: string): string {
 }
 const NEUTRAL = '#a6a6b0'
 
-/** An SVG character. */
-export function character(color: string, shape: Shape, face: Face, size = 16, badge = true): string {
+/** An SVG character. An asking one wears the badge of what it asks (`ask`, a question by default). */
+export function character(color: string, shape: Shape, face: Face, size = 16, badge = true, ask: AskKind = 'question'): string {
   const s = size, ink = '#141416', sw = Math.max(1, s * 0.07)
   const queued = face === 'queued'
   const paint = queued ? `fill="none" stroke="${color}" stroke-width="${Math.max(1, s * 0.06)}" stroke-dasharray="${s * 0.12} ${s * 0.09}"` : `fill="${color}"`
@@ -105,7 +105,7 @@ export function character(color: string, shape: Shape, face: Face, size = 16, ba
     working: spin('spin', `<circle cx="${bx}" cy="${by}" r="${r2}" fill="none" class="track" stroke-width="${s * 0.09}"/><path d="M${bx} ${by - r2} a${r2} ${r2} 0 0 1 ${r2} ${r2}" fill="none" stroke="#e8b64c" stroke-width="${s * 0.09}" stroke-linecap="round"/>`),
     monitoring: spin('spin slow', `<circle cx="${bx}" cy="${by}" r="${r2}" fill="none" stroke="#e8b64c" stroke-width="${s * 0.08}" stroke-dasharray="${s * 0.07} ${s * 0.07}"/>`),
     done: `${rim}<circle cx="${bx}" cy="${by}" r="${br}" fill="#5fbf8a"/><path d="M${bx - br * 0.45} ${by} l${br * 0.32} ${br * 0.32} l${br * 0.6} -${br * 0.62}" fill="none" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round" stroke-linejoin="round"/>`,
-    asks: `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="ask-badge"/><text x="${bx}" y="${by + br * 0.42}" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="${br * 1.3}" font-weight="800" fill="#161618">?</text>`,
+    asks: ASK_BADGE[ask](rim, bx, by, br, s),
     failed: `${rim}<circle cx="${bx}" cy="${by}" r="${br}" fill="#ec6a52"/><path d="M${bx - br * 0.4} ${by - br * 0.4} l${br * 0.8} ${br * 0.8} M${bx + br * 0.4} ${by - br * 0.4} l-${br * 0.8} ${br * 0.8}" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round"/>`
   }
   // The hand and the badge reach past the body to the top-right; only then does the frame make room
@@ -128,11 +128,38 @@ function tipped(svg: string, tip: string, tone = ''): string {
 
 const STATUS: Record<Face, string> = { working: 'Working', monitoring: 'Monitoring', asks: 'Waiting on you', done: 'Done', failed: 'Failed', idle: 'Idle', queued: 'Queued' }
 
+/**
+ * What an asking agent wants, at a glance: a review (look at a PR, diff or result), a yes/no
+ * (Orca's permission prompt, or an approval), or a question (Orca's pending question, a decision,
+ * a fact). Ranking and counting still treat all three as one "asks" face.
+ */
+export type AskKind = 'review' | 'approval' | 'question'
+export function askKindOf(a: AgentInfo): AskKind {
+  if (a.state === 'blocked') return 'approval'
+  if (a.state === 'waiting') return 'question'
+  const t = a.summary?.needs.type
+  return t === 'review' ? 'review' : t === 'approval' ? 'approval' : 'question'
+}
+const ASK_TIP: Record<AskKind, string> = { review: 'Wants a review', approval: 'Needs a yes/no', question: 'Asks a question' }
+/** Tooltip tone (src/panel/panel.css .tip.<tone>), matching the badge's color. */
+const ASK_TONE: Record<AskKind, string> = { review: 'review', approval: 'warn', question: 'ask' }
+const ASK_BADGE: Record<AskKind, (rim: string, bx: number, by: number, br: number, s: number) => string> = {
+  question: (rim, bx, by, br) =>
+    `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="ask-badge"/><text x="${bx}" y="${by + br * 0.42}" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="${br * 1.3}" font-weight="800" fill="#161618">?</text>`,
+  // An eye: look at something.
+  review: (rim, bx, by, br, s) =>
+    `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="review-badge"/><path d="M${bx - br * 0.62} ${by} Q${bx} ${by - br * 0.62} ${bx + br * 0.62} ${by} Q${bx} ${by + br * 0.62} ${bx - br * 0.62} ${by} Z" fill="none" stroke="#161618" stroke-width="${s * 0.05}" stroke-linejoin="round"/><circle cx="${bx}" cy="${by}" r="${br * 0.2}" fill="#161618"/>`,
+  // A check on amber: a quick yes/no (green with a check stays "done").
+  approval: (rim, bx, by, br, s) =>
+    `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="approval-badge"/><path d="M${bx - br * 0.45} ${by} l${br * 0.32} ${br * 0.32} l${br * 0.6} -${br * 0.62}" fill="none" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round" stroke-linejoin="round"/>`
+}
+
 /** An agent's character with its status: what Orca shows, in at most two words. */
 function agentCharacter(a: AgentInfo, row: WorkspaceRow, all: AgentInfo[], size = 20): string {
   const face = faceOf(a)
-  const tip = a.state === 'blocked' ? 'Needs approval' : face === 'done' && inFlight(a, row, all) ? 'Available' : STATUS[face]
-  return tipped(character(colorOf(row.repo), shapeOf(a, all), face, size), tip, face === 'asks' ? 'ask' : '')
+  const ask = askKindOf(a)
+  const tip = face === 'asks' ? ASK_TIP[ask] : face === 'done' && inFlight(a, row, all) ? 'Available' : STATUS[face]
+  return tipped(character(colorOf(row.repo), shapeOf(a, all), face, size, true, ask), tip, face === 'asks' ? ASK_TONE[ask] : '')
 }
 
 // ---------- reading the model ----------
@@ -322,7 +349,7 @@ function upNext(placed: Placed[], all: AgentInfo[], coordinators: Coordinator[],
     const head = `<button class="item" data-brief="${esc(key)}" data-menu="agent:${esc(p.a.paneKey)}" aria-expanded="${open}">${agentCharacter(p.a, p.row, all)}<span class="t${open ? ' strong' : ''}">${esc(nameOf(p.a, p.row))}</span><span class="r">${rowStatus(ui, `agent:${p.a.paneKey}`) ?? `${esc(coordinatorName(p.a.coordinator, coordinators))}${p.row.priority ? ` · ${p.row.priority}` : ''}`}</span></button>`
     if (!open) return head
     const about = aboutOf(p)
-    return `${head}<div class="brief">${about ? `<div class="about">${esc(about)}</div>` : ''}<div class="glance"><span class="kicker">Asks · ${esc(askType(p))}</span><span>${esc(glanceOf(p))}</span></div><button class="jump" ${openAttrs(p)}>Jump to session</button></div>`
+    return `${head}<div class="brief">${about ? `<div class="about">${esc(about)}</div>` : ''}<div class="glance"><span class="kicker">Asks · ${esc(askType(p))}</span><span>${esc(glanceOf(p))}</span></div><div class="jumps"><button class="jump" ${openAttrs(p)}>Jump to session</button>${reviewPr(p)}</div></div>`
   })
   return `<section class="upnext"><div class="label">Up next · ${placed.length}</div><div class="group">${items.join('')}</div></section><div class="hair"></div>`
 }
@@ -354,6 +381,10 @@ function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], sof
   const right = status ?? `${soft ? `<span class="soft">${esc(p.row.repo)}</span>` : ''}${prBadge(p.row.pr)}<span>${ago(p.row.lastActivityAt, ui.now)}</span>`
   return `<button class="item${indent ? ' indent' : ''}${p.row.active ? ' current' : ''}" ${openAttrs(p)} data-menu="agent:${esc(p.a.paneKey)}"${p.row.active ? ' aria-current="true"' : ''}>${agentCharacter(p.a, p.row, all)}<span class="t">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span></button>`
 }
+
+/** A review of a worktree with an open PR: the PR is what to look at, one click away. */
+const reviewPr = ({ a, row }: Placed) =>
+  askKindOf(a) === 'review' && row.pr && (row.pr.state === 'open' || row.pr.state === 'draft') ? `<button class="jump" data-pr="${esc(row.pr.url)}">Open PR</button>` : ''
 
 /** What a click on an agent opens: its workspace and, when its terminal is known, its own tab. */
 const openAttrs = (p: Placed) => `data-open="${esc(p.row.id)}"${p.a.terminal ? ` data-terminal="${esc(p.a.terminal)}"` : ''}`
@@ -400,14 +431,17 @@ function coordinatorBlock(c: Coordinator & { you?: boolean }, mine: Placed[], al
   const face: Face = c.you
     ? ((['asks', 'working', 'monitoring'] as Face[]).find((f) => mine.some((p) => faceOf(p.a) === f)) ?? 'done')
     : c.session ? faceOf(c.session) : 'idle'
-  const tip = face === 'idle' ? 'Sleeping' : face === 'done' && !c.you ? 'Available' : STATUS[face]
+  // The badge of the ask it shows: its own session's, or for You the first of your chats that asks.
+  const asking = c.you ? mine.find((p) => faceOf(p.a) === 'asks')?.a : c.session
+  const ask = asking ? askKindOf(asking) : 'question'
+  const tip = face === 'idle' ? 'Sleeping' : face === 'asks' ? ASK_TIP[ask] : face === 'done' && !c.you ? 'Available' : STATUS[face]
   const panes = new Set(mine.map((p) => p.a.paneKey))
   const roots = mine.filter((p) => !p.a.leadPane || !panes.has(p.a.leadPane))
   const body = roots
     .map((p) => agentLine(p, all, coordinators, !single, false, ui) + mine.filter((w) => w.a.leadPane === p.a.paneKey).map((w) => agentLine(w, all, coordinators, !single, true, ui)).join(''))
     .join('')
   const folded = ui.folded.has(c.key)
-  const head = `${tipped(character(color, shape, face, 28), tip, face === 'asks' ? 'ask' : '')}<span class="grow"><span class="name">${esc(c.name)}</span><span class="sub">${esc(sub)}</span></span><span class="r">${rowStatus(ui, `coordinator:${c.key}`) ?? ''}</span>`
+  const head = `${tipped(character(color, shape, face, 28, true, ask), tip, face === 'asks' ? ASK_TONE[ask] : '')}<span class="grow"><span class="name">${esc(c.name)}</span><span class="sub">${esc(sub)}</span></span><span class="r">${rowStatus(ui, `coordinator:${c.key}`) ?? ''}</span>`
   // A coordinator's row opens its session; the chevron folds its team. You only folds.
   const row = c.you
     ? `<button class="item coord" data-fold="${esc(c.key)}" aria-expanded="${!folded}">${head}</button>`
