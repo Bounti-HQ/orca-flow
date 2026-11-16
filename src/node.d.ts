@@ -47,7 +47,7 @@ declare module 'node:child_process' {
 declare module 'node:fs' {
   export function renameSync(from: string, to: string): void
 }
-declare const process: { env: Record<string, string | undefined>; pid: number }
+declare const process: { env: Record<string, string | undefined>; pid: number; getBuiltinModule?(id: string): any }
 declare module 'node:child_process' {
   export function execFile(file: string, args: readonly string[], options: { cwd?: string; timeout?: number; maxBuffer?: number; env?: Record<string, string> }, callback: (error: Error | null, stdout: string, stderr: string) => void): { stdin: { end(data: string): void } | null }
 }

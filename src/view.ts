@@ -5,7 +5,7 @@
 // open (what it is about, the ask at a glance, one button to jump); then the coordinators tree.
 // Characters carry everything: color = project, shape = role, face = state.
 import type { AgentInfo, Capacity, CockpitStats, Coordinator, LookShape, Look, Snapshot, StartedGroup, WorkspaceRow } from './protocol.ts'
-import { asksYou, claimsAsk, monitoring, needsYou, waitingQueue } from './rank.ts'
+import { asksYou, claimsAsk, holdsWorkstream, monitoring, needsYou, waitingQueue } from './rank.ts'
 
 export type UiState = {
   /** Up-next items the person opened, and ones they closed (the first is open by default). */
@@ -359,13 +359,13 @@ function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], sof
 const leadsOpenWork = (a: AgentInfo, all: AgentInfo[]) => all.some((b) => b.leadPane === a.paneKey && faceOf(b) !== 'done')
 
 /**
- * A done agent that still has work in flight is available, not finished: it leads agents that are
- * still open, or it owns its worktree's open (or draft) PR, which is steered over several rounds
+ * A done agent that still has work in flight is available, not finished: it is a lead that has not
+ * reported worker_done, it leads agents that are still open, or it owns its worktree's open (or draft) PR, which is steered over several rounds
  * until it merges. The owner is the agent no one else in that worktree dispatched (a lead, or a chat
  * you started); its own workers are tasks and finish as usual.
  */
 function inFlight(a: AgentInfo, row: WorkspaceRow, all: AgentInfo[]): boolean {
-  if (leadsOpenWork(a, all)) return true
+  if (holdsWorkstream(a) || leadsOpenWork(a, all)) return true
   const prOpen = row.pr?.state === 'open' || row.pr?.state === 'draft'
   const worker = a.leadPane !== null && row.agents.some((b) => b.paneKey === a.leadPane)
   return prOpen && !worker

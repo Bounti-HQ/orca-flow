@@ -135,15 +135,66 @@ export function digest(lines: string[]): Digest | null {
 
 // ---------- finding things on this Mac ----------
 
-/** Orca's hook state records every agent pane's Claude transcript path. */
-export function transcriptOf(pane: string, statusFile = join(ORCA_DATA, 'agent-hooks', 'last-status.json')): string | null {
-  try {
-    const entry = JSON.parse(readFileSync(statusFile, 'utf8'))?.entries?.[pane]
+const HOOKS_DIR = join(ORCA_DATA, 'agent-hooks')
+
+type Found = { path: string } | { path: null; why: string }
+
+/**
+ * Where Orca's hook state records a pane's Claude transcript. Current Orca keeps that state in
+ * SQLite (agent-hooks/last-status.db: one `entry\0<pane>` row per pane, its JSON value carrying
+ * `providerSession.transcriptPath`); older Orca wrote agent-hooks/last-status.json. Reads the
+ * database first, the JSON file second, and says why when neither has a transcript on disk.
+ */
+export function findTranscript(pane: string, files = { db: join(HOOKS_DIR, 'last-status.db'), json: join(HOOKS_DIR, 'last-status.json') }): Found {
+  const misses: string[] = []
+  for (const [file, read] of [[files.db, entryFromDb], [files.json, entryFromJson]] as const) {
+    if (!existsSync(file)) {
+      misses.push(`${file} does not exist`)
+      continue
+    }
+    let entry: any
+    try {
+      entry = read(file, pane)
+    } catch (e) {
+      misses.push(`${file}: ${(e as Error).message}`)
+      continue
+    }
     const path = entry?.providerSession?.transcriptPath ?? entry?.transcriptPath
-    return typeof path === 'string' && existsSync(path) ? path : null
-  } catch {
-    return null
+    if (typeof path === 'string' && existsSync(path)) return { path }
+    misses.push(entry ? `${file} names ${typeof path === 'string' ? `${path}, which does not exist` : 'no transcript'}` : `${file} has no entry for the pane`)
   }
+  return { path: null, why: misses.join('; ') }
+}
+
+export function transcriptOf(pane: string, files?: { db: string; json: string }): string | null {
+  return findTranscript(pane, files).path
+}
+
+/**
+ * The newest entry row for the pane. Opened read-only: Orca writes the database live in WAL mode.
+ * `node:sqlite` comes from the runtime (Node 22.13+ unflagged; Orca's plugin host runs Node 24), so
+ * the plugin needs no native build; on a runtime without it the JSON fallback still applies.
+ */
+function entryFromDb(file: string, pane: string): any {
+  const sqlite = process.getBuiltinModule?.('node:sqlite')
+  if (!sqlite) throw new Error('this runtime has no node:sqlite')
+  const db = new sqlite.DatabaseSync(file, { readOnly: true, timeout: 1000 })
+  try {
+    // Rows are keyed `entry\0<pane>`; match on the value's paneKey too, in case the key layout changes.
+    const rows = db.prepare(`SELECT value FROM rows WHERE key = ? OR (substr(key, 1, 5) = 'entry' AND instr(value, ?) > 0) ORDER BY seq DESC`)
+      .all(`entry\0${pane}`, JSON.stringify(pane)) as { value: string }[]
+    for (const row of rows) {
+      const entry = JSON.parse(row.value)
+      if (entry?.paneKey === pane) return entry
+    }
+    return null
+  } finally {
+    db.close()
+  }
+}
+
+function entryFromJson(file: string, pane: string): any {
+  return JSON.parse(readFileSync(file, 'utf8'))?.entries?.[pane] ?? null
 }
 
 /** The plugin worker does not inherit the shell's PATH, so look where Claude Code installs. */
@@ -266,12 +317,14 @@ type Job = { pane: string; transcript: string; worktreeId?: string }
  */
 export function turnSummarizer(opts: {
   run: (job: Job) => Promise<unknown>
-  transcriptOf?: (pane: string) => string | null
+  findTranscript?: (pane: string) => Found
   delayMs?: number
   parallel?: number
   log?: (message: string) => void
 }) {
-  const find = opts.transcriptOf ?? transcriptOf
+  const find = opts.findTranscript ?? ((pane: string) => findTranscript(pane))
+  // A missing transcript means no summary at all; say so once, loudly, instead of failing silently.
+  let warned = false
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const running = new Set<string>()
   const again = new Map<string, Job>()
@@ -312,8 +365,11 @@ export function turnSummarizer(opts: {
       clearTimeout(timers.get(pane))
       timers.set(pane, setTimeout(() => {
         timers.delete(pane)
-        const transcript = find(pane)
-        if (transcript) enqueue({ pane, transcript, worktreeId: event.workspaceId ?? undefined })
+        const found = find(pane)
+        if (found.path !== null) return enqueue({ pane, transcript: found.path, worktreeId: event.workspaceId ?? undefined })
+        if (warned) return
+        warned = true
+        opts.log?.(`SUMMARIES OFF: no Claude transcript found for pane ${pane}, so its turn was not summarized (${found.why}). Further misses are not logged.`)
       }, opts.delayMs ?? 2000))
     },
     dispose(): void {

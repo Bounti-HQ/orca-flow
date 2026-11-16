@@ -11,7 +11,7 @@ const summary = (over: Partial<AgentSummary> = {}): AgentSummary => ({
   needs: { type: 'none', ask: '', options: [] }, effort: 'quick', priority: 'P2', role: 'solo', updatedAt: 1, ...over
 })
 const agent = (paneKey: string, title: string, state: AgentInfo['state'], over: Partial<AgentInfo> = {}): AgentInfo => ({
-  paneKey, title, state, agentType: 'claude', summary: null, workingMode: null, coordinator: 'you', leadPane: null, terminal: null, question: null, ...over
+  paneKey, title, state, agentType: 'claude', summary: null, workingMode: null, coordinator: 'you', leadPane: null, parentPane: null, dispatch: null, terminal: null, question: null, ...over
 })
 const row = (id: string, repo: string, agents: AgentInfo[], over: Partial<WorkspaceRow> = {}): WorkspaceRow => ({
   id, name: id, branch: id, repo, path: `/w/${id}`, main: false, agents, state: agents[0]?.state ?? null, priority: null, card: null, parentId: null,
@@ -360,6 +360,20 @@ test('the owner of an open PR stays in the tree until it merges; its finished wo
   assert.match(render(at('open'), emptyUi()).main, /data-tip="Available"[\s\S]*?Onboarding/)
   assert.deepEqual(finishedAgents(at('draft').rows).map((a) => a.paneKey), ['p-rev'])
   assert.deepEqual(finishedAgents(at('merged').rows).map((a) => a.paneKey).sort(), ['p-lead', 'p-rev'], 'merged: both finish')
+})
+
+test('a lead stays available, never finished, until it reports worker_done', () => {
+  const lead = (dispatch: AgentInfo['dispatch']) => agent('p-lead', 'Onboarding', 'done', { coordinator: 'alpha', dispatch, summary: summary({ title: 'Onboarding', role: 'lead', watching: 'CI' }) })
+  const at = (dispatch: AgentInfo['dispatch']) => ({ ...snap, rows: [row('ob', 'shop', [lead(dispatch)])] }) as Snapshot
+  for (const d of ['open', null] as const) {
+    assert.deepEqual(finishedAgents(at(d).rows), [], `dispatch ${d}: Sleep all leaves the lead alone`)
+    const { main, footer } = render(at(d), emptyUi())
+    assert.match(main, /data-tip="Available"[\s\S]*?Onboarding/, `dispatch ${d}: shown as available in the tree`)
+    noMatch(footer, /Onboarding/, `dispatch ${d}: not under Finished`)
+  }
+  assert.deepEqual(finishedAgents(at('settled').rows).map((a) => a.paneKey), ['p-lead'], 'after worker_done it finishes')
+  const worker = agent('p-w', 'Fix', 'done', { dispatch: 'open', summary: summary({ role: 'worker' }) })
+  assert.deepEqual(finishedAgents([row('w', 'shop', [worker])]).map((a) => a.paneKey), ['p-w'], 'a worker finishes when its turn ends')
 })
 
 test('an agent with no title is named after its worktree, not its agent type', () => {

@@ -110,6 +110,35 @@ test('your coordinators: their sessions dispatch workers, dispatch chains follow
   assert.deepEqual(out, [['alpha', null], ['alpha', 'p-coord'], ['you', null]])
 })
 
+test("a lead's worker started inside its coordinator's run nests under the lead, which stays at work", async () => {
+  const { finishedAgents } = await import('./view.ts')
+  // As `orca worktree ps` reports it: the worker's parent is the lead, the lead's is the coordinator.
+  const rows = main.fromPs([
+    { identity: { key: 'home' }, displayName: 'isola', repo: 'isola', path: '/c/isola', liveTerminalCount: 1, agents: [{ paneKey: 'p-home', state: 'done' }] },
+    { identity: { key: 'env' }, displayName: 'env-cleanup', repo: 'isola', path: '/w/env', liveTerminalCount: 2, agents: [
+      { paneKey: 'p-worker', parentPaneKey: 'p-lead', state: 'working' },
+      { paneKey: 'p-lead', parentPaneKey: 'p-home', state: 'done' }
+    ] }
+  ])
+  const coordinators = [{ key: 'isola', name: 'isola', repos: ['isola'], about: '', dir: '/c/isola', workspaceId: null }]
+  // Both dispatches live in the coordinator's run, so the run alone credits both to the coordinator.
+  const lineage = {
+    dispatcherOf: new Map([['p-lead', 'term-home'], ['p-worker', 'term-home']]),
+    paneOf: new Map([['term-home', 'p-home'], ['term-lead', 'p-lead'], ['term-worker', 'p-worker']]),
+    dispatchOf: new Map([['p-lead', 'open' as const], ['p-worker', 'open' as const]])
+  }
+  const [, env] = assignCoordinators(rows, coordinators, lineage)
+  const byPane = Object.fromEntries(env.agents.map((a) => [a.paneKey, [a.coordinator, a.leadPane]]))
+  assert.deepEqual(byPane, { 'p-worker': ['isola', 'p-lead'], 'p-lead': ['isola', null] })
+  assert.deepEqual(finishedAgents([env]).map((a) => a.paneKey), [], 'the lead leads a working worker')
+  // An agent without a parent pane still falls back to the run lineage.
+  const noParent = main.fromPs([
+    { identity: { key: 'home' }, displayName: 'isola', repo: 'isola', path: '/c/isola', agents: [{ paneKey: 'p-home', state: 'done' }] },
+    { identity: { key: 'x' }, displayName: 'x', repo: 'isola', agents: [{ paneKey: 'p-worker', state: 'working' }] }
+  ])
+  assert.deepEqual(assignCoordinators(noParent, coordinators, lineage)[1].agents.map((a) => [a.coordinator, a.leadPane, a.dispatch]), [['isola', null, 'open']])
+})
+
 test('your coordinators are folders under the coordinator home; new ones are validated and scaffolded', async () => {
   const { mkdtempSync, readFileSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
@@ -245,22 +274,53 @@ test('a coordinator home is any folder under the home or one with a coordinator 
   assert.equal(isCoordinatorHome(null, '/h/coordinators'), false)
 })
 
-test('turns are summarized once per burst, one run per pane, newest job after a running one', async () => {
-  const { transcriptOf, turnSummarizer } = await import('./summarize.ts')
+test("transcripts come from Orca's SQLite hook store, newest entry per pane, else the old JSON file", async () => {
+  const { findTranscript, transcriptOf } = await import('./summarize.ts')
   const { mkdtempSync, writeFileSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
   const dir = mkdtempSync(join(tmpdir(), 'hooks-'))
-  writeFileSync(join(dir, 't.jsonl'), '')
-  writeFileSync(join(dir, 'last-status.json'), JSON.stringify({ entries: { p1: { providerSession: { transcriptPath: join(dir, 't.jsonl') } }, p2: { providerSession: { transcriptPath: '/missing.jsonl' } } } }))
-  assert.equal(transcriptOf('p1', join(dir, 'last-status.json')), join(dir, 't.jsonl'))
-  assert.equal(transcriptOf('p2', join(dir, 'last-status.json')), null)
+  const t = (name: string) => (writeFileSync(join(dir, name), ''), join(dir, name))
+  const [current, older, legacy] = [t('current.jsonl'), t('older.jsonl'), t('legacy.jsonl')]
+  const files = { db: join(dir, 'last-status.db'), json: join(dir, 'last-status.json') }
 
+  // A fixture shaped like Orca's agent-hooks/last-status.db (schema_version 202), written in WAL mode.
+  const { DatabaseSync } = process.getBuiltinModule!('node:sqlite')
+  const db = new DatabaseSync(files.db)
+  db.exec(`PRAGMA journal_mode = WAL;
+    CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE rows(key TEXT PRIMARY KEY, seq INTEGER NOT NULL, value TEXT NOT NULL);
+    INSERT INTO meta VALUES ('schema_version', '202');`)
+  const put = db.prepare('INSERT INTO rows VALUES (?, ?, ?)')
+  const entry = (pane: string, transcriptPath: string) => JSON.stringify({ paneKey: pane, source: 'claude', hookEventName: 'Stop', providerSession: { transcriptPath } })
+  put.run('entry\0tab-a:leaf-1', 42, entry('tab-a:leaf-1', current))
+  put.run('entry', 7, entry('tab-a:leaf-1', older))
+  put.run('commitment\0tab-a:leaf-1', 159, JSON.stringify({ paneKey: 'tab-a:leaf-1', launchTokenHash: 'x' }))
+  put.run('entry\0tab-b:leaf-2', 43, entry('tab-b:leaf-2', '/missing.jsonl'))
+  put.run('commitment\0tab-c:leaf-3', 160, JSON.stringify({ paneKey: 'tab-c:leaf-3' }))
+
+  // Read while Orca still holds the database open for writing.
+  assert.equal(transcriptOf('tab-a:leaf-1', files), current, 'the newest entry row by seq')
+  assert.equal(transcriptOf('tab-b:leaf-2', files), null, 'a transcript that is gone')
+  const commitmentOnly = findTranscript('tab-c:leaf-3', files)
+  assert.equal(commitmentOnly.path, null, 'a commitment row has no transcript')
+  assert.match(commitmentOnly.path === null ? commitmentOnly.why : '', /last-status\.db has no entry for the pane; .*last-status\.json does not exist/)
+  db.close()
+
+  writeFileSync(files.json, JSON.stringify({ entries: { 'tab-d:leaf-4': { providerSession: { transcriptPath: legacy } } } }))
+  assert.equal(transcriptOf('tab-d:leaf-4', files), legacy, 'older Orca: the JSON file')
+  assert.equal(transcriptOf('tab-d:leaf-4', { db: join(dir, 'none.db'), json: files.json }), legacy, 'no database at all')
+})
+
+test('turns are summarized once per burst, one run per pane, newest job after a running one', async () => {
+  const { turnSummarizer } = await import('./summarize.ts')
   const runs: string[] = []
+  const logs: string[] = []
   let release = () => {}
   const s = turnSummarizer({
     delayMs: 5,
-    transcriptOf: (pane) => (pane === 'none' ? null : `/t/${pane}`),
+    log: (m) => logs.push(m),
+    findTranscript: (pane) => (pane.startsWith('none') ? { path: null, why: 'no entry' } : { path: `/t/${pane}` }),
     run: (job) => {
       runs.push(`${job.pane}@${job.worktreeId}`)
       return new Promise<void>((r) => (release = r))
@@ -279,6 +339,10 @@ test('turns are summarized once per burst, one run per pane, newest job after a 
   release()
   await wait(5)
   assert.deepEqual(runs, ['p1@w1', 'p1@w2'])
+  s.onStatus({ paneKey: 'none-2', workspaceId: null, state: 'done' })
+  await wait(20)
+  assert.equal(logs.length, 1, 'a missing transcript is logged once, not every turn')
+  assert.match(logs[0], /SUMMARIES OFF: no Claude transcript found for pane none\b.*no entry/)
   release()
   s.dispose()
 })

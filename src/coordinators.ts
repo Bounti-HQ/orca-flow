@@ -71,11 +71,20 @@ export type Lineage = {
   paneOf: Map<string, string>
   /** closed terminal handle -> the folder it ran in */
   dirOfTerminal?: Map<string, string>
+  /** worker pane -> whether its dispatch is still open or has settled (worker_done, abandoned) */
+  dispatchOf?: Map<string, 'open' | 'settled'>
 }
+
+/** Dispatch states after which the agent no longer holds its task: it reported, or was ended. */
+const SETTLED = new Set(['succeeded', 'failed', 'abandoned', 'cancelled', 'canceled', 'stopped'])
 
 /**
  * Pure: the user's coordinator each agent works for and, when some other agent dispatched it, that
  * agent's pane (so the tree can nest it). Chains are followed a few levels deep.
+ *
+ * Orca's own parent pane comes first: a lead can start its worker inside its coordinator's run, so
+ * the run's coordinator terminal says nothing about which agent started it. The run lineage is
+ * the fallback for an agent with no known parent pane.
  */
 export function assignCoordinators(rows: WorkspaceRow[], coordinators: CoordinatorInfo[], lineage: Lineage): WorkspaceRow[] {
   // A coordinator's session is whatever agent runs in its own folder workspace.
@@ -87,7 +96,16 @@ export function assignCoordinators(rows: WorkspaceRow[], coordinators: Coordinat
     const c = coordinators.find((c) => c.dir === dir)
     if (c) coordinatorByTerminal.set(handle, c.key)
   }
+  const agentPanes = new Set(rows.flatMap((r) => r.agents.map((a) => a.paneKey)))
+  const parentOf = new Map(rows.flatMap((r) => r.agents.filter((a) => a.parentPane).map((a) => [a.paneKey, a.parentPane!])))
   const coordinatorOfPane = (pane: string, depth = 0): { coordinator: string; leadPane: string | null } => {
+    const parent = parentOf.get(pane)
+    // A parent pane that is no longer open (a coordinator that slept) says nothing; use the runs.
+    if (parent && agentPanes.has(parent) && depth <= 4) {
+      const coordinator = coordinatorByPane.get(parent)
+      if (coordinator) return { coordinator, leadPane: null }
+      return { coordinator: coordinatorOfPane(parent, depth + 1).coordinator, leadPane: parent }
+    }
     const dispatcher = lineage.dispatcherOf.get(pane)
     if (!dispatcher || depth > 4) return { coordinator: 'you', leadPane: null }
     const coordinator = coordinatorByTerminal.get(dispatcher)
@@ -100,7 +118,7 @@ export function assignCoordinators(rows: WorkspaceRow[], coordinators: Coordinat
     ...row,
     // Titles stay as Orca and the summary give them (summary, then Orca's conversation name, then its
     // task title): a worker the user talks to directly drifts from the last task it was handed.
-    agents: row.agents.map((a) => ({ ...a, ...coordinatorOfPane(a.paneKey), terminal: terminalOf.get(a.paneKey) ?? null }))
+    agents: row.agents.map((a) => ({ ...a, ...coordinatorOfPane(a.paneKey), terminal: terminalOf.get(a.paneKey) ?? null, dispatch: lineage.dispatchOf?.get(a.paneKey) ?? null }))
   }))
 }
 
@@ -148,6 +166,7 @@ export async function loadLineage(run: Run, now = Date.now()): Promise<Lineage> 
   for (const t of terminals.terminals ?? []) if (t.tabId && t.leafId) paneOf.set(t.handle, `${t.tabId}:${t.leafId}`)
 
   const dispatcherOf = new Map<string, string>()
+  const dispatchOf = new Map<string, 'open' | 'settled'>()
   const coordinating = new Set<string>()
   for (const r of runs.runs ?? []) {
     const handle: string | null = r.coordinator_handle
@@ -164,7 +183,10 @@ export async function loadLineage(run: Run, now = Date.now()): Promise<Lineage> 
     coordinating.add(handle)
     for (const w of active) {
       const pane = paneOf.get(w.terminal)
-      if (pane) dispatcherOf.set(pane, handle)
+      if (!pane) continue
+      dispatcherOf.set(pane, handle)
+      // A follow-up sent to a settled worker opens a new dispatch on the same terminal: any open one wins.
+      if (dispatchOf.get(pane) !== 'open') dispatchOf.set(pane, SETTLED.has(w.state) ? 'settled' : 'open')
     }
   }
 
@@ -178,7 +200,7 @@ export async function loadLineage(run: Run, now = Date.now()): Promise<Lineage> 
     const dir = dirOfClosed.get(handle)
     if (dir) dirOfTerminal.set(handle, dir)
   }
-  return { dispatcherOf, paneOf, dirOfTerminal }
+  return { dispatcherOf, paneOf, dirOfTerminal, dispatchOf }
 }
 
 /** Changes a coordinator's look in its file, keeping everything else. */

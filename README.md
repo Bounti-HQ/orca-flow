@@ -76,7 +76,7 @@ square. The face and the badge at the bottom right show what Orca reports:
 | Spinning ring | Working |
 | Slow dashed ring | Monitoring (waiting on a background job) |
 | Blue `?` | Waiting on you |
-| Green check | Done, or for a coordinator, available |
+| Green check | Done, or for a coordinator or a lead that has not reported `worker_done`, available |
 | Red cross | Failed |
 | Faded, no badge | Sleeping |
 

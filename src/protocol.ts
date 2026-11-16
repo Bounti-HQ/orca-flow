@@ -40,6 +40,13 @@ export type AgentInfo = {
   coordinator: string
   /** Pane of the agent that dispatched this one, when that is not one of the user's coordinators. */
   leadPane: string | null
+  /** Orca's record of the pane that started this agent (`parentPaneKey` in `orca worktree ps`). */
+  parentPane: string | null
+  /**
+   * Its Orca orchestration dispatch: open until it reports worker_done (or is abandoned), then
+   * settled; null when it has none or the lineage has not loaded.
+   */
+  dispatch: 'open' | 'settled' | null
   /** Its terminal handle, so a finished session can be closed; null until known. */
   terminal: string | null
   /** The question it is waiting on, from Orca's record of its pending question tool call. */

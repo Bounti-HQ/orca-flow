@@ -126,7 +126,10 @@ export { decide }
 async function capacity(args = {}) {
   const config = { ...DEFAULT_CONFIG, ...readJson(join(DIR, 'config.json'), {}) }
   const { fromPs, readStore } = await import(new URL('../../../src/worker.ts', import.meta.url).href)
-  const rows = fromPs(orca(['worktree', 'ps']).worktrees ?? [], readStore())
+  // The same lineage the sidebar uses: who started whom, and which dispatches have reported.
+  const { assignCoordinators, loadLineage, orcaRunner, readCoordinators } = await import(new URL('../../../src/coordinators.ts', import.meta.url).href)
+  const lineage = await loadLineage(orcaRunner(ORCA_BIN)).catch(() => ({ dispatcherOf: new Map(), paneOf: new Map() }))
+  const rows = assignCoordinators(fromPs(orca(['worktree', 'ps']).worktrees ?? [], readStore()), readCoordinators(), lineage)
   const mem = orca(['diagnostics', 'memory'])
   const sessions = (mem.worktrees ?? []).flatMap((w) => w.sessions ?? [])
   const gb = (b) => Math.round((b / 1024 ** 3) * 10) / 10
@@ -153,7 +156,8 @@ async function capacity(args = {}) {
     .sort((x, y) => y.gb - x.gb)
     .map((w) => ({ worktree: `${w.repo}/${w.name}`, process: w.top, gb: gb(w.gb * 1024 ** 3) }))
   const memByPane = Object.fromEntries(sessions.map((x) => [x.paneKey, x.memory]))
-  // The sessions the sidebar lists as finished: an open PR's owner, or a lead with open workers, is still at work.
+  // The sessions the sidebar lists as finished: an open PR's owner, a lead with open workers or one
+  // that has not reported worker_done, is still at work.
   const { finishedAgents } = await import(new URL('../../../src/view.ts', import.meta.url).href)
   const checkouts = rows.filter((r) => !isCoordinatorHome(r.path))
   const done = new Set(finishedAgents(checkouts).map((a) => a.paneKey))
@@ -328,8 +332,9 @@ export const { briefOf, digest, roleOf } = summarize
 async function summarizeRun(args) {
   const pane = args.pane
   if (!pane) throw new Error('summarize-run needs --pane <paneKey>')
-  const transcript = args.transcript || summarize.transcriptOf(pane)
-  if (!transcript) throw new Error(`no transcript known for ${pane}`)
+  const found = args.transcript ? { path: args.transcript } : summarize.findTranscript(pane)
+  if (!found.path) throw new Error(`no transcript known for ${pane}: ${found.why}`)
+  const transcript = found.path
   const worktreeId = args.worktreeId || ''
   const card = Object.values(readCardsByWorktreeId()).find((c) => c.worktreeId === worktreeId)
   const started = Date.now()

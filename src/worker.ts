@@ -32,6 +32,8 @@ const URGENCY: AgentState[] = ['blocked', 'waiting', 'working', 'done']
 
 type PsAgent = {
   paneKey?: string
+  /** The pane that started this agent (a lead's or coordinator's), when Orca knows it. */
+  parentPaneKey?: string | null
   toolName?: string | null
   toolInput?: string | null
   state?: string
@@ -117,6 +119,8 @@ function toAgent(a: PsAgent, store: Store): AgentInfo | null {
     workingMode: a.workingMode ?? null,
     coordinator: 'you',
     leadPane: null,
+    parentPane: a.parentPaneKey ?? null,
+    dispatch: null,
     terminal: null,
     question: questionOf(a),
     state,
