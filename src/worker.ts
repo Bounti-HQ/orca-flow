@@ -17,9 +17,9 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import { costsOf, decide, DEFAULT_CONFIG, diskFreeOf, FALLBACK, type Pressure } from './capacity.ts'
 import { closeSessions, loadCockpit, removeWorktree } from './cockpit.ts'
 import { assignCoordinators, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, loadLineage, orcaRunner, readCoordinators, scaffoldCoordinator, validateName, writeLook, type Lineage } from './coordinators.ts'
-import { finishedAgents, freeLooks, showable } from './view.ts'
+import { askingRows, finishedAgents, freeLooks, showable } from './view.ts'
 import type { AgentInfo, AgentState, AgentSummary, Capacity, Priority, Snapshot, WorkspaceRow, WorkstreamCard } from './protocol.ts'
-import { claimsAsk, leadAgent, nextTarget, waitingQueue } from './rank.ts'
+import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
 import { summarizePane, turnSummarizer } from './summarize.ts'
 import { ensureLinks, ensureSeeds, linksFor, pluginDir, seedsFor } from './install.ts'
 import { latestRelease, newerVersion, onClick, readUpdateResult, startUpdate, updateItem, type UpdateState } from './update.ts'
@@ -429,8 +429,9 @@ export function withFocus(snap: Snapshot, context: { branch: string; displayName
 const LEVEL_WORD: Record<Priority, string> = { P0: 'now', P1: 'today', P2: 'soon', P3: 'someday' }
 
 /** The status bar item: how much is waiting, how urgent the top is, and whether there is room. */
-export function statusOf({ rows, capacity }: Snapshot) {
-  const queue = waitingQueue(rows)
+export function statusOf(snap: Snapshot) {
+  const { capacity } = snap
+  const queue = askingRows(snap)
   const top = queue[0]
   const full = capacity && (capacity.verdict === 'full' || capacity.verdict === 'pressure')
   const ask = top?.agents.find(claimsAsk)?.summary?.glance
@@ -556,8 +557,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   // ⌘⇧N and the status bar item: open the next workspace waiting on the person.
   let lastJump: { id: string; at: number } | null = null
   orca.commands.register('sidebar.next', async () => {
-    const { rows } = latest ?? (await refresh())
-    const target = nextTarget(waitingQueue(rows), lastJump, Date.now())
+    const target = nextTarget(askingRows(latest ?? (await refresh())), lastJump, Date.now())
     if (!target) return 'Nothing is waiting on you.'
     lastJump = { id: target.id, at: Date.now() }
     const terminal = leadAgent(target)?.terminal

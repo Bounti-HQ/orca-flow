@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, userInfo } from 'node:os'
 import { join } from 'node:path'
+import { COORDINATOR_HOME, isCoordinatorHome } from './coordinators.ts'
 
 export const DATA_DIR = join(homedir(), '.orca-flow')
 const AGENTS = join(DATA_DIR, 'agents')
@@ -74,9 +75,11 @@ export function briefOf(text: string): string {
 type Role = 'lead' | 'worker' | 'coordinator' | 'solo'
 type Event = { kind: 'user' | 'assistant' | 'tool'; text: string; raw?: string; at?: string }
 
-/** Decided from facts, not by the model: a lead's first prompt names its role; a dispatched
- * worker's carries its Dispatch id; a coordinator is an agent that started workers. */
-export function roleOf(firstPrompt: string, events: Event[]): Role {
+/** Decided from facts, not by the model: a session in one of the user's coordinator folders is that
+ * coordinator; a lead's first prompt names its role; a dispatched worker's carries its Dispatch id;
+ * any other agent that started workers coordinates them. */
+export function roleOf(firstPrompt: string, events: Event[], cwd: string | null = null, home = COORDINATOR_HOME): Role {
+  if (cwd && isCoordinatorHome(cwd, home)) return 'coordinator'
   if (/your role: lead\b/i.test(firstPrompt)) return 'lead'
   if (/dispatch[ _-]?id|worker_done/i.test(firstPrompt)) return 'worker'
   // Only a command that runs it, not one that merely mentions it (in a heredoc, a grep, a test).
@@ -88,8 +91,9 @@ export function roleOf(firstPrompt: string, events: Event[]): Role {
 export type Digest = { role: Role; firstPrompt: string; turn: string; lastAssistant: string; turnAt: string | null }
 
 /** Condense a Claude Code transcript into what the summarizer needs. */
-export function digest(lines: string[]): Digest | null {
+export function digest(lines: string[], home = COORDINATOR_HOME): Digest | null {
   const events: Event[] = []
+  let cwd: string | null = null
   for (const line of lines) {
     let d: any
     try {
@@ -98,6 +102,7 @@ export function digest(lines: string[]): Digest | null {
       continue
     }
     if (d.isSidechain) continue
+    if (!cwd && typeof d.cwd === 'string') cwd = d.cwd
     const content = d.message?.content
     if (d.type === 'user') {
       if (Array.isArray(content) && content.some((c: any) => c.type === 'tool_result')) continue
@@ -126,7 +131,7 @@ export function digest(lines: string[]): Digest | null {
     .map((e) => (e.kind === 'user' ? `USER: ${clip(e.text, 1500)}` : e.kind === 'assistant' ? `AGENT: ${clip(e.text, 800)}` : `  → ${e.text}`))
     .join('\n')
   return {
-    role: roleOf(prompts[0].raw ?? prompts[0].text, events),
+    role: roleOf(prompts[0].raw ?? prompts[0].text, events, cwd, home),
     firstPrompt: clip(prompts[0].text, 1500),
     turn: clip(body, 10_000),
     lastAssistant: lastAssistant ? clip(lastAssistant.text, 4000) : '',

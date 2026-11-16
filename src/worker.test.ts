@@ -618,3 +618,16 @@ test('the update runs outside the worker and leaves its result for the next one'
   assert.deepEqual(readUpdateResult(dir, '0.2.12'), { kind: 'updated', version: '0.2.12' }, 'the new version running is the proof')
   assert.equal(readUpdateResult(join(t, 'none'), '0.2.11'), null)
 })
+
+test("a session in a coordinator's folder is a coordinator, even before it starts any worker", async () => {
+  const { digest } = await import('./summarize.ts')
+  const line = (type: string, content: unknown, cwd: string) => JSON.stringify({ type, cwd, timestamp: '2026-11-16T12:51:00Z', message: { content } })
+  const home = '/h/orca/coordinators'
+  const at = (cwd: string) => digest([line('user', 'You have 1 orchestration message.', cwd), line('assistant', [{ type: 'text', text: 'Still waiting on you: 1. the lead asks X, answer in its chat. 2. Unblock the worktree?' }], cwd)], home)!.role
+  assert.equal(at(`${home}/bounti`), 'coordinator')
+  assert.equal(at('/w/shop'), 'solo', 'elsewhere it takes a worker-start to coordinate')
+  const status = main.statusOf({ rows: [], source: 'cli', capacity: null, coordinators: [{ key: 'b', name: 'bounti', repos: [], workspaceId: 'ws-b',
+    session: { paneKey: 'p', workingMode: null, coordinator: 'you', leadPane: null, parentPane: null, dispatch: null, terminal: 't', question: null, state: 'done', title: 'Bounti', agentType: 'claude',
+      summary: { title: 'Bounti', glance: 'Unblock?', goal: '', since: '', needs: { type: 'decision', ask: 'Unblock?', options: [] }, effort: 'quick', priority: 'P2', role: 'coordinator', updatedAt: 1 } } }] })
+  assert.equal(status.text, '1 waiting', 'the status bar counts a coordinator asking you')
+})

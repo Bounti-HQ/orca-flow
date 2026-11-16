@@ -472,7 +472,8 @@ test("a coordinator's badge is the kind of the ask it shows; a review with a PR 
   const review = summary({ glance: 'Review the PR?', needs: { type: 'review', ask: 'Review the PR?', options: [] } })
   const session = agent('p-home', 'Home', 'done', { summary: review })
   const s: Snapshot = { ...snap, coordinators: [{ ...snap.coordinators[0], session }, snap.coordinators[1]] }
-  const head = /<button class="coord-open"[^>]*>[\s\S]*?<\/button>/.exec(render(s, emptyUi()).main.split('data-menu="coordinator:alpha"')[1])![0]
+  const tree = render(s, emptyUi()).main.split('<div class="label">Coordinators</div>')[1]
+  const head = /<button class="coord-open"[^>]*>[\s\S]*?<\/button>/.exec(tree.split('data-menu="coordinator:alpha"')[1])![0]
   assert.match(head, /data-tip="Wants a review" data-tone="review"[\s\S]*?class="review-badge"/)
   const lead = agent('p-l', 'Checkout', 'done', { summary: review })
   const pr = { number: 7, url: 'https://pr/7', state: 'open', checks: 'success' as const }
@@ -481,4 +482,21 @@ test("a coordinator's badge is the kind of the ask it shows; a review with a PR 
   noMatch(render({ ...snap, rows: [row('w', 'shop', [lead])] }, emptyUi()).main, /Open PR/, 'no PR, no button')
   const question = agent('p-q', 'Checkout', 'waiting', { question: 'Which one?' })
   noMatch(render({ ...snap, rows: [row('w', 'shop', [question], { pr })] }, emptyUi()).main, /Open PR/, 'a question is answered in the session')
+})
+
+test('every asking face in the tree has an Up next entry, a coordinator asking you included', () => {
+  const ask = summary({ glance: 'Unblock the worktree?', role: 'coordinator', priority: 'P1', needs: { type: 'decision', ask: 'Unblock the worktree?', options: [] } })
+  const session = agent('p-home', 'Bounti coordination', 'done', { summary: ask, terminal: 'term-home' })
+  const s: Snapshot = { ...snap, coordinators: [{ ...snap.coordinators[0], session }, snap.coordinators[1]] }
+  const { main } = render(s, emptyUi())
+  const [upnext, tree] = main.split('<div class="label">Coordinators</div>')
+  const askingInTree = (tree.match(/data-tip="(Asks a question|Wants a review|Needs a yes\/no)"/g) ?? []).length
+  const entries = (upnext.match(/data-brief=/g) ?? []).length
+  assert.equal(askingInTree, 3, 'two agents and the coordinator ask')
+  assert.equal(entries, askingInTree, 'Up next lists each of them')
+  assert.match(upnext, /data-menu="coordinator:alpha"[^>]*>[\s\S]*?<span class="t[^"]*">alpha<\/span><span class="r">coordinator · P1/)
+  assert.match(upnext, /Unblock the worktree\?/)
+  const ui = emptyUi()
+  ui.opened.add('p-home')
+  assert.match(render(s, ui).main, /<button class="jump" data-coordinator="alpha">Jump to session<\/button>/, 'opens it the way its row does')
 })

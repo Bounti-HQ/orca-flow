@@ -351,12 +351,34 @@ function cockpit(snap: Snapshot, ui: UiState): string {
 
 // ---------- up next ----------
 
+/**
+ * Everything asking you, most urgent first: the worktrees whose agents ask, plus a row for each
+ * coordinator whose own session asks (coordinators live outside the worktree rows). The tree's
+ * badges, Up next, the status bar and jump-to-next all read this one list.
+ */
+export function askingRows(snap: Pick<Snapshot, 'rows' | 'coordinators'>): WorkspaceRow[] {
+  const own = snap.coordinators.filter((c) => c.session && asksYou(c.session)).map((c): WorkspaceRow => ({
+    id: c.workspaceId ?? `coordinator:${c.key}`, name: c.name, branch: null, repo: c.repos.length === 1 ? c.repos[0] : c.name, path: null,
+    main: true, agents: [c.session!], state: c.session!.state, priority: c.session!.summary?.priority ?? null, card: null, parentId: null,
+    liveTerminals: 1, pinned: false, unread: false, active: Boolean(c.active), workspaceStatus: null,
+    lastActivityAt: c.session!.summary?.updatedAt ?? null, createdAt: 0, pr: null, coordinator: c.key
+  }))
+  return waitingQueue([...snap.rows, ...own])
+}
+
 function upNext(placed: Placed[], all: AgentInfo[], coordinators: Coordinator[], ui: UiState): string {
   if (placed.length === 0) return ''
   const items = placed.map((p, i) => {
     const key = p.a.paneKey || p.row.id
     const open = (i === 0 && !ui.closed.has(key)) || ui.opened.has(key)
-    const head = `<button class="item" data-brief="${esc(key)}" data-menu="agent:${esc(p.a.paneKey)}" aria-expanded="${open}">${agentCharacter(p.a, p.row, all)}<span class="t${open ? ' strong' : ''}">${esc(nameOf(p.a, p.row))}</span><span class="r">${rowStatus(ui, `agent:${p.a.paneKey}`) ?? `${esc(coordinatorName(p.a.coordinator, coordinators))}${p.row.priority ? ` · ${p.row.priority}` : ''}`}</span></button>`
+    // A coordinator's own ask wears its character and opens like its row in the tree.
+    const c = p.row.coordinator ? coordinators.find((x) => x.key === p.row.coordinator) : undefined
+    const who = c
+      ? tipped(character(c.look?.color ?? (c.repos.length === 1 ? colorOf(c.repos[0]) : NEUTRAL), c.look?.shape ?? 'pentagon', 'asks', 20, true, askKindOf(p.a)), ASK_TIP[askKindOf(p.a)], ASK_TONE[askKindOf(p.a)])
+      : agentCharacter(p.a, p.row, all)
+    const menu = c ? `coordinator:${c.key}` : `agent:${p.a.paneKey}`
+    const where = c ? 'coordinator' : coordinatorName(p.a.coordinator, coordinators)
+    const head = `<button class="item" data-brief="${esc(key)}" data-menu="${esc(menu)}" aria-expanded="${open}">${who}<span class="t${open ? ' strong' : ''}">${esc(c ? c.name : nameOf(p.a, p.row))}</span><span class="r">${rowStatus(ui, menu) ?? `${esc(where)}${p.row.priority ? ` · ${p.row.priority}` : ''}`}</span></button>`
     if (!open) return head
     const about = aboutOf(p)
     return `${head}<div class="brief">${about ? `<div class="about">${esc(about)}</div>` : ''}<div class="glance"><span class="kicker">Asks · ${esc(askType(p))}</span><span>${esc(glanceOf(p))}</span></div><div class="jumps"><button class="jump" ${openAttrs(p)}>Jump to session</button>${reviewPr(p)}</div></div>`
@@ -411,7 +433,8 @@ const reviewPr = ({ a, row }: Placed) =>
   askKindOf(a) === 'review' && row.pr && (row.pr.state === 'open' || row.pr.state === 'draft') ? `<button class="jump" data-pr="${esc(row.pr.url)}">Open PR</button>` : ''
 
 /** What a click on an agent opens: its workspace and, when its terminal is known, its own tab. */
-const openAttrs = (p: Placed) => `data-open="${esc(p.row.id)}"${p.a.terminal ? ` data-terminal="${esc(p.a.terminal)}"` : ''}`
+const openAttrs = (p: Placed) =>
+  p.row.coordinator ? `data-coordinator="${esc(p.row.coordinator)}"` : `data-open="${esc(p.row.id)}"${p.a.terminal ? ` data-terminal="${esc(p.a.terminal)}"` : ''}`
 
 /** Finished sessions that still hold a terminal: what the footer lists and the cockpit counts. */
 const leadsOpenWork = (a: AgentInfo, all: AgentInfo[]) => all.some((b) => b.leadPane === a.paneKey && faceOf(b) !== 'done')
@@ -488,9 +511,9 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
   const copen = ui.cockpitOpen && !ui.query ? cockpitOpen(snap, ui) : ''
   const all = snap.rows.flatMap((r) => r.agents)
   const placed: Placed[] = snap.rows.flatMap((row) => row.agents.map((a) => ({ a, row })))
-  const queueRows = waitingQueue(snap.rows)
-  // One briefing per asking agent, workspaces in urgency order; several agents in one workspace each get one.
-  const asking = queueRows.flatMap((row) => placed.filter((p) => p.row === row && asksYou(p.a)))
+  // One briefing per asking agent, workspaces in urgency order; several agents in one workspace each
+  // get one; a coordinator asking itself gets one too.
+  const asking = askingRows(snap).flatMap((row) => row.agents.filter(asksYou).map((a) => ({ a, row })))
 
   if (ui.query) {
     const q = ui.query.toLowerCase()
