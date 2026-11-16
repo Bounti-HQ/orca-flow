@@ -28,7 +28,9 @@ free memory and continues it later in a new terminal):
    - **It has a lead you started:** find its Dispatch in `orca orchestration worker-list --json`
      (match `workspace` to the worktree), hand the request over with
      `orca orchestration send --to dispatch:<id>`, and tell the user they can talk to that lead
-     directly next time.
+     directly next time. Several items: say which are independent (different files) so the lead
+     can run them in parallel. Ask for a new worktree only when an item needs its own branch or PR
+     (a separate deliverable) or would conflict.
    - **Its agent is a chat the user runs** (no Dispatch): say so and offer to open it
      (`orca worktree activate --worktree <selector>`).
    - **No agent there:** run the capacity gate and start a lead in it. No creation flags for an
@@ -72,6 +74,10 @@ it "stopped without reporting". That is normal for a lead: leave it. Along the w
 when the user says the workstream is done or its PR is merged. Never describe a lead's spec as a
 finish checklist ("done when the PR is open"): describe the first deliverable, and leave finishing
 to the user.
+
+When you route to a lead or it reports, glance at `orca orchestration worker-list`: a lead that has
+been working a long time with no workers is doing the work itself. Remind it to delegate
+(`orca orchestration send --to dispatch:<id>`).
 
 **A lead asks for a separate branch** (with `orca orchestration ask`): treat it as a new
 workstream (step 3), then `orca orchestration reply --id <message_id>` with the new lead's name.
