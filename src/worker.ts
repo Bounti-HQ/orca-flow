@@ -10,7 +10,7 @@
 // Summaries (end-of-turn status by Haiku) are written to ~/.orca-flow/agents by this worker when
 // Orca reports a finished turn (src/summarize.ts). The worker watches that folder.
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
@@ -22,6 +22,7 @@ import type { AgentInfo, AgentState, AgentSummary, Capacity, Priority, Snapshot,
 import { claimsAsk, leadAgent, nextTarget, waitingQueue } from './rank.ts'
 import { summarizePane, turnSummarizer } from './summarize.ts'
 import { ensureLinks, ensureSeeds, linksFor, pluginDir, seedsFor } from './install.ts'
+import { latestRelease, newerVersion, onClick, readUpdateResult, startUpdate, updateItem, type UpdateState } from './update.ts'
 import { readFootprint, readProcs, startedGroups } from './started.ts'
 
 const ORCA_BIN = ['/Applications/Orca.app/Contents/Resources/bin/orca'].find(existsSync) ?? 'orca'
@@ -446,6 +447,78 @@ export function statusOf({ rows, capacity }: Snapshot) {
   }
 }
 
+/** An installed copy lives at <plugins>/<key>/current; a development folder has no key and no updates. */
+export function installedKey(dir: string | null): string | null {
+  return dir ? (/\/plugins\/([^/]+)\/current$/.exec(dir)?.[1] ?? null) : null
+}
+
+const UPDATE_DIR = join(DATA_DIR, 'update')
+const UPDATE_CHECK_MS = 4 * 60 * 60_000
+
+/**
+ * The update item: hidden until a newer release exists, then "Orca Flow X available". A click asks
+ * for a second click, the second starts `orca plugin update` outside this worker. When the new
+ * version starts, it finds the result left behind and says how it went.
+ */
+function updates(orca: OrcaWorkerApi, dir: string | null): void {
+  const key = installedKey(dir)
+  let current = ''
+  try {
+    current = JSON.parse(readFileSync(join(dir ?? '', 'orca-plugin.json'), 'utf8')).version ?? ''
+  } catch {}
+  let state: UpdateState = { kind: 'none' }
+  let latest: string | null = null
+  const show = (next: UpdateState) => {
+    state = next
+    void orca.host.call('statusBar.update', updateItem(state)).catch((e: Error) => orca.log(`statusBar.update failed: ${e.message}`))
+  }
+  const timers: ReturnType<typeof setTimeout>[] = []
+  const later = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms))
+  disposers.push(() => timers.forEach(clearTimeout))
+  show(state)
+
+  // An update that fails leaves this worker running: watch for its result. One that succeeds
+  // restarts the plugin, and the new worker reads the same result at start.
+  const settle = (tries = 0) => {
+    const result = readUpdateResult(UPDATE_DIR, current)
+    if (result === null) return
+    if (result === 'pending') return void (tries < 100 && later(() => settle(tries + 1), 3000))
+    rmSync(UPDATE_DIR, { recursive: true, force: true })
+    orca.log(`update to ${result.version}: ${result.kind}${'reason' in result ? ` (${result.reason})` : ''}`)
+    show(result)
+    if (result.kind === 'updated') later(() => { if (state.kind === 'updated') show(latest ? { kind: 'available', version: latest } : { kind: 'none' }) }, 60_000)
+  }
+
+  orca.commands.register('flow.update', () => {
+    if (!key) return 'Updates apply to an installed Orca Flow, not a development folder.'
+    const click = onClick(state)
+    show(click.next)
+    const next = click.next
+    if (next.kind === 'confirm') later(() => { if (state.kind === 'confirm') show({ kind: 'available', version: next.version }) }, 15_000)
+    if (click.start && next.kind === 'updating') {
+      startUpdate(ORCA_BIN, key, next.version, UPDATE_DIR)
+      orca.log(`updating to ${next.version}`)
+      settle()
+    }
+    return click.message
+  })
+  if (!key || !current) return
+  settle()
+
+  let warned = false
+  const check = () => {
+    latestRelease()
+      .then((versions) => {
+        latest = newerVersion(current, versions)
+        if (latest && (state.kind === 'none' || state.kind === 'available')) show({ kind: 'available', version: latest })
+      })
+      // Offline or no git: one line, never a nag.
+      .catch((e: Error) => { if (!warned) orca.log(`update check failed: ${e.message}`); warned = true })
+      .finally(() => later(check, UPDATE_CHECK_MS))
+  }
+  later(check, 10_000)
+}
+
 /** Things that keep the process alive; deactivate ends them so Orca (and tests) can stop it. */
 const disposers: (() => void)[] = []
 
@@ -493,6 +566,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
   // The status bar item keeps this worker running, so it can fill the item in right away.
   void refresh()
+  updates(orca, dir)
 
   // The opened cockpit and its two actions. Each action redraws the panel afterwards.
   const run = orcaRunner(ORCA_BIN)

@@ -64,3 +64,9 @@ interface ImportMeta { url: string }
 declare module 'node:fs' {
   export function copyFileSync(from: string, to: string): void
 }
+declare module 'node:child_process' {
+  export function spawn(command: string, args: readonly string[], options: { detached?: boolean; stdio?: 'ignore' }): { unref(): void }
+}
+declare module 'node:fs' {
+  export function chmodSync(path: string, mode: number): void
+}

@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "flow",
   "name": "Orca Flow",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "What needs you next, room to run more, and coordinators that delegate to workers.",
   "engines": {
     "orca": ">=1.4.254"
@@ -38,15 +38,26 @@
       {
         "id": "sidebar.next",
         "title": "Jump to next waiting workspace"
+      },
+      {
+        "id": "flow.update",
+        "title": "Update Orca Flow"
       }
     ],
     "statusBarItems": [
       {
         "id": "queue",
-        "text": "\u2026",
+        "text": "…",
         "icon": "bell",
         "tooltip": "Workspaces waiting on you",
         "command": "sidebar.next"
+      },
+      {
+        "id": "update",
+        "text": "Orca Flow update",
+        "icon": "download",
+        "tooltip": "Update Orca Flow",
+        "command": "flow.update"
       }
     ],
     "hooks": [
