@@ -84,6 +84,8 @@ html.light .pr-merged { color: rgb(147 51 234 / .7); }
 .group { display: grid; gap: 1px; }
 .item { display: flex; align-items: center; gap: 8px; width: calc(100% + 12px); margin-inline: -6px; padding: 5px 6px; border-radius: 6px; min-width: 0; }
 .item:hover { background: var(--hover); }
+/* A finished session stays in its place, quieter: done, nothing asked, still holding a terminal. */
+.item.finished .who, .item.finished .t { opacity: .55; }
 .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t.strong { font-weight: 600; }
 .t.muted, .muted { color: var(--muted); }

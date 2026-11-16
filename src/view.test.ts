@@ -77,14 +77,11 @@ test('characters carry state; no status dots', () => {
   assert.equal(faceOf(agent('x', 'x', 'done', { summary: summary() })), 'done')
 })
 
-test('finished and idle live in the footer, folded until opened', () => {
-  const ui = emptyUi()
-  assert.match(render(snap, ui).footer, /Finished · 1/)
-  noMatch(render(snap, ui).main, /Finished ·/, 'not in the scrolling middle')
-  noMatch(render(snap, ui).footer, /State cleanup/)
-  ui.unfolded.add('finished')
-  assert.match(render(snap, ui).footer, /class="group fold-list"[\s\S]*State cleanup/)
-  assert.match(render(snap, ui).footer, /Idle · 1/)
+test('a finished session stays in its place in the tree, dimmed; only Idle folds in the footer', () => {
+  const { main, footer } = render(snap, emptyUi())
+  noMatch(footer, /Finished/, 'no Finished section')
+  assert.match(main, /<button class="item finished" data-open="cleanup"[^>]*data-menu="agent:p-cleanup"[^>]*>[\s\S]*?data-tip="Done"[\s\S]*?State cleanup/)
+  assert.match(footer, /Idle · 1/)
 })
 
 test('cockpit flags only what is over and explains on demand; search replaces the lists', () => {
@@ -169,9 +166,9 @@ test('the opened cockpit: memory, heaviest, counts and actions that confirm in p
   assert.match(open, /Pricing page[\s\S]*?class="item static started"><span class="sub-mark">↳<\/span><span class="t">next-server \+3<\/span><span class="r">1\.3 GB<\/span><\/div>/, 'what a session started sits under it')
   assert.match(open, /vite <span class="soft">old-feature<\/span><\/span><span class="r">300 MB/, 'what a sleeping agent left running is listed with its worktree')
   assert.match(open, /Pricing page[\s\S]*1\.5 GB[\s\S]*data-yes="close:p-pricing">sleep/)
-  noMatch(open, /data-act="closeall"/, 'closing finished sessions lives in the footer now')
+  assert.match(open, /data-act="closeall">Free 430 MB: sleep 1 finished session</, 'memory is tight here (agents-only)')
   assert.match(open, /class="stat ask"><span class="n">2<\/span><span class="l">asking/)
-  assert.match(open, /<button class="stat more" data-show-finished><span class="n">1<\/span>/)
+  assert.match(open, /<div class="stat "><span class="n">1<\/span><span class="l">finished/)
   assert.match(open, /Remove state-cleanup[\s\S]*PR #1753 merged · clean/)
   ui.pending = 'remove:cleanup'
   assert.match(render(snap, ui).copen, /class="rstatus pending"><span class="refreshing"><\/span>Removing…/, 'the same inline style as row actions')
@@ -180,19 +177,23 @@ test('the opened cockpit: memory, heaviest, counts and actions that confirm in p
   assert.match(render(snap, ui).copen, /class="rstatus ok">Removed/)
 })
 
-test('the footer\'s finished list closes one by one or all at once, confirming in place', () => {
-  const two: Snapshot = { ...snap, rows: [
+test('sleeping every finished session is offered only when memory is tight, and confirms in place', () => {
+  const at = (verdict: 'ok' | 'agents-only' | 'full' | 'pressure'): Snapshot => ({ ...snap, capacity: { ...snap.capacity!, verdict }, rows: [
     row('f1', 'shop', [agent('p-f1', 'First done', 'done', { terminal: 'term-1', summary: summary() })]),
     row('f2', 'shop', [agent('p-f2', 'Second done', 'done', { terminal: 'term-2', summary: summary() })])
-  ] }
+  ] })
   const ui = emptyUi()
-  ui.unfolded.add('finished')
-  const footer = render(two, ui).footer
-  assert.match(footer, /data-act="closeall">Sleep all</)
-  assert.match(footer, /Finished · 2</, 'the Sleep all line is not counted as a session')
-  assert.match(footer, /First done[\s\S]*data-yes="close:p-f1">sleep</, 'one session sleeps without asking')
+  ui.cockpitOpen = true
+  ui.stats = { swap: null, ram: null, started: [], heaviest: [], merged: [],
+    finished: [{ paneKey: 'p-f1', terminal: 'term-1', workspaceId: 'f1', title: 'First done', repo: 'shop', memMB: 400 }, { paneKey: 'p-f2', terminal: 'term-2', workspaceId: 'f2', title: 'Second done', repo: 'shop', memMB: 700 }] }
+  noMatch(render(at('ok'), ui).copen, /closeall/, 'room to spare: nothing to sleep in bulk')
+  for (const v of ['agents-only', 'full', 'pressure'] as const) assert.match(render(at(v), ui).copen, /data-act="closeall">Free 1\.1 GB: sleep 2 finished sessions</, v)
+  assert.deepEqual(finishedAgents(at('full').rows).map((a) => a.paneKey), ['p-f1', 'p-f2'], 'the set Sleep all puts to sleep')
   ui.confirming = 'closeall'
-  assert.match(render(two, ui).footer, /Sleep 2 sessions\? <button class="yes" data-yes="closeall">Yes/)
+  assert.match(render(at('full'), ui).copen, /Sleep 2 sessions\? <button class="yes" data-yes="closeall">Yes/)
+  ui.confirming = null
+  ui.stats = { ...ui.stats, finished: [] }
+  assert.match(render(at('full'), ui).copen, /data-act="closeall">Sleep 2 finished sessions</, 'memory not known yet')
 })
 
 test('coordinators show no team characters on the right', () => {
@@ -207,18 +208,6 @@ test('rows keep the order their workstreams started in, whatever their activity'
   ]
   const { main } = render({ ...snap, rows }, emptyUi())
   assert.ok(main.indexOf('Older work') < main.indexOf('Newer work'))
-})
-
-test('finished rows show memory once known, and a spinner while it loads', () => {
-  const one: Snapshot = { ...snap, rows: [row('f1', 'shop', [agent('p-f1', 'First done', 'done', { terminal: 'term-1', summary: summary() })])] }
-  const ui = emptyUi()
-  ui.unfolded.add('finished')
-  ui.statsLoading = true
-  assert.match(render(one, ui).footer, /First done[\s\S]*class="refreshing"/)
-  ui.statsLoading = false
-  ui.stats = { swap: null, ram: null, started: [], heaviest: [], merged: [],
-    finished: [{ paneKey: 'p-f1', terminal: 'term-1', workspaceId: 'f1', title: 'First done', repo: 'shop', memMB: 430 }] }
-  assert.match(render(one, ui).footer, /First done[\s\S]*430 MB/)
 })
 
 test('a coordinator row opens its session, folds with its chevron, and New coordinator follows the list', () => {
@@ -251,11 +240,9 @@ test('characters carry a one- or two-word status tooltip', () => {
   for (const tip of main.match(/data-tip="[^"]*"/g) ?? []) assert.ok(tip.split(' ').length <= 4, `${tip} is too long`)
 })
 
-test('every finished session offers close, even before its terminal is known', () => {
+test('every finished session keeps its menu (sleep, remove), even before its terminal is known', () => {
   const fresh: Snapshot = { ...snap, rows: [row('f', 'shop', [agent('p-new', 'Just finished', 'done', { terminal: null, summary: summary() })])] }
-  const ui = emptyUi()
-  ui.unfolded.add('finished')
-  assert.match(render(fresh, ui).footer, /Just finished[\s\S]*data-yes="close:p-new"/)
+  assert.match(render(fresh, emptyUi()).main, /class="item finished" data-open="f" data-menu="agent:p-new"[^>]*>[\s\S]*?Just finished/)
 })
 
 test('characters with nothing reaching outside the body are drawn centered', () => {
@@ -383,13 +370,11 @@ test("each agent row, Up next's Jump and Finished rows open that agent's own ter
   const slept = agent('p-old', 'Old task', 'done', { coordinator: 'alpha', leadPane: 'p-lead', terminal: null })
   const done = agent('p-d', 'Done task', 'done', { coordinator: 'alpha', leadPane: 'p-lead', terminal: 'term-d' })
   const s: Snapshot = { ...snap, rows: [row('ob', 'shop', [lead, worker, slept, done])] }
-  const ui = emptyUi()
-  ui.unfolded.add('finished')
-  const { main, footer } = render(s, ui)
+  const { main } = render(s, emptyUi())
   assert.match(main, /class="jump" data-open="ob" data-terminal="term-lead">Jump to session/)
   assert.match(main, /data-open="ob" data-terminal="term-w"[^>]*>[\s\S]*?Fix copy/)
-  assert.match(footer, /data-open="ob" data-terminal="term-d"[^>]*>Done task/)
-  assert.match(footer, /data-open="ob" role="button"[^>]*>Old task/, 'no terminal: just the workspace')
+  assert.match(main, /class="item indent finished" data-open="ob" data-terminal="term-d"[^>]*>[\s\S]*?Done task/)
+  assert.match(main, /data-open="ob" data-menu="agent:p-old"[^>]*>[\s\S]*?Old task/, 'no terminal: just the workspace')
 })
 
 test('an agent with no title is named after its worktree, not its agent type', () => {
@@ -417,15 +402,20 @@ test('the agent in the workspace focused in Orca, and a focused coordinator, get
   assert.match(main, /class="item coord current" data-menu="coordinator:alpha"/)
 })
 
-test('a finished row offers sleep and remove; the main checkout offers sleep only; progress shows in the row', () => {
+test('only a lead that reported worker_done shows remove on its row; progress shows in the row', () => {
+  const lead = (over: Partial<AgentInfo> = {}) => agent('p-ob', 'Onboarding', 'done', { coordinator: 'alpha', terminal: 'term-1', dispatch: 'settled', summary: summary({ role: 'lead' }), ...over })
+  const inline = (agents: AgentInfo[], over: Partial<WorkspaceRow> = {}) => /data-remove=/.test(render({ ...snap, rows: [row('ob', 'shop', agents, over)] }, emptyUi()).main)
   const ui = emptyUi()
-  ui.unfolded.add('finished')
-  const s: Snapshot = { ...snap, rows: [row('ob', 'shop', [agent('p-ob', 'Onboarding', 'done', { terminal: 'term-1' })]), row('home', 'shop', [agent('p-m', 'Main chat', 'done', { terminal: 'term-2' })], { main: true })] }
-  const { footer } = render(s, ui)
-  assert.match(footer, /Onboarding[\s\S]*?data-yes="close:p-ob">sleep<\/button><button class="act" data-remove="ob" data-target="agent:p-ob">remove/)
-  noMatch(footer, /data-remove="home"/)
+  const s: Snapshot = { ...snap, rows: [row('ob', 'shop', [lead()])] }
+  assert.match(render(s, ui).main, /<div class="item finished" data-menu="agent:p-ob"[^>]*>[\s\S]*?<span class="t" data-open="ob" data-terminal="term-1" role="button" tabindex="0">Onboarding<\/span>[\s\S]*?<button class="act" data-remove="ob" data-target="agent:p-ob">remove<\/button><\/div>/)
+  assert.equal(inline([lead({ dispatch: 'open' })]), false, 'not before worker_done')
+  assert.equal(inline([lead({ dispatch: null })]), false, 'not without a known dispatch')
+  assert.equal(inline([lead({ summary: summary({ role: 'worker' }) })]), false, 'a worker keeps it in the menu')
+  assert.equal(inline([lead({ summary: summary({ role: 'solo' }) })]), false, 'your own chat keeps it in the menu')
+  assert.equal(inline([lead()], { main: true }), false, 'never the main checkout')
+  assert.equal(inline([lead(), agent('p-w', 'Fix', 'working', { coordinator: 'alpha', leadPane: 'p-ob' })]), false, 'not while its worker runs')
   ui.status.set('agent:p-ob', { text: 'Removing…', tone: 'pending' })
-  assert.match(render(s, ui).footer, /Onboarding<\/span><span class="rstatus pending"><span class="refreshing"><\/span>Removing…/)
+  assert.match(render(s, ui).main, /Onboarding<\/span><span class="r"><span class="rstatus pending"><span class="refreshing"><\/span>Removing…/)
 })
 
 test('a redraw between pointerdown and pointerup waits until the click has run', () => {

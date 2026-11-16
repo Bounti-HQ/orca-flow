@@ -302,7 +302,7 @@ function cockpitOpen(snap: Snapshot, ui: UiState): string {
     stat(all.filter((a) => faceOf(a) === 'asks').length, 'asking', 'ask'),
     stat(all.filter((a) => faceOf(a) === 'working').length, 'working'),
     stat(all.filter((a) => faceOf(a) === 'monitoring').length, 'monitoring'),
-    stat(finishedOf(placedAll).length, 'finished ›', 'more', ' data-show-finished')
+    stat(finishedOf(placedAll).length, 'finished')
   ].join('')
   // What a session started outside itself (a dev server) sits under it; Orca does not count it.
   const startedName = (g: StartedGroup) => (g.count > 1 ? `${g.name} +${g.count - 1}` : g.name)
@@ -318,7 +318,17 @@ function cockpitOpen(snap: Snapshot, ui: UiState): string {
   // Started by an agent that is not open any more (it slept): still running, still costing memory.
   const live = new Set(all.map((a) => a.paneKey))
   const orphans = started.filter((g) => !g.paneKey || !live.has(g.paneKey)).map((g) => startedLine(g, character(colorOf(g.repo), 'solo', 'idle', 16), g.worktreeName)).join('')
+  // Sleeping every finished session is offered only when memory is tight; otherwise they cost nothing
+  // you need, and each one sleeps from its own menu. The same set the footer's Sleep all used.
+  const finished = finishedOf(placedAll)
+  const freedMb = finished.reduce((n, p) => n + (st.finished.find((f) => f.paneKey === p.a.paneKey)?.memMB ?? 0), 0)
+  const tight = (snap.capacity?.verdict ?? 'ok') !== 'ok'
+  const n = finished.length
+  const sleepAll = tight && n > 0
+    ? `<div class="closeall">${action('closeall', `${freedMb ? `Free ${size(freedMb)}: sleep` : 'Sleep'} ${n} finished ${n === 1 ? 'session' : 'sessions'}`, `Sleep ${n} ${n === 1 ? 'session' : 'sessions'}?`, ui)}</div>`
+    : ''
   const actions = [
+    sleepAll,
     ...st.merged.map((m) => `<div class="merged">${action(`remove:${m.workspaceId}`, `Remove ${m.name}`, `Remove ${m.name}?`, ui)}<span class="soft">PR #${m.pr} merged · clean</span></div>`)
   ].filter(Boolean).join('')
   return `<div class="copen">
@@ -376,11 +386,25 @@ const PR_ICON: Record<string, string> = {
   draft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M18 6V5"/><path d="M18 11v-1"/><path d="M6 9v12"/></svg>'
 }
 
-function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], soft: boolean, indent: boolean, ui: UiState): string {
+function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], soft: boolean, indent: boolean, ui: UiState, done = false): string {
   const status = rowStatus(ui, `agent:${p.a.paneKey}`)
   const right = status ?? `${soft ? `<span class="soft">${esc(p.row.repo)}</span>` : ''}${prBadge(p.row.pr)}<span>${ago(p.row.lastActivityAt, ui.now)}</span>`
-  return `<button class="item${indent ? ' indent' : ''}${p.row.active ? ' current' : ''}" ${openAttrs(p)} data-menu="agent:${esc(p.a.paneKey)}"${p.row.active ? ' aria-current="true"' : ''}>${agentCharacter(p.a, p.row, all)}<span class="t">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span></button>`
+  const cls = `item${indent ? ' indent' : ''}${done ? ' finished' : ''}${p.row.active ? ' current' : ''}`
+  const menu = `data-menu="agent:${esc(p.a.paneKey)}"${p.row.active ? ' aria-current="true"' : ''}`
+  // A lead that reported worker_done leaves its worktree ready for cleanup: offer remove on the row.
+  // A button cannot hold a button, so this row is a div whose name opens the session.
+  if (removable(p, all) && !status) {
+    return `<div class="${cls}" ${menu}>${agentCharacter(p.a, p.row, all)}<span class="t" ${openAttrs(p)} role="button" tabindex="0">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span><button class="act" data-remove="${esc(p.row.id)}" data-target="agent:${esc(p.a.paneKey)}">remove</button></div>`
+  }
+  return `<button class="${cls}" ${openAttrs(p)} ${menu}>${agentCharacter(p.a, p.row, all)}<span class="t">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span></button>`
 }
+
+/**
+ * A lead whose dispatch settled (worker_done, failed or abandoned), with nothing of its own still
+ * running: its worktree can go. The remove flow still refuses a dirty checkout or an unmerged PR.
+ */
+export const removable = ({ a, row }: Placed, all: AgentInfo[]) =>
+  a.summary?.role === 'lead' && a.dispatch === 'settled' && !row.main && faceOf(a) === 'done' && !leadsOpenWork(a, all)
 
 /** A review of a worktree with an open PR: the PR is what to look at, one click away. */
 const reviewPr = ({ a, row }: Placed) =>
@@ -437,8 +461,9 @@ function coordinatorBlock(c: Coordinator & { you?: boolean }, mine: Placed[], al
   const tip = face === 'idle' ? 'Sleeping' : face === 'asks' ? ASK_TIP[ask] : face === 'done' && !c.you ? 'Available' : STATUS[face]
   const panes = new Set(mine.map((p) => p.a.paneKey))
   const roots = mine.filter((p) => !p.a.leadPane || !panes.has(p.a.leadPane))
+  const done = (p: Placed) => faceOf(p.a) === 'done' && !inFlight(p.a, p.row, all)
   const body = roots
-    .map((p) => agentLine(p, all, coordinators, !single, false, ui) + mine.filter((w) => w.a.leadPane === p.a.paneKey).map((w) => agentLine(w, all, coordinators, !single, true, ui)).join(''))
+    .map((p) => agentLine(p, all, coordinators, !single, false, ui, done(p)) + mine.filter((w) => w.a.leadPane === p.a.paneKey).map((w) => agentLine(w, all, coordinators, !single, true, ui, done(w))).join(''))
     .join('')
   const folded = ui.folded.has(c.key)
   const head = `${tipped(character(color, shape, face, 28, true, ask), tip, face === 'asks' ? ASK_TONE[ask] : '')}<span class="grow"><span class="name">${esc(c.name)}</span><span class="sub">${esc(sub)}</span></span><span class="r">${rowStatus(ui, `coordinator:${c.key}`) ?? ''}</span>`
@@ -477,9 +502,9 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
     }</div>`, footer: '' }
   }
 
-  // The tree holds what is running, plus done agents with work in flight (open workers, an open PR).
-  const live = placed.filter((p) => faceOf(p.a) !== 'done' || inFlight(p.a, p.row, all))
-  const finished = finishedOf(placed)
+  // The tree holds every open session in its place: what runs, done agents with work in flight, and
+  // finished ones (dimmed) that still hold a terminal. Sleep and remove are in their menus.
+  const live = placed.filter((p) => faceOf(p.a) !== 'done' || inFlight(p.a, p.row, all) || p.row.liveTerminals > 0)
   const idleRows = snap.rows.filter((r) => r.agents.length === 0 && !needsYou(r)).sort((x, y) => x.createdAt - y.createdAt)
   // Active coordinators (a session or a team) and You lead; sleeping coordinators follow, just above
   // New coordinator. Each group keeps a stable order, so nothing moves until a
@@ -492,25 +517,12 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
   // Sleeping coordinators use the same full row; they only come after the active ones.
   const tree = [...active, you, ...sleeping].map((c) => coordinatorBlock(c, teamOf(c.key), all, snap.coordinators, ui)).join('')
 
-  const memOf = (pane: string) => (ui.stats ? [...ui.stats.finished, ...ui.stats.heaviest].find((f) => f.paneKey === pane)?.memMB : undefined)
-  const finishedRows = [...finished].sort(byStart).map((p) => {
-    const mb = memOf(p.a.paneKey)
-    // Memory by default; a small spinner until the first report arrives.
-    const mem = mb ? size(mb) : ui.statsLoading && !ui.stats ? '<span class="refreshing" aria-label="Reading memory"></span>' : ''
-    // Sleep frees the session and keeps the worktree; remove deletes the checkout (not for the main one).
-    const status = rowStatus(ui, `agent:${p.a.paneKey}`)
-    const acts = status ?? `<span class="r">${mem}</span>${action(`close:${p.a.paneKey}`, 'sleep', '', ui, false)}${p.row.main ? '' : `<button class="act" data-remove="${esc(p.row.id)}" data-target="agent:${esc(p.a.paneKey)}">remove</button>`}`
-    return `<div class="item" data-menu="agent:${esc(p.a.paneKey)}">${agentCharacter(p.a, p.row, all)}<span class="t" ${openAttrs(p)} role="button" tabindex="0">${esc(nameOf(p.a, p.row))}</span>${acts}</div>`
-  })
-  const closable = finished
-  const freedMb = closable.reduce((n, p) => n + (memOf(p.a.paneKey) ?? 0), 0)
-  if (closable.length > 1) finishedRows.unshift(`<div class="closeall">${action('closeall', `Sleep all${freedMb ? ` · ${size(freedMb)}` : ''}`, `Sleep ${closable.length} sessions?`, ui)}</div>`)
   const idle = idleRows.map((r) => `<button class="item" data-open="${esc(r.id)}">${tipped(character(colorOf(r.repo), 'solo', 'idle', 20), 'Idle')}<span class="t muted">${esc(r.name)}</span><span class="r soft">${esc(r.repo)}</span></button>`)
 
   return { cockpit: cockpit(snap, ui), copen, main: [
     upNext(asking, all, snap.coordinators, ui),
     `<div class="tree"><div class="label">Coordinators</div>${tree || '<div class="empty">No agents running</div>'}<button class="newcoord" data-new-coordinator>${ICON.plus}New coordinator</button></div>`
-  ].join(''), footer: `<div class="folds">${foldList('finished', 'Finished', finishedRows, ui, finished.length)}${foldList('idle', 'Idle', idle, ui)}</div>` }
+  ].join(''), footer: idle.length ? `<div class="folds">${foldList('idle', 'Idle', idle, ui)}</div>` : '' }
 }
 
 // ---------- looks for new coordinators ----------

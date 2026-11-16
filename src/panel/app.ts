@@ -72,7 +72,7 @@ document.addEventListener('click', (event) => {
     void orca.shell?.openExternal(pr.dataset.pr)
     return
   }
-  const el = (event.target as Element).closest<HTMLElement>('[data-open],[data-brief],[data-fold],[data-unfold],[data-act],[data-yes],[data-no],[data-show-finished],[data-coordinator],[data-new-coordinator],[data-cockpit]')
+  const el = (event.target as Element).closest<HTMLElement>('[data-open],[data-brief],[data-fold],[data-unfold],[data-act],[data-yes],[data-no],[data-coordinator],[data-new-coordinator],[data-cockpit]')
   if (!el) return
   const d = el.dataset
   // One action at a time; opening, folding and briefs still work while one runs.
@@ -87,8 +87,7 @@ document.addEventListener('click', (event) => {
   if (d.act) ui.confirming = d.act
   if ('no' in d) ui.confirming = null
   if (d.yes) { void runAction(d.yes); return }
-  if ('showFinished' in d) { ui.unfolded.clear(); ui.unfolded.add('finished'); if (!ui.statsLoading) loadStats() }
-  else if ('cockpit' in d) toggleCockpit()
+  if ('cockpit' in d) toggleCockpit()
   if (d.open) {
     void orca.plugin.request('sidebar.open', d.terminal ? { workspaceId: d.open, terminal: d.terminal } : { workspaceId: d.open })
     return
@@ -110,8 +109,6 @@ document.addEventListener('click', (event) => {
     ui.unfolded.clear()
     if (!wasOpen) ui.unfolded.add(d.unfold)
   }
-  // Finished shows each session's memory: load the same stats the cockpit uses.
-  if ((d.unfold === 'finished' || 'showFinished' in d) && ui.unfolded.has('finished') && !ui.statsLoading) loadStats()
   draw()
 })
 
@@ -140,7 +137,7 @@ async function runAction(key: string): Promise<void> {
   draw()
   try {
     if (key === 'closeall' && snap) {
-      // The footer's finished list, the same agents it shows (a lead waiting on its workers is not one).
+      // Every finished session (a lead waiting on its workers, or not yet reported, is not one).
       const panes = finishedAgents(snap.rows).map((a) => a.paneKey)
       const { closed } = await orca.plugin.request('sidebar.closeSessions', { panes })
       ui.notice = { key, text: `${closed} asleep`, ok: closed > 0 }
@@ -156,7 +153,7 @@ async function runAction(key: string): Promise<void> {
   }
   ui.pending = null
   draw()
-  if (ui.cockpitOpen || ui.unfolded.has('finished')) loadStats()
+  if (ui.cockpitOpen) loadStats()
   // Successes fade; errors stay until the next click.
   if (ui.notice?.ok) setTimeout(() => { if (ui.notice?.key === key && ui.notice.ok) { ui.notice = null; draw() } }, 2500)
 }
@@ -388,7 +385,7 @@ function agentMenu(row: WorkspaceRow, a: AgentInfo): MenuItem[] {
 }
 
 /**
- * Removes a worktree after a confirm; the menu and the footer's remove button both use it. When
+ * Removes a worktree after a confirm; the menu and a finished lead's remove button both use it. When
  * only uncommitted files stand in the way, asks once more, naming them, and removes anyway on yes.
  */
 async function removeWorktree(row: WorkspaceRow, target: string): Promise<void> {
