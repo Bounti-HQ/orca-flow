@@ -75,7 +75,7 @@ document.addEventListener('click', (event) => {
   if ('showFinished' in d) { ui.unfolded.clear(); ui.unfolded.add('finished'); if (!ui.statsLoading) loadStats() }
   else if ('cockpit' in d) toggleCockpit()
   if (d.open) {
-    void orca.plugin.request('sidebar.open', { workspaceId: d.open })
+    void orca.plugin.request('sidebar.open', d.terminal ? { workspaceId: d.open, terminal: d.terminal } : { workspaceId: d.open })
     return
   }
   if (d.coordinator) {

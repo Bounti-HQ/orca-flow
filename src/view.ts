@@ -322,7 +322,7 @@ function upNext(placed: Placed[], all: AgentInfo[], coordinators: Coordinator[],
     const head = `<button class="item" data-brief="${esc(key)}" data-menu="agent:${esc(p.a.paneKey)}" aria-expanded="${open}">${agentCharacter(p.a, p.row, all)}<span class="t${open ? ' strong' : ''}">${esc(nameOf(p.a, p.row))}</span><span class="r">${rowStatus(ui, `agent:${p.a.paneKey}`) ?? `${esc(coordinatorName(p.a.coordinator, coordinators))}${p.row.priority ? ` · ${p.row.priority}` : ''}`}</span></button>`
     if (!open) return head
     const about = aboutOf(p)
-    return `${head}<div class="brief">${about ? `<div class="about">${esc(about)}</div>` : ''}<div class="glance"><span class="kicker">Asks · ${esc(askType(p))}</span><span>${esc(glanceOf(p))}</span></div><button class="jump" data-open="${esc(p.row.id)}">Jump to session</button></div>`
+    return `${head}<div class="brief">${about ? `<div class="about">${esc(about)}</div>` : ''}<div class="glance"><span class="kicker">Asks · ${esc(askType(p))}</span><span>${esc(glanceOf(p))}</span></div><button class="jump" ${openAttrs(p)}>Jump to session</button></div>`
   })
   return `<section class="upnext"><div class="label">Up next · ${placed.length}</div><div class="group">${items.join('')}</div></section><div class="hair"></div>`
 }
@@ -352,8 +352,11 @@ const PR_ICON: Record<string, string> = {
 function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], soft: boolean, indent: boolean, ui: UiState): string {
   const status = rowStatus(ui, `agent:${p.a.paneKey}`)
   const right = status ?? `${soft ? `<span class="soft">${esc(p.row.repo)}</span>` : ''}${prBadge(p.row.pr)}<span>${ago(p.row.lastActivityAt, ui.now)}</span>`
-  return `<button class="item${indent ? ' indent' : ''}${p.row.active ? ' current' : ''}" data-open="${esc(p.row.id)}" data-menu="agent:${esc(p.a.paneKey)}"${p.row.active ? ' aria-current="true"' : ''}>${agentCharacter(p.a, p.row, all)}<span class="t">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span></button>`
+  return `<button class="item${indent ? ' indent' : ''}${p.row.active ? ' current' : ''}" ${openAttrs(p)} data-menu="agent:${esc(p.a.paneKey)}"${p.row.active ? ' aria-current="true"' : ''}>${agentCharacter(p.a, p.row, all)}<span class="t">${esc(nameOf(p.a, p.row))}</span><span class="r">${right}</span></button>`
 }
+
+/** What a click on an agent opens: its workspace and, when its terminal is known, its own tab. */
+const openAttrs = (p: Placed) => `data-open="${esc(p.row.id)}"${p.a.terminal ? ` data-terminal="${esc(p.a.terminal)}"` : ''}`
 
 /** Finished sessions that still hold a terminal: what the footer lists and the cockpit counts. */
 const leadsOpenWork = (a: AgentInfo, all: AgentInfo[]) => all.some((b) => b.leadPane === a.paneKey && faceOf(b) !== 'done')
@@ -463,7 +466,7 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
     // Sleep frees the session and keeps the worktree; remove deletes the checkout (not for the main one).
     const status = rowStatus(ui, `agent:${p.a.paneKey}`)
     const acts = status ?? `<span class="r">${mem}</span>${action(`close:${p.a.paneKey}`, 'sleep', '', ui, false)}${p.row.main ? '' : `<button class="act" data-remove="${esc(p.row.id)}" data-target="agent:${esc(p.a.paneKey)}">remove</button>`}`
-    return `<div class="item" data-menu="agent:${esc(p.a.paneKey)}">${agentCharacter(p.a, p.row, all)}<span class="t" data-open="${esc(p.row.id)}" role="button" tabindex="0">${esc(nameOf(p.a, p.row))}</span>${acts}</div>`
+    return `<div class="item" data-menu="agent:${esc(p.a.paneKey)}">${agentCharacter(p.a, p.row, all)}<span class="t" ${openAttrs(p)} role="button" tabindex="0">${esc(nameOf(p.a, p.row))}</span>${acts}</div>`
   })
   const closable = finished
   const freedMb = closable.reduce((n, p) => n + (memOf(p.a.paneKey) ?? 0), 0)

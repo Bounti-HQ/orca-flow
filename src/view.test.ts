@@ -376,6 +376,21 @@ test('a lead stays available, never finished, until it reports worker_done', () 
   assert.deepEqual(finishedAgents([row('w', 'shop', [worker])]).map((a) => a.paneKey), ['p-w'], 'a worker finishes when its turn ends')
 })
 
+test("each agent row, Up next's Jump and Finished rows open that agent's own terminal", () => {
+  const lead = agent('p-lead', 'Onboarding', 'waiting', { coordinator: 'alpha', terminal: 'term-lead', summary: asks('Ship it?') })
+  const worker = agent('p-w', 'Fix copy', 'working', { coordinator: 'alpha', leadPane: 'p-lead', terminal: 'term-w' })
+  const slept = agent('p-old', 'Old task', 'done', { coordinator: 'alpha', leadPane: 'p-lead', terminal: null })
+  const done = agent('p-d', 'Done task', 'done', { coordinator: 'alpha', leadPane: 'p-lead', terminal: 'term-d' })
+  const s: Snapshot = { ...snap, rows: [row('ob', 'shop', [lead, worker, slept, done])] }
+  const ui = emptyUi()
+  ui.unfolded.add('finished')
+  const { main, footer } = render(s, ui)
+  assert.match(main, /class="jump" data-open="ob" data-terminal="term-lead">Jump to session/)
+  assert.match(main, /data-open="ob" data-terminal="term-w"[^>]*>[\s\S]*?Fix copy/)
+  assert.match(footer, /data-open="ob" data-terminal="term-d"[^>]*>Done task/)
+  assert.match(footer, /data-open="ob" role="button"[^>]*>Old task/, 'no terminal: just the workspace')
+})
+
 test('an agent with no title is named after its worktree, not its agent type', () => {
   const s: Snapshot = { ...snap, rows: [row('untangle-api', 'shop', [agent('p-u', 'claude', 'working')])] }
   assert.match(render(s, emptyUi()).main, /<span class="t">untangle-api<\/span>/)

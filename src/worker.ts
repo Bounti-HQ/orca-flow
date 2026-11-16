@@ -19,7 +19,7 @@ import { closeSessions, loadCockpit, removeWorktree } from './cockpit.ts'
 import { assignCoordinators, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, loadLineage, orcaRunner, readCoordinators, scaffoldCoordinator, validateName, writeLook, type Lineage } from './coordinators.ts'
 import { finishedAgents, freeLooks, showable } from './view.ts'
 import type { AgentInfo, AgentState, AgentSummary, Capacity, Priority, Snapshot, WorkspaceRow, WorkstreamCard } from './protocol.ts'
-import { claimsAsk, nextTarget, waitingQueue } from './rank.ts'
+import { claimsAsk, leadAgent, nextTarget, waitingQueue } from './rank.ts'
 import { summarizePane, turnSummarizer } from './summarize.ts'
 import { ensureLinks, ensureSeeds, linksFor, pluginDir, seedsFor } from './install.ts'
 import { readFootprint, readProcs, startedGroups } from './started.ts'
@@ -168,6 +168,22 @@ export function fromPs(worktrees: PsWorktree[], store: Store = { cards: {}, summ
         pr: w.linkedPR?.number && w.linkedPR.url ? { number: w.linkedPR.number, url: w.linkedPR.url, state: w.linkedPR.state ?? '', checks: checksOf(w.linkedPR) } : null
       }
     })
+}
+
+/**
+ * Shows an agent's session: its workspace, then its own tab. `workspace.open` alone lands on
+ * whichever tab was last active there, so every agent of a worktree would open its lead's tab. The
+ * host API has no call to focus a tab, so the CLI switches to it. With no terminal (a session that
+ * slept) or when the switch fails, the workspace alone is shown.
+ */
+export async function openAgent(
+  orca: Pick<OrcaWorkerApi, 'host' | 'log'>,
+  run: (args: string[]) => Promise<unknown>,
+  input: { workspaceId: string; terminal?: string }
+): Promise<{ opened: boolean }> {
+  await orca.host.call('workspace.open', { workspaceId: input.workspaceId })
+  if (input.terminal) await run(['terminal', 'switch', '--terminal', input.terminal]).catch((e: Error) => orca.log(`terminal switch failed: ${e.message}`))
+  return { opened: true }
 }
 
 function runPs(): Promise<PsWorktree[]> {
@@ -471,7 +487,8 @@ export default function activate(orca: OrcaWorkerApi): void {
     const target = nextTarget(waitingQueue(rows), lastJump, Date.now())
     if (!target) return 'Nothing is waiting on you.'
     lastJump = { id: target.id, at: Date.now() }
-    await orca.host.call('workspace.open', { workspaceId: target.id })
+    const terminal = leadAgent(target)?.terminal
+    await openAgent(orca, orcaRunner(ORCA_BIN), terminal ? { workspaceId: target.id, terminal } : { workspaceId: target.id })
     return `${target.repo}/${target.name}`
   })
   // The status bar item keeps this worker running, so it can fill the item in right away.
@@ -610,10 +627,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
   })
 
-  orca.panels.handle('sidebar.open', async ({ workspaceId }) => {
-    await orca.host.call('workspace.open', { workspaceId })
-    return { opened: true }
-  })
+  orca.panels.handle('sidebar.open', (input) => openAgent(orca, run, input))
 
   const summarizer = turnSummarizer({
     run: (job) => summarizePane({ ...job, goal: job.worktreeId ? readStore().cards[fileKey(job.worktreeId)]?.goal : undefined }),

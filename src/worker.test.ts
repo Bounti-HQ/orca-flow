@@ -65,6 +65,23 @@ test('opens a workspace through the host', async () => {
   await worker.deactivate()
 })
 
+test("opening an agent shows its own tab, not the worktree's last one", async () => {
+  const opened: unknown[] = []
+  const logs: string[] = []
+  const orca = { host: { call: async (_: string, params: unknown) => (opened.push(params), { opened: true }) }, log: (m: string) => logs.push(m) }
+  const ran: string[][] = []
+  const run = async (args: string[]) => { ran.push(args); return {} }
+  await main.openAgent(orca as never, run, { workspaceId: 'identity:w', terminal: 'term-worker' })
+  assert.deepEqual(opened, [{ workspaceId: 'identity:w' }])
+  assert.deepEqual(ran, [['terminal', 'switch', '--terminal', 'term-worker']])
+  // A session that slept has no terminal: the workspace alone.
+  await main.openAgent(orca as never, run, { workspaceId: 'identity:w' })
+  assert.equal(ran.length, 1)
+  // A failed switch still leaves the workspace open, and says why.
+  assert.deepEqual(await main.openAgent(orca as never, () => Promise.reject(new Error('no such terminal')), { workspaceId: 'identity:w', terminal: 'gone' }), { opened: true })
+  assert.match(logs[0], /terminal switch failed: no such terminal/)
+})
+
 test('jump goes to the top, and pressing again moves past an item just opened', () => {
   const rows = main.fromPs([
     { identity: { key: 'a' }, displayName: 'a', repo: 'r', agents: [{ paneKey: 'pa', state: 'waiting' }], lastActivityAt: 1 },

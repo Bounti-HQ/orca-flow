@@ -181,8 +181,8 @@ declare module 'orca' {
     'sidebar.coordinatorAction': { input: { key: string; action: 'look' | 'restart' | 'end' | 'delete' }; output: { ok: boolean; error?: string } }
     /** Opens a coordinator's session, starting Claude there if it is not running. */
     'sidebar.openCoordinator': { input: { key: string }; output: { ok: boolean; error?: string } }
-    /** Shows a workspace in Orca, as clicking it in the left sidebar does. */
-    'sidebar.open': { input: { workspaceId: string }; output: { opened: boolean } }
+    /** Shows a workspace in Orca and, given an agent's terminal, that agent's tab in it. */
+    'sidebar.open': { input: { workspaceId: string; terminal?: string }; output: { opened: boolean } }
   }
   interface PluginPanelEvents {
     /** Posted to open panels when a workspace or agent status changes. */
