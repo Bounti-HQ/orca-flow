@@ -448,9 +448,12 @@ export function statusOf(snap: Snapshot) {
   }
 }
 
-/** An installed copy lives at <plugins>/<key>/current; a development folder has no key and no updates. */
+/**
+ * An installed copy lives at <plugins>/<key>/<content hash> (`current` there is a file naming the
+ * active one); a development folder has no key and no updates.
+ */
 export function installedKey(dir: string | null): string | null {
-  return dir ? (/\/plugins\/([^/]+)\/current$/.exec(dir)?.[1] ?? null) : null
+  return dir ? (/\/plugins\/([^/]+)\/(?:current|[0-9a-f]{64})$/.exec(dir)?.[1] ?? null) : null
 }
 
 const UPDATE_DIR = join(DATA_DIR, 'update')
@@ -503,7 +506,7 @@ function updates(orca: OrcaWorkerApi, dir: string | null): void {
     }
     return click.message
   })
-  if (!key || !current) return
+  if (!key || !current) return void orca.log(`update checks off: ${key ? 'no version in the manifest' : `not an installed copy (${dir})`}`)
   settle()
 
   let warned = false
