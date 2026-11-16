@@ -759,7 +759,12 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
   })
 
-  orca.panels.handle('sidebar.open', (input) => openAgent(orca, run, input))
+  // The clicked agent's tab is in front now: move the border at once, not at the panel's next look.
+  orca.panels.handle('sidebar.open', async (input) => {
+    const opened = await openAgent(orca, run, input)
+    void rereadFocus()
+    return opened
+  })
 
   const summarizer = turnSummarizer({
     run: (job) => summarizePane({ ...job, goal: job.worktreeId ? readStore().cards[fileKey(job.worktreeId)]?.goal : undefined }),
