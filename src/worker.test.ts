@@ -368,6 +368,20 @@ test('an ask the user already took on ("ok reviewing") is not an ask while the a
   assert.ok(SUMMARIZER_VERSION >= 2, 'the version went up, so cards written under the old rules refresh')
 })
 
+test('a to-do for the user is an "action" kept as an imperative, never rephrased as a question', async () => {
+  const { SYSTEM_PROMPT, SUMMARY_SCHEMA, COORDINATOR_ASKS, SUMMARIZER_VERSION } = await import('./summarize.ts')
+  // "Your part: rename the project to katos in Orca's project settings. Tell me when it's done."
+  // was filed as "info" and shown as "Rename cacasports to katos in Orca?".
+  assert.ok(SUMMARY_SCHEMA.properties.needs.properties.type.enum.includes('action'))
+  assert.match(SUMMARY_SCHEMA.properties.glance.description, /imperative \(never a question\)/)
+  assert.match(SYSTEM_PROMPT, /"action" = something only the user can do outside the chat/)
+  assert.match(SYSTEM_PROMPT, /An "action" is not a question: never rephrase it as one/)
+  assert.match(SYSTEM_PROMPT, /Its options are \["Done"\] or empty/)
+  assert.match(SYSTEM_PROMPT, /rules below apply to actions too/)
+  assert.match(COORDINATOR_ASKS, /an "action" the user must do for the coordinator itself/)
+  assert.ok(SUMMARIZER_VERSION >= 3, 'cards written before actions existed refresh')
+})
+
 test("a transcript Claude creates a moment after the turn's status is found on a retry, without a warning", async () => {
   const { turnSummarizer } = await import('./summarize.ts')
   const runs: string[] = []

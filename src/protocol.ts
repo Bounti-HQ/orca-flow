@@ -2,7 +2,7 @@
 export type AgentState = 'working' | 'blocked' | 'waiting' | 'done'
 
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
-export type AskType = 'none' | 'decision' | 'approval' | 'review' | 'info'
+export type AskType = 'none' | 'decision' | 'approval' | 'review' | 'info' | 'action'
 
 /** What the end-of-turn summarizer (src/summarize.ts) wrote for one agent after its last turn. */
 export type AgentSummary = {

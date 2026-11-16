@@ -135,19 +135,20 @@ const STATUS: Record<Face, string> = { working: 'Working', monitoring: 'Monitori
 
 /**
  * What an asking agent wants, at a glance: a review (look at a PR, diff or result), a yes/no
- * (Orca's permission prompt, or an approval), or a question (Orca's pending question, a decision,
- * a fact). Ranking and counting still treat all three as one "asks" face.
+ * (Orca's permission prompt, or an approval), an action (something only the user can do outside
+ * the chat: a setting, a login, a command), or a question (Orca's pending question, a decision,
+ * a fact). Ranking and counting still treat all four as one "asks" face.
  */
-export type AskKind = 'review' | 'approval' | 'question'
+export type AskKind = 'review' | 'approval' | 'action' | 'question'
 export function askKindOf(a: AgentInfo): AskKind {
   if (a.state === 'blocked') return 'approval'
   if (a.state === 'waiting') return 'question'
   const t = a.summary?.needs.type
-  return t === 'review' ? 'review' : t === 'approval' ? 'approval' : 'question'
+  return t === 'review' || t === 'approval' || t === 'action' ? t : 'question'
 }
-const ASK_TIP: Record<AskKind, string> = { review: 'Wants a review', approval: 'Needs a yes/no', question: 'Asks a question' }
+const ASK_TIP: Record<AskKind, string> = { review: 'Wants a review', approval: 'Needs a yes/no', action: 'Asks you to do something', question: 'Asks a question' }
 /** Tooltip tone (src/panel/panel.css .tip.<tone>), matching the badge's color. */
-const ASK_TONE: Record<AskKind, string> = { review: 'review', approval: 'warn', question: 'ask' }
+const ASK_TONE: Record<AskKind, string> = { review: 'review', approval: 'warn', action: 'action', question: 'ask' }
 /** How much (a share of the size) the frame grows for the larger review badge. */
 const REVIEW_ROOM = 0.12
 const ASK_BADGE: Record<AskKind, (rim: string, bx: number, by: number, br: number, s: number) => string> = {
@@ -161,7 +162,10 @@ const ASK_BADGE: Record<AskKind, (rim: string, bx: number, by: number, br: numbe
   },
   // A check on amber: a quick yes/no (green with a check stays "done").
   approval: (rim, bx, by, br, s) =>
-    `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="approval-badge"/><path d="M${bx - br * 0.45} ${by} l${br * 0.32} ${br * 0.32} l${br * 0.6} -${br * 0.62}" fill="none" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round" stroke-linejoin="round"/>`
+    `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="approval-badge"/><path d="M${bx - br * 0.45} ${by} l${br * 0.32} ${br * 0.32} l${br * 0.6} -${br * 0.62}" fill="none" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round" stroke-linejoin="round"/>`,
+  // An arrow on teal: go and do something outside the chat.
+  action: (rim, bx, by, br, s) =>
+    `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="action-badge"/><path d="M${bx - br * 0.5} ${by} h${br}m-${br * 0.42} -${br * 0.42} l${br * 0.42} ${br * 0.42} l-${br * 0.42} ${br * 0.42}" fill="none" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round" stroke-linejoin="round"/>`
 }
 
 /** An agent's character with its status: what Orca shows, in at most two words. */

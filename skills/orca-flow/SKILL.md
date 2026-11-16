@@ -60,15 +60,17 @@ Use these words exactly, in cards, specs, summaries and when talking to the user
 
 Every time you need the user, classify the ask:
 
-| Ask type   | Meaning                                       |
-| ---------- | --------------------------------------------- |
-| `decision` | Pick between options; needs thought.          |
-| `approval` | Yes/no on something already prepared.         |
-| `review`   | Look at a diff, PR, artifact or result.       |
-| `info`     | A fact only the user has.                     |
+| Ask type   | Meaning                                                                          |
+| ---------- | -------------------------------------------------------------------------------- |
+| `decision` | Pick between options; needs thought.                                             |
+| `approval` | Yes/no on something already prepared.                                            |
+| `review`   | Look at a diff, PR, artifact or result.                                          |
+| `info`     | A fact only the user has.                                                        |
+| `action`   | Something only the user can do outside the chat (a setting, a login, a command). |
 
-Queue order for the user: level, then asks that unblock other agents, then `approval`/`info`
-before `decision`/`review`, then longest waiting. Ask one question at a time.
+Queue order for the user: level, then asks that unblock other agents, then `approval`/`info`/`action`
+before `decision`/`review`, then longest waiting. Ask one question at a time. Phrase an `action` as
+what to do ("Rename the project to katos in Orca settings, tell me when done."), not as a question.
 
 ## Spawning
 

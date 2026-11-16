@@ -9,9 +9,10 @@
   --ask: #8fb3ff;
   --review: #c39bff;
   --warn: #e8b64c;
+  --action: #4fc7c0;
   --danger: #ec6a52;
 }
-html.light { --ask: #2f55d4; --review: #7c3aed; --warn: #a8700b; --danger: #c43d27; }
+html.light { --ask: #2f55d4; --review: #7c3aed; --warn: #a8700b; --action: #0f857e; --danger: #c43d27; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body { user-select: none; -webkit-user-select: none; cursor: default; margin: 0; padding: 12px 12px 0; overflow: hidden; background: var(--bg); color: var(--ink); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; display: flex; flex-direction: column; gap: 14px; }
@@ -123,6 +124,7 @@ html.light .pr-merged { color: rgb(147 51 234 / .7); }
 .ch .ask-badge { fill: var(--ask); }
 .ch .review-badge { fill: var(--review); }
 .ch .approval-badge { fill: var(--warn); }
+.ch .action-badge { fill: var(--action); }
 .ch .track { stroke: color-mix(in srgb, var(--ink) 22%, transparent); }
 .spin { animation: spin 1s linear infinite; }
 .spin.slow { animation-duration: 4s; }
@@ -164,6 +166,7 @@ html.light .pr-merged { color: rgb(147 51 234 / .7); }
 .tip.warn { color: var(--warn); }
 .tip.ask { color: var(--ask); }
 .tip.review { color: var(--review); }
+.tip.action { color: var(--action); }
 .tip.danger { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
 

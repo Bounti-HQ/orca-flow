@@ -503,15 +503,16 @@ test('a redraw between pointerdown and pointerup waits until the click has run',
   assert.equal(paints.length, 4, 'and drawing is immediate again')
 })
 
-test('an ask wears its kind: an eye for a review, a check on amber for a yes/no, ? for a question', () => {
-  const needs = (type: 'review' | 'approval' | 'decision' | 'info') => summary({ glance: 'Look?', needs: { type, ask: 'Look?', options: [] } })
+test('an ask wears its kind: an eye for a review, a check on amber for a yes/no, an arrow for an action, ? for a question', () => {
+  const needs = (type: 'review' | 'approval' | 'decision' | 'info' | 'action') => summary({ glance: 'Look?', needs: { type, ask: 'Look?', options: [] } })
   const cases: [AgentInfo, string, RegExp, string][] = [
     [agent('p1', 'Checkout', 'done', { summary: needs('review') }), 'review', /class="review-badge"/, 'Wants a review'],
     [agent('p2', 'Checkout', 'done', { summary: needs('approval') }), 'approval', /class="approval-badge"/, 'Needs a yes\/no'],
     [agent('p3', 'Checkout', 'blocked'), 'approval', /class="approval-badge"/, 'Needs a yes\/no'],
     [agent('p4', 'Checkout', 'done', { summary: needs('decision') }), 'question', /class="ask-badge"/, 'Asks a question'],
     [agent('p5', 'Checkout', 'done', { summary: needs('info') }), 'question', /class="ask-badge"/, 'Asks a question'],
-    [agent('p6', 'Checkout', 'waiting', { summary: needs('review') }), 'question', /class="ask-badge"/, 'Asks a question']
+    [agent('p6', 'Checkout', 'waiting', { summary: needs('review') }), 'question', /class="ask-badge"/, 'Asks a question'],
+    [agent('p7', 'Checkout', 'done', { summary: needs('action') }), 'action', /class="action-badge"/, 'Asks you to do something']
   ]
   for (const [a, kind, badge, tip] of cases) {
     assert.equal(faceOf(a), 'asks', `${a.paneKey} still counts as asking`)
@@ -522,6 +523,24 @@ test('an ask wears its kind: an eye for a review, a check on amber for a yes/no,
     assert.match(line, new RegExp(`data-tip="${tip}"`), `${a.paneKey} tooltip`)
   }
   assert.match(character('#fff', 'solo', 'asks', 20), /class="ask-badge"/, 'a question by default')
+})
+
+test('a to-do for the user ("rename the project, tell me when done") is an action, not a question', () => {
+  // A coordinator's "Your part: rename the project to katos in Orca's project settings. Tell me
+  // when it's done." was shown as "ASKS · INFO — Rename cacasports to katos in Orca?" with a "?".
+  const glance = 'Rename the project to katos in Orca settings.'
+  const a = agent('p-act', 'Project rename', 'done', { summary: summary({ glance, needs: { type: 'action', ask: glance, options: ['Done'] } }) })
+  assert.equal(faceOf(a), 'asks')
+  assert.equal(askKindOf(a), 'action')
+  const badge = character('#fff', 'solo', 'asks', 20, true, 'action')
+  assert.match(badge, /class="action-badge"/)
+  noMatch(badge, /ask-badge|>\?<\/text>/, 'not the question badge')
+  assert.match(badge, /width="20" height="20"/, 'keeps the usual frame')
+  const { main } = render({ ...snap, rows: [row('w', 'shop', [a])] }, emptyUi())
+  assert.match(main, /data-tip="Asks you to do something" data-tone="action"[\s\S]*?class="action-badge"/)
+  const brief = main.slice(main.indexOf('class="brief"'))
+  assert.match(brief, /<span class="kicker">Asks · action<\/span><span>Rename the project to katos in Orca settings\.<\/span>/)
+  noMatch(brief, /Asks · (info|question)/)
 })
 
 test('the review badge is a larger white eye, and only its frame grows to fit it', () => {

@@ -17,7 +17,7 @@ const ORCA_DATA = join(homedir(), 'Library', 'Application Support', 'orca')
  * starts, it re-summarizes live agents whose card an older summarizer wrote (no field = 0), so the
  * fix shows at once instead of at the agent's next turn.
  */
-export const SUMMARIZER_VERSION = 2
+export const SUMMARIZER_VERSION = 3
 
 export const SUMMARY_SCHEMA = {
   type: 'object',
@@ -33,12 +33,12 @@ export const SUMMARY_SCHEMA = {
       additionalProperties: false,
       required: ['type', 'ask', 'options'],
       properties: {
-        type: { enum: ['none', 'decision', 'approval', 'review', 'info'] },
-        ask: { type: 'string', description: 'One question in at most 25 words; empty if none' },
+        type: { enum: ['none', 'decision', 'approval', 'review', 'info', 'action'] },
+        ask: { type: 'string', description: 'One question in at most 25 words, or for an action the thing to do as an imperative in the agent\'s own words; empty if none' },
         options: { type: 'array', items: { type: 'string', description: 'A 1-5 word button label' }, maxItems: 4 }
       }
     },
-    glance: { type: 'string', description: 'The ask in at most 8 words, as a question or an action; empty when needs.type is none' },
+    glance: { type: 'string', description: 'The ask in at most 8 words, as a question, or for an action as an imperative (never a question); empty when needs.type is none' },
     watching: { type: 'string', description: 'What the agent is waiting on that is not the user, in at most 4 words ("E2E run", "CI", "its workers"); empty if nothing' },
     effort: { enum: ['quick', 'deep'], description: 'How long answering the ask takes the user' },
     priority: { enum: ['P0', 'P1', 'P2', 'P3'] }
@@ -50,14 +50,15 @@ export const SYSTEM_PROMPT = `You write status cards for a developer who runs ma
 Rules:
 - "title" names the workstream in 2-5 words ("Guest checkout", "Search ranking fix"), never the latest step. If a previous title is given and the work is the same, keep it.
 - "about" is one plain sentence on what the workstream is for ("Let returning customers check out without re-entering their address."). Keep the previous one unless the goal changed.
-- "glance" is the ask in at most 8 words, as the question or action itself ("Keep the old checkout behind a flag?", "Review the pricing page before Friday."). When the agent's final message asks the user something, restate THAT question; never invent a different one.
+- "glance" is the ask in at most 8 words, as the question or action itself ("Keep the old checkout behind a flag?", "Review the pricing page before Friday."). When the agent's final message asks the user something, restate THAT question; never invent a different one. For an "action", it is the imperative ("Rename the project to katos in Orca settings."), never a question.
 - The first request of an Orca worker starts with an orchestration preamble (Task and Dispatch ids, how to report). The actual task is the brief inside it; summarize that, not the preamble.
 - "watching": when the turn ended waiting on something other than the user (tests, CI, a deploy, workers it started), name it in at most 4 words; otherwise empty.
 - Never put ids, hashes, terminal names, file paths or URLs in title, about, glance or watching.
 - Be concrete in "since": name PRs, tests, numbers. No filler, no "the agent".
 - "since" is what changed in the latest turn only.
-- "needs": what the agent is waiting on from the user right now. "none" if the turn ended with work finished and nothing asked, and "none" when it is waiting on something else: workers it started, a background job, a long-running command, CI. Only a question or decision for the user counts. "approval" = yes/no on something prepared; "decision" = choose between options; "review" = look at a diff/PR/result; "info" = a fact only the user has. Ask ONE question in at most 25 words; if the agent asked several, ask the most important and say "(+2 more)". Options are 1-5 word labels like "Merge", "Keep both", "Ask each time", never sentences.
-- An ask needs a question the user can answer RIGHT NOW. A heads-up about a later step is not one: "releasing waits for your go-ahead", "I'll ask you once the PR is up", "merging needs your OK later" while the work it depends on is still running or not yet there means needs.type "none" and glance "", with what it waits on first in "watching". Never turn such a statement into a question.
+- "needs": what the agent is waiting on from the user right now. "none" if the turn ended with work finished and nothing asked, and "none" when it is waiting on something else: workers it started, a background job, a long-running command, CI. Only a question, a decision or something for the user to do counts. "approval" = yes/no on something prepared; "decision" = choose between options; "review" = look at a diff/PR/result; "info" = a fact only the user has; "action" = something only the user can do outside the chat (change a setting, run a command, log in somewhere, rename a project), often with "tell me when done". Ask ONE question in at most 25 words; if the agent asked several, ask the most important and say "(+2 more)". Options are 1-5 word labels like "Merge", "Keep both", "Ask each time", never sentences.
+- An "action" is not a question: never rephrase it as one ("Rename cacasports to katos in Orca?" is wrong). Keep the agent's own wording as an imperative in "ask" and "glance" ("Rename the project to katos in Orca settings."). Its options are ["Done"] or empty. The rules below apply to actions too: a heads-up about a later action is not an ask, and an action the user already took on is not one.
+- An ask needs a question the user can answer RIGHT NOW, or an action the user can do right now. A heads-up about a later step is not one: "releasing waits for your go-ahead", "I'll ask you once the PR is up", "merging needs your OK later" while the work it depends on is still running or not yet there means needs.type "none" and glance "", with what it waits on first in "watching". Never turn such a statement into a question.
 - An ask the user has already taken on is not an ask. When the user's latest message takes it on ("ok reviewing", "on it", "will look", "checking now", "give me a minute") and the agent's reply only acknowledges and waits, the ask is acknowledged: needs.type "none" and glance "", with what it waits on in "watching" ("your review of the PR"). It is an ask again only when the agent asks something new.
 - "effort": "quick" if the user can answer in under a minute.
 - "priority" guess: P0 now = blocking production, a customer or a release; P1 today = critical path of current focus; P2 soon = matters but can wait a day; P3 someday = exploration. When unsure pick the lower level.
@@ -301,7 +302,7 @@ function writeJson(path: string, value: unknown): void {
  * coordinator they show the same ask twice. So a coordinator's card asks only what the user must
  * answer to the coordinator itself.
  */
-export const COORDINATOR_ASKS = `This agent is a COORDINATOR: it routes work to leads and workers, which have their own cards. For "needs", count only a question the user must answer TO THE COORDINATOR ITSELF: which project or coordinator takes a request, approving a worktree removal, approving freeing memory or stopping a session, or a fact it needs before it can start work. A question it relays or summarizes from a lead or worker, or one that tells the user to answer, try or review something in another agent's chat, is NOT its ask: set needs.type "none" and glance "" (name what it waits on in "watching", e.g. "lead's review").`
+export const COORDINATOR_ASKS = `This agent is a COORDINATOR: it routes work to leads and workers, which have their own cards. For "needs", count only a question the user must answer TO THE COORDINATOR ITSELF: which project or coordinator takes a request, approving a worktree removal, approving freeing memory or stopping a session, or a fact it needs before it can start work; or an "action" the user must do for the coordinator itself outside the chat ("rename the project in Orca's settings, tell me when done"). A question it relays or summarizes from a lead or worker, or one that tells the user to answer, try or review something in another agent's chat, is NOT its ask: set needs.type "none" and glance "" (name what it waits on in "watching", e.g. "lead's review").`
 
 /** What Haiku reads for one turn: the role's rules, the card so far, and the turn itself. */
 export function promptFor(d: Digest, previous: { title?: string; about?: string } | null, goal?: string): string {
