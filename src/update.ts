@@ -145,7 +145,7 @@ export function updater(d: UpdaterDeps) {
     rmSync(d.dir, { recursive: true, force: true })
     d.log(`update to ${result.version}: ${result.kind}${'reason' in result ? ` (${result.reason})` : ''}`)
     show(result)
-    if (result.kind === 'updated') d.later(() => { if (state.kind === 'updated') show(latest ? { kind: 'available', version: latest } : { kind: 'none' }) }, 60_000)
+    if (result.kind === 'updated') d.later(() => { if (state.kind === 'updated') show(latest ? { kind: 'available', version: latest } : { kind: 'none' }) }, 10_000)
   }
 
   const apply = (click: { next: UpdateState; start: boolean; message: string }): string => {
