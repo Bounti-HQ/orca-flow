@@ -329,6 +329,26 @@ test("transcripts come from Orca's SQLite hook store, newest entry per pane, els
   assert.equal(transcriptOf('tab-d:leaf-4', { db: join(dir, 'none.db'), json: files.json }), legacy, 'no database at all')
 })
 
+test("a coordinator's card does not repeat its lead's question; a lead's still asks", async () => {
+  const { COORDINATOR_ASKS, digest, promptFor } = await import('./summarize.ts')
+  const line = (type: string, content: unknown) => JSON.stringify({ type, timestamp: '2026-11-16T12:00:00Z', message: { content } })
+  const relay = 'The plugin lead is staying open: try 0.2.4 in the sidebar and tell it if anything is off.'
+  const coordinator = digest([
+    line('user', 'Fix the sidebar summaries'),
+    line('assistant', [{ type: 'tool_use', name: 'Bash', input: { command: 'orca orchestration worker-start --worktree path:/w --agent claude' } }]),
+    line('user', 'status from the lead'),
+    line('assistant', [{ type: 'text', text: relay }])
+  ])!
+  assert.equal(coordinator.role, 'coordinator')
+  const prompt = promptFor(coordinator, { title: 'Orca Flow fixes' })
+  assert.ok(prompt.startsWith(COORDINATOR_ASKS), 'the coordinator rule comes first')
+  assert.match(COORDINATOR_ASKS, /relays[\s\S]*NOT its ask: set needs\.type "none"/)
+  assert.match(prompt, /AGENT'S FINAL MESSAGE THIS TURN:\nThe plugin lead is staying open/)
+  const lead = digest([line('user', 'Your role: lead. Fix the summaries'), line('assistant', [{ type: 'text', text: 'Does 0.2.4 look right?' }])])!
+  assert.equal(lead.role, 'lead')
+  assert.ok(!promptFor(lead, null).includes(COORDINATOR_ASKS), 'a lead keeps its own asks')
+})
+
 test('turns are summarized once per burst, one run per pane, newest job after a running one', async () => {
   const { turnSummarizer } = await import('./summarize.ts')
   const runs: string[] = []

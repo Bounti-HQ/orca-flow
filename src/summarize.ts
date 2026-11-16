@@ -281,6 +281,26 @@ function writeJson(path: string, value: unknown): void {
 }
 
 /**
+ * A coordinator relays its leads' and workers' questions ("the lead is waiting on you, try it").
+ * Those asks belong to the agent that asked, which shows its own question badge; repeated on the
+ * coordinator they show the same ask twice. So a coordinator's card asks only what the user must
+ * answer to the coordinator itself.
+ */
+export const COORDINATOR_ASKS = `This agent is a COORDINATOR: it routes work to leads and workers, which have their own cards. For "needs", count only a question the user must answer TO THE COORDINATOR ITSELF: which project or coordinator takes a request, approving a worktree removal, approving freeing memory or stopping a session, or a fact it needs before it can start work. A question it relays or summarizes from a lead or worker, or one that tells the user to answer, try or review something in another agent's chat, is NOT its ask: set needs.type "none" and glance "" (name what it waits on in "watching", e.g. "lead's review").`
+
+/** What Haiku reads for one turn: the role's rules, the card so far, and the turn itself. */
+export function promptFor(d: Digest, previous: { title?: string; about?: string } | null, goal?: string): string {
+  return [
+    d.role === 'coordinator' && COORDINATOR_ASKS,
+    goal && `Coordinator's goal for this workstream: ${goal}`,
+    previous?.title && `Previous title: ${previous.title}${previous.about ? `\nPrevious about: ${previous.about}` : ''}`,
+    `FIRST REQUEST:\n${d.firstPrompt}`,
+    `LATEST TURN:\n${d.turn}`,
+    `AGENT'S FINAL MESSAGE THIS TURN:\n${d.lastAssistant || '(none)'}`
+  ].filter(Boolean).join('\n\n')
+}
+
+/**
  * Summarizes one pane's latest turn into ~/.orca-flow/agents/<pane>.json. Skips a turn already
  * summarized, and keeps the newest when two finish close together. Returns what it did.
  */
@@ -290,14 +310,7 @@ export async function summarizePane(input: { pane: string; transcript: string; w
   if (!d) return 'empty'
   const previous = readJson(out)
   if (!input.force && previous?.turnAt && d.turnAt && previous.turnAt >= d.turnAt) return 'skipped'
-  const prompt = [
-    input.goal && `Coordinator's goal for this workstream: ${input.goal}`,
-    previous?.title && `Previous title: ${previous.title}${previous.about ? `\nPrevious about: ${previous.about}` : ''}`,
-    `FIRST REQUEST:\n${d.firstPrompt}`,
-    `LATEST TURN:\n${d.turn}`,
-    `AGENT'S FINAL MESSAGE THIS TURN:\n${d.lastAssistant || '(none)'}`
-  ].filter(Boolean).join('\n\n')
-  const { summary } = await callHaiku(prompt)
+  const { summary } = await callHaiku(promptFor(d, previous, input.goal))
   // A newer turn may have finished while Haiku ran; keep the newest.
   const latest = readJson(out)
   if (!input.force && latest?.turnAt && d.turnAt && latest.turnAt > d.turnAt) return 'skipped'
