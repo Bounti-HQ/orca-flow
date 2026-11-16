@@ -2,6 +2,7 @@
 // All UI state (what is open or folded) lives here; the worker only sends data.
 import type { AgentInfo, CockpitStats, Look, Priority, Snapshot, WorkspaceRow } from '../protocol.ts'
 import { busy, character, crew, emptyUi, faceOf, finishedAgents, freeLooks, render } from '../view.ts'
+import { pressGate } from './press.ts'
 
 const ui = emptyUi()
 let snap: Snapshot | null = null
@@ -18,7 +19,7 @@ const openedAt = Date.now()
 /** How long the panel waits for the coordinator lineage before showing agents without it. */
 const LINEAGE_WAIT_MS = 8000
 
-function draw(): void {
+function paint(): void {
   if (!snap) return
   // Until the worker knows who each agent works for, agents would show under You and then jump to
   // their coordinator; keep the loader instead, for a few seconds at most.
@@ -36,6 +37,14 @@ function draw(): void {
   footerEl.hidden = !footer
   if (typeof markTarget === 'function') markTarget()
 }
+
+// Every redraw goes through the gate: one landing mid-press would replace the pressed row, and the
+// browser then drops the click (src/panel/press.ts).
+const gate = pressGate(paint)
+const draw = (): void => gate.draw()
+document.addEventListener('pointerdown', () => gate.down(), true)
+document.addEventListener('pointerup', () => gate.up(), true)
+document.addEventListener('pointercancel', () => gate.up(), true)
 
 function toggle(set: Set<string>, key: string): void {
   set.has(key) ? set.delete(key) : set.add(key)
@@ -66,7 +75,13 @@ document.addEventListener('click', (event) => {
   const el = (event.target as Element).closest<HTMLElement>('[data-open],[data-brief],[data-fold],[data-unfold],[data-act],[data-yes],[data-no],[data-show-finished],[data-coordinator],[data-new-coordinator],[data-cockpit]')
   if (!el) return
   const d = el.dataset
-  if (ui.pending) return // one action at a time
+  // One action at a time; opening, folding and briefs still work while one runs.
+  const action = d.act ?? d.yes
+  if (ui.pending && action) {
+    ui.notice = { key: action, text: 'Wait: another action is still running', ok: false }
+    draw()
+    return
+  }
   if (ui.notice && !ui.notice.ok) ui.notice = null // an error stays until the next click
   for (const [k, st] of ui.status) if (st.tone === 'bad') ui.status.delete(k)
   if (d.act) ui.confirming = d.act

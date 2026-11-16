@@ -3,6 +3,7 @@ import { assert, test } from 'orca/testing'
 import type { AgentInfo, AgentSummary, Snapshot, WorkspaceRow } from './protocol.ts'
 import { character, emptyUi, faceOf, finishedAgents, freeLooks, gaugesOf, prBadge, render } from './view.ts'
 import type { CockpitStats } from './protocol.ts'
+import { pressGate } from './panel/press.ts'
 
 const noMatch = (text: string, re: RegExp, message?: string) => assert.ok(!re.test(text), message ?? `unexpected ${re}`)
 
@@ -425,4 +426,33 @@ test('a finished row offers sleep and remove; the main checkout offers sleep onl
   noMatch(footer, /data-remove="home"/)
   ui.status.set('agent:p-ob', { text: 'Removing…', tone: 'pending' })
   assert.match(render(s, ui).footer, /Onboarding<\/span><span class="rstatus pending"><span class="refreshing"><\/span>Removing…/)
+})
+
+test('a redraw between pointerdown and pointerup waits until the click has run', () => {
+  const fired: (() => void)[] = []
+  const timers = { set: (fn: () => void) => (fired.push(fn), fired.length), clear: (h: unknown) => { fired[(h as number) - 1] = () => {} } }
+  const paints: string[] = []
+  let row = 'row-1'
+  const gate = pressGate(() => paints.push((row = `row-${paints.length + 2}`)), { timers })
+  gate.draw()
+  assert.deepEqual(paints, ['row-2'], 'no press: paints at once')
+  gate.down()
+  const pressedRow = row
+  gate.draw() // a snapshot lands mid-press
+  gate.draw()
+  assert.equal(row, pressedRow, 'the pressed row is still in the page')
+  assert.equal(gate.held, true)
+  gate.up()
+  assert.equal(row, pressedRow, 'still there while the click that follows pointerup runs')
+  fired.at(-1)!() // the next tick
+  assert.deepEqual(paints, ['row-2', 'row-3'], 'then one paint with the newest data')
+  // A press held too long (a drag, a release outside the panel) flushes anyway.
+  gate.down()
+  gate.draw()
+  fired.at(-1)!()
+  assert.deepEqual(paints, ['row-2', 'row-3', 'row-4'])
+  gate.up()
+  assert.equal(fired.length, 3, 'a release after the safety flush schedules nothing')
+  gate.draw()
+  assert.equal(paints.length, 4, 'and drawing is immediate again')
 })

@@ -560,8 +560,9 @@ export default function activate(orca: OrcaWorkerApi): void {
     return openSession(dir, true).catch((e: Error) => ({ ok: false, error: e.message }))
   })
 
-  // Opening must never launch a second session on a live one: decide from fresh Orca data, not the
-  // last snapshot (it can predate a wake or a worker restart), and ignore repeat clicks in flight.
+  // Opening must never launch a second session on a live one: before launching, decide from fresh
+  // Orca data, not the last snapshot (it can predate a wake or a worker restart), and ignore repeat
+  // clicks in flight. A session the snapshot shows live opens at once.
   const opening = new Map<string, Promise<{ ok: boolean; error?: string }>>()
   orca.panels.handle('sidebar.openCoordinator', async ({ key }) => {
     const c = readCoordinators().find((x) => x.key === key)
@@ -569,6 +570,9 @@ export default function activate(orca: OrcaWorkerApi): void {
     const inFlight = opening.get(key)
     if (inFlight) return inFlight
     const job = (async () => {
+      // Live in the last snapshot: just show it, no launch to guard. Otherwise confirm with fresh
+      // data before starting a session, so a wake that the snapshot missed is not doubled.
+      if (isLive(c.dir)) return openSession(c.dir, false)
       await refresh()
       return openSession(c.dir, !isLive(c.dir))
     })().catch((e: Error) => ({ ok: false, error: e.message })).finally(() => opening.delete(key))
