@@ -151,6 +151,10 @@ one-sentence outcome. `orca-flow get --worktree <selector>` shows a card.
 - End your turn as soon as work is handed off; Orca wakes you when workers report. Never poll.
 - Answer a worker's question yourself when it follows from the task or the user's instructions;
   bring the user only what only they can decide.
+- Ask the user from the agent that owns the decision, in its own chat, so its card shows the ask.
+  Workers ask their lead; a lead asks the user directly about its workstream; a coordinator asks
+  only about routing, capacity, worktrees and conflicts between workstreams, and never relays a
+  lead's question as its own.
 
 ## Never
 

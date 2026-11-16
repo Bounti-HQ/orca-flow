@@ -220,6 +220,8 @@ async function queue({ all = false } = {}) {
       state: lead?.state ?? row.state,
       title: lead?.title ?? row.name,
       needs: s && s.needs.type !== 'none' ? s.needs : null,
+      // Whose ask it is: a lead's or worker's is answered in that agent's chat, not the coordinator's.
+      asker: s?.role ?? null,
       effort: s?.effort ?? null,
       since: s?.since ?? null,
       goal: row.card?.goal ?? s?.goal ?? null
@@ -232,18 +234,20 @@ async function queue({ all = false } = {}) {
   }
 }
 
-function printQueue(q) {
+/** The queue as text; a lead's or worker's ask is attributed to it and answered in its own chat. */
+export function formatQueue(q) {
   const word = (p) => (p ? `${p} ${LEVELS[p]}` : 'unrated')
   const lines = [q.waiting.length ? `Waiting on you (${q.waiting.length}), in order:` : 'Nothing is waiting on you.']
   q.waiting.forEach((w, i) => {
     lines.push(`${i + 1}. [${word(w.priority)}] ${w.name}: ${w.title}`)
-    if (w.needs) lines.push(`   ${w.needs.type}${w.effort ? ` (${w.effort})` : ''}: ${w.needs.ask}`)
+    const own = w.asker === 'lead' || w.asker === 'worker' ? `the ${w.asker} asks, answer in its chat · ` : ''
+    if (w.needs) lines.push(`   ${own}${w.needs.type}${w.effort ? ` (${w.effort})` : ''}: ${w.needs.ask}`)
     if (w.needs?.options.length) lines.push(`   options: ${w.needs.options.join(' | ')}`)
     else if (w.since) lines.push(`   since: ${w.since}`)
     lines.push(`   open: ${w.worktree}`)
   })
   if (q.working.length) lines.push('', `Working (${q.working.length}): ${q.working.map((w) => w.name).join(', ')}`)
-  console.log(lines.join('\n'))
+  return lines.join('\n')
 }
 
 // ---------- cards ----------
@@ -355,7 +359,7 @@ async function main() {
   switch (command) {
     case 'queue': {
       const q = await queue({ all: !!args.all })
-      args.json ? console.log(JSON.stringify(q, null, 2)) : printQueue(q)
+      console.log(args.json ? JSON.stringify(q, null, 2) : formatQueue(q))
       break
     }
     case 'capacity': {

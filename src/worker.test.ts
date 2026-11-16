@@ -349,6 +349,15 @@ test("a coordinator's card does not repeat its lead's question; a lead's still a
   assert.ok(!promptFor(lead, null).includes(COORDINATOR_ASKS), 'a lead keeps its own asks')
 })
 
+test("a lead's PR review relayed by its coordinator stays on the lead's card", async () => {
+  const { COORDINATOR_ASKS, SUMMARIZER_VERSION } = await import('./summarize.ts')
+  // The coordinator relayed a lead's "is PR #3 good to merge?" as its own review ask.
+  assert.match(COORDINATOR_ASKS, /Every decision about a workstream a lead owns \(reviewing or merging its PR[\s\S]*is the lead's ask, on the lead's card/)
+  assert.match(COORDINATOR_ASKS, /a lead's status note, a "stopped without reporting" notice or the queue[\s\S]*NOT its ask/)
+  assert.match(COORDINATOR_ASKS, /a conflict between two workstreams/, 'conflicts between workstreams stay the coordinator\'s own ask')
+  assert.ok(SUMMARIZER_VERSION >= 4, 'coordinator cards written under the old rule refresh')
+})
+
 test('a heads-up about a later go-ahead is not an ask, for every role', async () => {
   const { SYSTEM_PROMPT } = await import('./summarize.ts')
   // The isola coordinator's "Releasing and telling the mono lead both wait for your go-ahead",

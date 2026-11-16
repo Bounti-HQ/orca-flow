@@ -1,7 +1,7 @@
 // node --test test/*.test.mjs
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { briefOf, decide, digest, normalizePriority, roleOf, runsToResume } from '../skills/orca-flow/scripts/orca-flow.mjs'
+import { briefOf, decide, digest, formatQueue, normalizePriority, roleOf, runsToResume } from '../skills/orca-flow/scripts/orca-flow.mjs'
 
 test('priority accepts levels and words, refuses anything else', () => {
   assert.equal(normalizePriority('now'), 'P0')
@@ -101,4 +101,11 @@ test('a lead is known from the role line its coordinator gives it', () => {
   assert.equal(roleOf('Your role: lead. Load the orca-flow skill and follow roles/lead.md.\nShip the checkout', []), 'lead')
   assert.equal(roleOf('=== TASK === Dispatch id ctx_1: fix the button', []), 'worker')
   assert.equal(roleOf('help me with this bug', []), 'solo')
+})
+
+test("the queue attributes a lead's ask to the lead and points to its chat", () => {
+  const ask = (asker, name) => ({ worktree: `wt-${name}`, name: `repo/${name}`, priority: 'P2', state: 'done', title: name, needs: { type: 'review', ask: 'Is PR #3 good to merge?', options: [] }, asker, effort: 'quick', since: null, goal: null })
+  const text = formatQueue({ scope: 'all', waiting: [ask('lead', 'checkout'), ask('coordinator', 'home')], working: [] })
+  assert.match(text, /repo\/checkout[\s\S]*the lead asks, answer in its chat · review \(quick\): Is PR #3 good to merge\?/)
+  assert.match(text, /repo\/home[\s\S]*\n   review \(quick\): Is PR #3/, "a coordinator's own ask is answered here")
 })

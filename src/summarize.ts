@@ -17,7 +17,7 @@ const ORCA_DATA = join(homedir(), 'Library', 'Application Support', 'orca')
  * starts, it re-summarizes live agents whose card an older summarizer wrote (no field = 0), so the
  * fix shows at once instead of at the agent's next turn.
  */
-export const SUMMARIZER_VERSION = 3
+export const SUMMARIZER_VERSION = 4
 
 export const SUMMARY_SCHEMA = {
   type: 'object',
@@ -302,7 +302,7 @@ function writeJson(path: string, value: unknown): void {
  * coordinator they show the same ask twice. So a coordinator's card asks only what the user must
  * answer to the coordinator itself.
  */
-export const COORDINATOR_ASKS = `This agent is a COORDINATOR: it routes work to leads and workers, which have their own cards. For "needs", count only a question the user must answer TO THE COORDINATOR ITSELF: which project or coordinator takes a request, approving a worktree removal, approving freeing memory or stopping a session, or a fact it needs before it can start work; or an "action" the user must do for the coordinator itself outside the chat ("rename the project in Orca's settings, tell me when done"). A question it relays or summarizes from a lead or worker, or one that tells the user to answer, try or review something in another agent's chat, is NOT its ask: set needs.type "none" and glance "" (name what it waits on in "watching", e.g. "lead's review").`
+export const COORDINATOR_ASKS = `This agent is a COORDINATOR: it routes work to leads and workers, which have their own cards. For "needs", count only a question the user must answer TO THE COORDINATOR ITSELF: which project or coordinator takes a request, approving a worktree removal, approving freeing memory or stopping a session, a conflict between two workstreams, or a fact it needs before it can start work; or an "action" the user must do for the coordinator itself outside the chat ("rename the project in Orca's settings, tell me when done"). Every decision about a workstream a lead owns (reviewing or merging its PR, picking an option, approving its release) is the lead's ask, on the lead's card, even when the coordinator repeats it. A question it relays or summarizes from a lead or worker (from a lead's status note, a "stopped without reporting" notice or the queue), or one that tells the user to answer, try or review something in another agent's chat, is NOT its ask: set needs.type "none" and glance "" (name what it waits on in "watching", e.g. "lead's review").`
 
 /** What Haiku reads for one turn: the role's rules, the card so far, and the turn itself. */
 export function promptFor(d: Digest, previous: { title?: string; about?: string } | null, goal?: string): string {

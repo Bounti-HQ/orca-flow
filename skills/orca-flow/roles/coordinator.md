@@ -42,6 +42,8 @@ free memory and continues it later in a new terminal):
      Your role: lead. Load the orca-flow skill and follow roles/lead.md.
      As a lead, send worker_done only when the user says this workstream is done or its PR is merged,
      not when a first version or the PR is ready; until then end turns without reporting.
+     Ask the user directly, in your own chat, for every decision about this workstream; use
+     `orca orchestration ask` only for a new worktree, capacity or a conflict with another workstream.
      <one sentence: the outcome>
      <context, constraints, the first deliverable>
      EOF
@@ -55,6 +57,8 @@ free memory and continues it later in a new terminal):
    Your role: lead. Load the orca-flow skill and follow roles/lead.md.
    As a lead, send worker_done only when the user says this workstream is done or its PR is merged,
    not when a first version or the PR is ready; until then end turns without reporting.
+   Ask the user directly, in your own chat, for every decision about this workstream; use
+   `orca orchestration ask` only for a new worktree, capacity or a conflict with another workstream.
    <one sentence: the outcome>
    <what you know: context, constraints, the first deliverable>
    EOF
@@ -75,6 +79,15 @@ when the user says the workstream is done or its PR is merged. Never describe a 
 finish checklist ("done when the PR is open"): describe the first deliverable, and leave finishing
 to the user.
 
+**A lead's asks are the lead's.** Once you hand a workstream to a lead, the user decides everything
+about it in the lead's chat, and the lead's card shows the ask. You own only routing, capacity,
+worktree requests and conflicts between workstreams. So when a lead's `status` note or "stopped
+without reporting" ends in a question for the user (review this PR, pick an option, approve a
+release), never relay it as your ask and never wait for the answer: at most one line that the lead
+is waiting on the user, pointing to its chat or card, and offer to open it
+(`orca worktree activate --worktree <selector>`). A lead that `orca orchestration ask`s you about
+something only the user decides: reply that it should ask the user in its own chat.
+
 When you route to a lead or it reports, glance at `orca orchestration worker-list`: a lead that has
 been working a long time with no workers is doing the work itself. Remind it to delegate
 (`orca orchestration send --to dispatch:<id>`).
@@ -88,11 +101,14 @@ with a read-only subagent; anything that edits goes to a lead.
 
 ## "What's next?"
 
-Run `orca-flow queue` and present only item 1: its level, the ask, the options, and the one line of
-context the user needs. The user answers the agent that asked, in its own chat: offer to open it
-(`orca worktree activate --worktree <selector>`). Relay an answer yourself only for a question sent
-to you (`orca orchestration reply --id <message_id>`) or when the user asks you to pass something
-to a lead you started (`orca orchestration send --to dispatch:<id>`). Type into a chat with
+Run `orca-flow queue` and present only item 1: its level, which agent is waiting, and its ask in one
+line, attributed to that agent ("the checkout lead wants a review of PR #12"), never phrased as your
+own question (the queue marks those "the lead asks, answer in its chat"). The user answers the agent
+that asked, in its own chat: point to its card and offer to open it
+(`orca worktree activate --worktree <selector>`). Only your own asks (routing, capacity, worktree
+removal, conflicts between workstreams) are answered here. Relay an answer yourself only for a question sent to you
+(`orca orchestration reply --id <message_id>`) or when the user asks you to pass something to a
+lead you started (`orca orchestration send --to dispatch:<id>`). Type into a chat with
 `orca terminal send` only when the user explicitly tells you to.
 
 Then show item 2. One decision at a time; never dump the whole queue unless asked.

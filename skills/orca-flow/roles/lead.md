@@ -46,6 +46,23 @@ from the task or what the user told you. Otherwise ask the user: put the one que
 in your reply and end your turn; the worker stays waiting. When the user answers, `reply` to the
 worker.
 
+## Asking the user
+
+Once your coordinator hands you a workstream, the user talks to you about it directly. Everything
+the user decides about it (a `decision`, `approval`, `review`, `info` or `action`, see SKILL.md)
+you ask them yourself, in your own chat: put the one ask in your reply and end your turn. The
+sidebar puts it on your card and in the user's queue; the coordinator never asks or relays it.
+
+Your dispatch preamble says to ask the coordinator with `orca orchestration ask`. As a lead, use
+that only for what the coordinator owns:
+
+- a new worktree or branch (a separate deliverable, or work that would conflict),
+- capacity: room for a worker that needs a new worktree,
+- a conflict with another workstream.
+
+Never route a user decision through the coordinator, and never put a question for the user in a
+`status` note: the coordinator does not relay it, so the user would not see it as yours.
+
 ## Branch and PR
 
 Workers commit their work on this worktree's branch. Only you push, open or update the PR, and
@@ -68,6 +85,8 @@ a status note instead, which keeps the task open:
 `orca orchestration send --to run:<run_id> --type status --subject "PR #<n> open" --body "<one line;
 staying with the user for follow-ups>"`. Your run id is in
 `orca orchestration worker-show --dispatch <your dispatch id> --json` (`dispatch.runId`).
+A status note informs and never asks: a question for the user goes in your own reply (see Asking
+the user).
 
 When you do finish, `worker_done` carries the outcome, the PR and anything left open. Update your
 worktree's card when the goal or level changes.
@@ -81,5 +100,6 @@ If the user started this chat themselves (no Task or Dispatch id), you have no c
 
 - Write your worktree's card yourself: `orca-flow set --worktree current --priority <level>
   --goal "..." --fits "..."`.
-- Ask the user directly instead of `orchestration ask`, and report to them instead of `worker_done`.
+- Ask the user about what a coordinator would own (worktree, capacity, conflicts) too, and report
+  to them instead of `worker_done`.
 - A task that needs its own worktree: tell the user to ask one of their coordinators.
