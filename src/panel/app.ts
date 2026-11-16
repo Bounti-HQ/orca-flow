@@ -21,6 +21,19 @@ const openedAt = Date.now()
 const LINEAGE_WAIT_MS = 8000
 
 function paint(): void {
+  paintRows()
+  keepAnimationPhase()
+}
+
+/**
+ * A paint replaces the rows, so each new spinner starts again at 0° and jumps back.
+ * Start every CSS animation at the origin of the timeline, so a new spinner continues at the phase of the old one.
+ */
+function keepAnimationPhase(): void {
+  for (const a of document.getAnimations()) if (a instanceof CSSAnimation) a.startTime = 0
+}
+
+function paintRows(): void {
   if (!snap) return
   updateEl.innerHTML = searchBox.hidden ? updateButton(snap.update) : ''
   // Until the worker knows who each agent works for, agents would show under You and then jump to
