@@ -349,6 +349,27 @@ test("a coordinator's card does not repeat its lead's question; a lead's still a
   assert.ok(!promptFor(lead, null).includes(COORDINATOR_ASKS), 'a lead keeps its own asks')
 })
 
+test("a transcript Claude creates a moment after the turn's status is found on a retry, without a warning", async () => {
+  const { turnSummarizer } = await import('./summarize.ts')
+  const runs: string[] = []
+  const logs: string[] = []
+  let lookups = 0
+  const s = turnSummarizer({
+    delayMs: 5,
+    retryMs: [5, 5],
+    log: (m) => logs.push(m),
+    findTranscript: () => (++lookups < 3 ? { path: null, why: 'names /t/new.jsonl, which does not exist' } : { path: '/t/new.jsonl' }),
+    run: async (job) => void runs.push(job.transcript)
+  })
+  await new Promise((r) => setTimeout(r, 60))
+  s.onStatus({ paneKey: 'p-new', workspaceId: null, state: 'done' })
+  await new Promise((r) => setTimeout(r, 60))
+  assert.equal(lookups, 3)
+  assert.deepEqual(runs, ['/t/new.jsonl'])
+  assert.deepEqual(logs, [])
+  s.dispose()
+})
+
 test('turns are summarized once per burst, one run per pane, newest job after a running one', async () => {
   const { turnSummarizer } = await import('./summarize.ts')
   const runs: string[] = []
@@ -356,6 +377,7 @@ test('turns are summarized once per burst, one run per pane, newest job after a 
   let release = () => {}
   const s = turnSummarizer({
     delayMs: 5,
+    retryMs: [5],
     log: (m) => logs.push(m),
     findTranscript: (pane) => (pane.startsWith('none') ? { path: null, why: 'no entry' } : { path: `/t/${pane}` }),
     run: (job) => {

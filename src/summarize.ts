@@ -332,6 +332,8 @@ export function turnSummarizer(opts: {
   run: (job: Job) => Promise<unknown>
   findTranscript?: (pane: string) => Found
   delayMs?: number
+  /** Waits before looking again for a transcript that was not there yet. */
+  retryMs?: number[]
   parallel?: number
   log?: (message: string) => void
 }) {
@@ -375,15 +377,22 @@ export function turnSummarizer(opts: {
     onStatus(event: StatusEvent): void {
       if (event.state !== 'done' && event.state !== 'waiting') return
       const pane = event.paneKey
-      clearTimeout(timers.get(pane))
-      timers.set(pane, setTimeout(() => {
-        timers.delete(pane)
-        const found = find(pane)
-        if (found.path !== null) return enqueue({ pane, transcript: found.path, worktreeId: event.workspaceId ?? undefined })
-        if (warned) return
-        warned = true
-        opts.log?.(`SUMMARIES OFF: no Claude transcript found for pane ${pane}, so its turn was not summarized (${found.why}). Further misses are not logged.`)
-      }, opts.delayMs ?? 2000))
+      // A new session can report its first status a moment before Claude creates its transcript
+      // file, so a miss is looked up again before it counts.
+      const retries = opts.retryMs ?? [5000, 15_000]
+      const attempt = (n: number, delay: number) => {
+        clearTimeout(timers.get(pane))
+        timers.set(pane, setTimeout(() => {
+          timers.delete(pane)
+          const found = find(pane)
+          if (found.path !== null) return enqueue({ pane, transcript: found.path, worktreeId: event.workspaceId ?? undefined })
+          if (n < retries.length) return attempt(n + 1, retries[n])
+          if (warned) return
+          warned = true
+          opts.log?.(`SUMMARIES OFF: no Claude transcript found for pane ${pane}, so its turn was not summarized (${found.why}). Further misses are not logged.`)
+        }, delay))
+      }
+      attempt(0, opts.delayMs ?? 2000)
     },
     dispose(): void {
       for (const t of timers.values()) clearTimeout(t)
