@@ -349,6 +349,14 @@ test("a coordinator's card does not repeat its lead's question; a lead's still a
   assert.ok(!promptFor(lead, null).includes(COORDINATOR_ASKS), 'a lead keeps its own asks')
 })
 
+test('a heads-up about a later go-ahead is not an ask, for every role', async () => {
+  const { SYSTEM_PROMPT } = await import('./summarize.ts')
+  // The isola coordinator's "Releasing and telling the mono lead both wait for your go-ahead",
+  // said while its lead was still building, was filed as a yes/no.
+  assert.match(SYSTEM_PROMPT, /question the user can answer RIGHT NOW/)
+  assert.match(SYSTEM_PROMPT, /"releasing waits for your go-ahead"[\s\S]*?needs\.type "none"[\s\S]*?"watching"/)
+})
+
 test("a transcript Claude creates a moment after the turn's status is found on a retry, without a warning", async () => {
   const { turnSummarizer } = await import('./summarize.ts')
   const runs: string[] = []

@@ -48,6 +48,7 @@ Rules:
 - Be concrete in "since": name PRs, tests, numbers. No filler, no "the agent".
 - "since" is what changed in the latest turn only.
 - "needs": what the agent is waiting on from the user right now. "none" if the turn ended with work finished and nothing asked, and "none" when it is waiting on something else: workers it started, a background job, a long-running command, CI. Only a question or decision for the user counts. "approval" = yes/no on something prepared; "decision" = choose between options; "review" = look at a diff/PR/result; "info" = a fact only the user has. Ask ONE question in at most 25 words; if the agent asked several, ask the most important and say "(+2 more)". Options are 1-5 word labels like "Merge", "Keep both", "Ask each time", never sentences.
+- An ask needs a question the user can answer RIGHT NOW. A heads-up about a later step is not one: "releasing waits for your go-ahead", "I'll ask you once the PR is up", "merging needs your OK later" while the work it depends on is still running or not yet there means needs.type "none" and glance "", with what it waits on first in "watching". Never turn such a statement into a question.
 - "effort": "quick" if the user can answer in under a minute.
 - "priority" guess: P0 now = blocking production, a customer or a release; P1 today = critical path of current focus; P2 soon = matters but can wait a day; P3 someday = exploration. When unsure pick the lower level.
 Write in English even if the conversation is in another language.`
