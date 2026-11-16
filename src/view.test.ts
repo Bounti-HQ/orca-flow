@@ -1,7 +1,7 @@
 // The panel's HTML from a snapshot, checked in Node.
 import { assert, test } from 'orca/testing'
 import type { AgentInfo, AgentSummary, Snapshot, WorkspaceRow } from './protocol.ts'
-import { askKindOf, character, emptyUi, faceOf, finishedAgents, freeLooks, gaugesOf, prBadge, render } from './view.ts'
+import { askKindOf, character, emptyUi, faceOf, finishedAgents, freeLooks, gaugesOf, prBadge, render, updateButton } from './view.ts'
 import type { CockpitStats } from './protocol.ts'
 import { pressGate } from './panel/press.ts'
 
@@ -499,4 +499,27 @@ test('every asking face in the tree has an Up next entry, a coordinator asking y
   const ui = emptyUi()
   ui.opened.add('p-home')
   assert.match(render(s, ui).main, /<button class="jump" data-coordinator="alpha">Jump to session<\/button>/, 'opens it the way its row does')
+})
+
+test('update button: hidden with nothing to update, then what the update needs or how it went', () => {
+  assert.equal(updateButton(undefined), '', 'an older worker sends no update state')
+  assert.equal(updateButton({ kind: 'none' }), '')
+
+  const available = updateButton({ kind: 'available', version: '0.2.16' })
+  assert.match(available, /^<button class="icon update available" data-update="available" data-tip="Update Orca Flow to 0\.2\.16" data-tone="ask"/)
+  assert.match(available, /<svg[\s\S]*<\/svg><span class="dot"><\/span>/, 'a download arrow with an accent dot')
+  assert.equal(updateButton({ kind: 'confirm', version: '0.2.16' }), available, "the status bar's pending second click still reads as available here")
+
+  const updating = updateButton({ kind: 'updating', version: '0.2.16' })
+  assert.match(updating, /data-update="updating" data-tip="Updating Orca Flow to 0\.2\.16…"/)
+  assert.match(updating, /<span class="refreshing"><\/span>/, 'the panel\'s own spinner')
+
+  assert.match(updateButton({ kind: 'updated', version: '0.2.16' }), /class="icon update updated"[^>]*data-tip="Orca Flow updated to 0\.2\.16"/)
+
+  const approval = updateButton({ kind: 'approval', version: '0.2.16', reason: 'It asks for a new command.', command: 'orca plugin update cyucelen.flow --approve ap1-xyz' })
+  assert.match(approval, /data-tip="Orca Flow 0\.2\.16 needs your approval: It asks for a new command\.\nTo approve and update, run:\norca plugin update cyucelen\.flow --approve ap1-xyz" data-tone="warn"/)
+
+  const failed = updateButton({ kind: 'failed', version: '0.2.16', reason: 'Could not read <github.com>' })
+  assert.match(failed, /data-tip="Update to 0\.2\.16 failed: Could not read &lt;github\.com&gt;\nClick to try again" data-tone="danger"/, 'the reason, escaped, and a retry')
+  assert.match(failed, /class="icon update failed"/)
 })

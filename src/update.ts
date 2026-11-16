@@ -5,6 +5,9 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { UpdateState } from './protocol.ts'
+
+export type { UpdateState }
 
 export const REPO = 'https://github.com/cyucelen/orca-flow.git'
 
@@ -45,15 +48,6 @@ export function latestRelease(git = ['/usr/bin/git', '/opt/homebrew/bin/git', 'g
 
 // ---------- what the status bar item says ----------
 
-export type UpdateState =
-  | { kind: 'none' }
-  | { kind: 'available'; version: string }
-  | { kind: 'confirm'; version: string }
-  | { kind: 'updating'; version: string }
-  | { kind: 'updated'; version: string }
-  | { kind: 'approval'; version: string; command: string; reason: string }
-  | { kind: 'failed'; version: string; reason: string }
-
 /** How an update ended, as the status bar shows it. */
 export type UpdateOutcome = Extract<UpdateState, { kind: 'updated' | 'approval' | 'failed' }>
 
@@ -87,14 +81,14 @@ export function updateItem(state: UpdateState): UpdateItem {
 }
 
 /**
- * A click on the item. Available asks for a second click; a second click starts the update. An
- * approval or a failure explains itself (its text is what Orca shows for the command's result).
+ * Update now: the status bar item's second click and the panel's confirmed click. Starts only from
+ * available or failed (or the status bar's pending confirm); an approval explains itself with the
+ * command to run (its text is what Orca shows for the command's result).
  */
-export function onClick(state: UpdateState): { next: UpdateState; start: boolean; message: string } {
+export function updateNow(state: UpdateState): { next: UpdateState; start: boolean; message: string } {
   switch (state.kind) {
     case 'available':
     case 'failed':
-      return { next: { kind: 'confirm', version: state.version }, start: false, message: `Update Orca Flow to ${state.version}? Click the status bar item again to update.` }
     case 'confirm':
       return { next: { kind: 'updating', version: state.version }, start: true, message: `Updating Orca Flow to ${state.version}…` }
     case 'approval':
@@ -103,6 +97,92 @@ export function onClick(state: UpdateState): { next: UpdateState; start: boolean
       return { next: state, start: false, message: `Already updating to ${state.version}.` }
     default:
       return { next: state, start: false, message: 'Orca Flow is up to date.' }
+  }
+}
+
+/** A click on the status bar item: available asks for a second click, which updates (updateNow). */
+export function onClick(state: UpdateState): { next: UpdateState; start: boolean; message: string } {
+  if (state.kind === 'available' || state.kind === 'failed')
+    return { next: { kind: 'confirm', version: state.version }, start: false, message: `Update Orca Flow to ${state.version}? Click the status bar item again to update.` }
+  return updateNow(state)
+}
+
+export type UpdaterDeps = {
+  /** The installed plugin's key; null for a development folder, which never updates itself. */
+  key: string | null
+  /** The running version. */
+  current: string
+  /** Where the detached update leaves its result (startUpdate, readUpdateResult). */
+  dir: string
+  /** Called on every state change: the status bar item and the panel show it. */
+  show: (state: UpdateState) => void
+  /** Starts `orca plugin update` for this version (startUpdate in the worker). */
+  start: (version: string) => void
+  later: (fn: () => void, ms: number) => void
+  log: (message: string) => void
+}
+
+export const DEV_FOLDER = 'Updates apply to an installed Orca Flow, not a development folder.'
+
+/**
+ * The update's state and its actions. The status bar command (two clicks) and the panel's request
+ * (after the panel's own confirm) both start the update through apply(), one path.
+ */
+export function updater(d: UpdaterDeps) {
+  let state: UpdateState = { kind: 'none' }
+  let latest: string | null = null
+  const show = (next: UpdateState) => {
+    state = next
+    d.show(state)
+  }
+
+  // An update that fails leaves this worker running: watch for its result. One that succeeds
+  // restarts the plugin, and the new worker reads the same result at start.
+  const settle = (tries = 0): void => {
+    const result = readUpdateResult(d.dir, d.current)
+    if (result === null) return
+    if (result === 'pending') return void (tries < 100 && d.later(() => settle(tries + 1), 3000))
+    rmSync(d.dir, { recursive: true, force: true })
+    d.log(`update to ${result.version}: ${result.kind}${'reason' in result ? ` (${result.reason})` : ''}`)
+    show(result)
+    if (result.kind === 'updated') d.later(() => { if (state.kind === 'updated') show(latest ? { kind: 'available', version: latest } : { kind: 'none' }) }, 60_000)
+  }
+
+  const apply = (click: { next: UpdateState; start: boolean; message: string }): string => {
+    if (click.next !== state) show(click.next)
+    if (click.start && click.next.kind === 'updating') {
+      d.start(click.next.version)
+      d.log(`updating to ${click.next.version}`)
+      settle()
+    }
+    return click.message
+  }
+
+  return {
+    get state(): UpdateState {
+      return state
+    },
+    show,
+    settle,
+    /** The release check's answer: the newest release above the running one, or null. */
+    found(version: string | null): void {
+      latest = version
+      if (latest && (state.kind === 'none' || state.kind === 'available')) show({ kind: 'available', version: latest })
+    },
+    /** The status bar command. */
+    click(): string {
+      if (!d.key) return DEV_FOLDER
+      const click = onClick(state)
+      const next = click.next
+      if (next.kind === 'confirm') d.later(() => { if (state.kind === 'confirm') show({ kind: 'available', version: next.version }) }, 15_000)
+      return apply(click)
+    },
+    /** The panel's request, after its confirm. */
+    now(): { started: boolean; message: string } {
+      if (!d.key) return { started: false, message: DEV_FOLDER }
+      const click = updateNow(state)
+      return { started: click.start, message: apply(click) }
+    }
   }
 }
 

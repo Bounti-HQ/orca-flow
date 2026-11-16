@@ -22,7 +22,7 @@ import type { AgentInfo, AgentState, AgentSummary, Capacity, Priority, Snapshot,
 import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
 import { findTranscript, refreshStale, staleCards, summarizePane, turnSummarizer } from './summarize.ts'
 import { ensureLinks, ensureSeeds, linksFor, pluginDir, seedsFor } from './install.ts'
-import { latestRelease, newerVersion, onClick, readUpdateResult, startUpdate, updateItem, type UpdateState } from './update.ts'
+import { latestRelease, newerVersion, startUpdate, updateItem, updater, type UpdateState } from './update.ts'
 import { readFootprint, readProcs, startedGroups } from './started.ts'
 
 const ORCA_BIN = ['/Applications/Orca.app/Contents/Resources/bin/orca'].find(existsSync) ?? 'orca'
@@ -466,67 +466,47 @@ const UPDATE_DIR = join(DATA_DIR, 'update')
 const UPDATE_CHECK_MS = 4 * 60 * 60_000
 
 /**
- * The update item: hidden until a newer release exists, then "Orca Flow X available". A click asks
- * for a second click, the second starts `orca plugin update` outside this worker. When the new
- * version starts, it finds the result left behind and says how it went.
+ * The update item and the panel's update button: hidden until a newer release exists. The status
+ * bar item asks for a second click; the panel asks with its own confirm and calls sidebar.update.
+ * Both start `orca plugin update` outside this worker through one path (updater in update.ts).
+ * When the new version starts, it finds the result left behind and says how it went.
  */
-function updates(orca: OrcaWorkerApi, dir: string | null): void {
+function updates(orca: OrcaWorkerApi, dir: string | null, changed: (state: UpdateState) => void): void {
   const key = installedKey(dir)
   let current = ''
   try {
     current = JSON.parse(readFileSync(join(dir ?? '', 'orca-plugin.json'), 'utf8')).version ?? ''
   } catch {}
-  let state: UpdateState = { kind: 'none' }
-  let latest: string | null = null
-  const show = (next: UpdateState) => {
-    state = next
-    void orca.host.call('statusBar.update', updateItem(state)).catch((e: Error) => orca.log(`statusBar.update failed: ${e.message}`))
-  }
   const timers: ReturnType<typeof setTimeout>[] = []
-  const later = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms))
   disposers.push(() => timers.forEach(clearTimeout))
-  show(state)
-
-  // An update that fails leaves this worker running: watch for its result. One that succeeds
-  // restarts the plugin, and the new worker reads the same result at start.
-  const settle = (tries = 0) => {
-    const result = readUpdateResult(UPDATE_DIR, current)
-    if (result === null) return
-    if (result === 'pending') return void (tries < 100 && later(() => settle(tries + 1), 3000))
-    rmSync(UPDATE_DIR, { recursive: true, force: true })
-    orca.log(`update to ${result.version}: ${result.kind}${'reason' in result ? ` (${result.reason})` : ''}`)
-    show(result)
-    if (result.kind === 'updated') later(() => { if (state.kind === 'updated') show(latest ? { kind: 'available', version: latest } : { kind: 'none' }) }, 60_000)
-  }
-
-  orca.commands.register('flow.update', () => {
-    if (!key) return 'Updates apply to an installed Orca Flow, not a development folder.'
-    const click = onClick(state)
-    show(click.next)
-    const next = click.next
-    if (next.kind === 'confirm') later(() => { if (state.kind === 'confirm') show({ kind: 'available', version: next.version }) }, 15_000)
-    if (click.start && next.kind === 'updating') {
-      startUpdate(ORCA_BIN, key, next.version, UPDATE_DIR)
-      orca.log(`updating to ${next.version}`)
-      settle()
-    }
-    return click.message
+  const update = updater({
+    key,
+    current,
+    dir: UPDATE_DIR,
+    show: (state) => {
+      changed(state)
+      void orca.host.call('statusBar.update', updateItem(state)).catch((e: Error) => orca.log(`statusBar.update failed: ${e.message}`))
+    },
+    start: (version) => startUpdate(ORCA_BIN, key!, version, UPDATE_DIR),
+    later: (fn, ms) => void timers.push(setTimeout(fn, ms)),
+    log: (m) => orca.log(m)
   })
+  update.show({ kind: 'none' })
+
+  orca.commands.register('flow.update', () => update.click())
+  orca.panels.handle('sidebar.update', async () => update.now())
   if (!key || !current) return void orca.log(`update checks off: ${key ? 'no version in the manifest' : `not an installed copy (${dir})`}`)
-  settle()
+  update.settle()
 
   let warned = false
   const check = () => {
     latestRelease()
-      .then((versions) => {
-        latest = newerVersion(current, versions)
-        if (latest && (state.kind === 'none' || state.kind === 'available')) show({ kind: 'available', version: latest })
-      })
+      .then((versions) => update.found(newerVersion(current, versions)))
       // Offline or no git: one line, never a nag.
       .catch((e: Error) => { if (!warned) orca.log(`update check failed: ${e.message}`); warned = true })
-      .finally(() => later(check, UPDATE_CHECK_MS))
+      .finally(() => void timers.push(setTimeout(check, UPDATE_CHECK_MS)))
   }
-  later(check, 10_000)
+  timers.push(setTimeout(check, 10_000))
 }
 
 /** Things that keep the process alive; deactivate ends them so Orca (and tests) can stop it. */
@@ -541,6 +521,9 @@ export default function activate(orca: OrcaWorkerApi): void {
   disposers.push(() => timer && clearTimeout(timer))
   // Agent events arrive in bursts; one snapshot per burst is enough.
   let latest: Snapshot | null = null
+  // The panel's update button reads the update state from every snapshot it gets.
+  let updateState: UpdateState = { kind: 'none' }
+  const shared = (snap: Snapshot): Snapshot => ({ ...snap, update: updateState })
   // Once the first full snapshot is in, cards an older summarizer wrote are redone (see below).
   let staleChecked = false
   const refresh = async (): Promise<Snapshot> => {
@@ -550,9 +533,9 @@ export default function activate(orca: OrcaWorkerApi): void {
       staleChecked = true
       refreshOldSummaries(latest)
     }
-    orca.panels.post('sidebar.changed', latest)
+    orca.panels.post('sidebar.changed', shared(latest))
     void orca.host.call('statusBar.update', statusOf(latest)).catch((e: Error) => orca.log(`statusBar.update failed: ${e.message}`))
-    return latest
+    return shared(latest)
   }
   const refreshSoon = () => {
     if (timer) clearTimeout(timer)
@@ -581,7 +564,10 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
   // The status bar item keeps this worker running, so it can fill the item in right away.
   void refresh()
-  updates(orca, dir)
+  updates(orca, dir, (state) => {
+    updateState = state
+    if (latest) orca.panels.post('sidebar.changed', shared(latest))
+  })
 
   // The opened cockpit and its two actions. Each action redraws the panel afterwards.
   const run = orcaRunner(ORCA_BIN)
@@ -773,7 +759,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   orca.events.on('workspace.changed', (event) => {
     if (latest) {
       latest = withFocus(latest, event.context)
-      orca.panels.post('sidebar.changed', latest)
+      orca.panels.post('sidebar.changed', shared(latest))
     }
     refreshSoon()
   })

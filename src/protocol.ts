@@ -130,6 +130,17 @@ export type Coordinator = {
 export type LookShape = 'pentagon' | 'hex' | 'shield'
 export type Look = { color: string; shape: LookShape }
 
+/** Where an Orca Flow update stands; the status bar item and the panel's update button show it. */
+export type UpdateState =
+  | { kind: 'none' }
+  | { kind: 'available'; version: string }
+  /** The status bar item's first click, waiting for the second; the panel shows it as available. */
+  | { kind: 'confirm'; version: string }
+  | { kind: 'updating'; version: string }
+  | { kind: 'updated'; version: string }
+  | { kind: 'approval'; version: string; command: string; reason: string }
+  | { kind: 'failed'; version: string; reason: string }
+
 export type Snapshot = {
   rows: WorkspaceRow[]
   source: 'cli' | 'api'
@@ -138,6 +149,8 @@ export type Snapshot = {
   coordinators: Coordinator[]
   /** False until the worker knows which coordinator each agent works for. */
   ready?: boolean
+  /** The update the worker knows of; absent or 'none' hides the panel's update button. */
+  update?: UpdateState
 }
 
 /** What the opened cockpit shows; loaded on demand because Orca's memory report is slow. */
@@ -185,6 +198,11 @@ declare module 'orca' {
     'sidebar.coordinatorAction': { input: { key: string; action: 'look' | 'restart' | 'end' | 'delete' }; output: { ok: boolean; error?: string } }
     /** Opens a coordinator's session, starting Claude there if it is not running. */
     'sidebar.openCoordinator': { input: { key: string }; output: { ok: boolean; error?: string } }
+    /**
+     * Updates Orca Flow now, as the status bar item's second click does: only from available or
+     * failed. An update that needs approval is never approved here; the message names the command.
+     */
+    'sidebar.update': { output: { started: boolean; message: string } }
     /** Shows a workspace in Orca and, given an agent's terminal, that agent's tab in it. */
     'sidebar.open': { input: { workspaceId: string; terminal?: string }; output: { opened: boolean } }
   }

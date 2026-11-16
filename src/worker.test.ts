@@ -666,6 +666,62 @@ test('update item: hidden, available, confirm on the first click, update on the 
   assert.equal(onClick(failed).next.kind, 'confirm', 'a failed update can be tried again')
 })
 
+test('the panel and the status bar start the update through one path, only from available or failed', async () => {
+  const { updater } = await import('./update.ts')
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  type S = import('./protocol.ts').UpdateState
+  const make = (key: string | null = 'cyucelen.flow') => {
+    const started: string[] = []
+    const shown: S[] = []
+    const u = updater({ key, current: '0.2.15', dir: join(mkdtempSync(join(tmpdir(), 'upd-')), 'update'), show: (s) => shown.push(s), start: (v) => started.push(v), later: () => {}, log: () => {} })
+    return { u, started, shown }
+  }
+  const approval: S = { kind: 'approval', version: '0.2.16', reason: 'New access', command: 'orca plugin update cyucelen.flow --approve ap1-1' }
+  for (const [from, starts] of [
+    [{ kind: 'available', version: '0.2.16' }, true],
+    [{ kind: 'failed', version: '0.2.16', reason: 'offline' }, true],
+    [{ kind: 'none' }, false],
+    [{ kind: 'updating', version: '0.2.16' }, false],
+    [{ kind: 'updated', version: '0.2.16' }, false],
+    [approval, false]
+  ] as [S, boolean][]) {
+    const { u, started, shown } = make()
+    u.show(from)
+    const r = u.now()
+    assert.equal(r.started, starts, `sidebar.update from ${from.kind}`)
+    assert.deepEqual(started, starts ? ['0.2.16'] : [], `startUpdate from ${from.kind}`)
+    if (starts) assert.deepEqual(shown.at(-1), { kind: 'updating', version: '0.2.16' }, 'the panel and status bar show it updating')
+  }
+  // Approval: never started, the message names the command (without approving it here).
+  const a = make()
+  a.u.show(approval)
+  assert.match(a.u.now().message, /run: orca plugin update cyucelen\.flow --approve ap1-1/)
+
+  // The status bar keeps its two clicks, through the same start.
+  const bar = make()
+  bar.u.found('0.2.16')
+  bar.u.click()
+  assert.deepEqual(bar.started, [], 'the first click only asks')
+  bar.u.click()
+  assert.deepEqual(bar.started, ['0.2.16'])
+
+  // A development folder never updates itself, from either place.
+  const dev = make(null)
+  dev.u.show({ kind: 'available', version: '0.2.16' })
+  assert.deepEqual([dev.u.now().started, dev.started], [false, []])
+})
+
+test('the panel gets the update state in its snapshots and can ask the worker to update', async () => {
+  const worker = await mountWorker(main, { host: mockHost({ results: { 'statusBar.update': {}, 'workspace.list': { workspaces: [], truncated: false } } }) })
+  const snap = (await worker.request('sidebar.list')) as import('./protocol.ts').Snapshot
+  assert.deepEqual(snap.update, { kind: 'none' })
+  // This test runs from a development folder: the handler is there, and it updates nothing.
+  assert.deepEqual(await worker.request('sidebar.update'), { started: false, message: 'Updates apply to an installed Orca Flow, not a development folder.' })
+  await worker.deactivate()
+})
+
 test('the update runs outside the worker and leaves its result for the next one', async () => {
   const { readUpdateResult, startUpdate } = await import('./update.ts')
   const { chmodSync, mkdtempSync, writeFileSync } = await import('node:fs')

@@ -1,7 +1,7 @@
 // Wires the panel: asks the worker for snapshots, redraws with src/view.ts, handles clicks.
 // All UI state (what is open or folded) lives here; the worker only sends data.
 import type { AgentInfo, CockpitStats, Look, Priority, Snapshot, WorkspaceRow } from '../protocol.ts'
-import { busy, character, crew, emptyUi, faceOf, finishedAgents, freeLooks, render } from '../view.ts'
+import { busy, character, crew, emptyUi, faceOf, finishedAgents, freeLooks, render, updateButton } from '../view.ts'
 import { pressGate } from './press.ts'
 
 const ui = emptyUi()
@@ -14,6 +14,7 @@ const searchEl = $('search') as HTMLInputElement
 const searchBox = $('searchbox')
 const searchOpen = $('search-open')
 const copenEl = $('copen')
+const updateEl = $('update-slot')
 
 const openedAt = Date.now()
 /** How long the panel waits for the coordinator lineage before showing agents without it. */
@@ -21,6 +22,7 @@ const LINEAGE_WAIT_MS = 8000
 
 function paint(): void {
   if (!snap) return
+  updateEl.innerHTML = searchBox.hidden ? updateButton(snap.update) : ''
   // Until the worker knows who each agent works for, agents would show under You and then jump to
   // their coordinator; keep the loader instead, for a few seconds at most.
   if (snap.ready === false && Date.now() - openedAt < LINEAGE_WAIT_MS) {
@@ -64,6 +66,12 @@ document.addEventListener('click', (event) => {
   if (rm?.dataset.remove && snap) {
     const row = snap.rows.find((r) => r.id === rm.dataset.remove)
     if (row) void removeWorktree(row, rm.dataset.target ?? `agent:${row.id}`)
+    return
+  }
+  // The top bar's update button: confirm, then the worker updates (or, needing approval, the command).
+  const upd = (event.target as Element).closest<HTMLElement>('[data-update]')
+  if (upd) {
+    void updateClick()
     return
   }
   // A row's PR icon opens the PR, not the row's session.
@@ -158,11 +166,29 @@ async function runAction(key: string): Promise<void> {
   if (ui.notice?.ok) setTimeout(() => { if (ui.notice?.key === key && ui.notice.ok) { ui.notice = null; draw() } }, 2500)
 }
 
+/**
+ * The update button. A new release (or a failed try) asks first, then the worker starts the update
+ * as the status bar's second click does; the button follows the state the worker posts. An update
+ * that needs approval is never approved from here: the dialog shows the command to run.
+ */
+async function updateClick(): Promise<void> {
+  const st = snap?.update
+  if (!st) return
+  if (st.kind === 'available' || st.kind === 'confirm' || st.kind === 'failed') {
+    if (!(await confirmAction('update', `Update Orca Flow to ${st.version}?`, 'Orca Flow restarts on the new version.', 'Update', 'download', 'warn', false))) return
+    await orca.plugin.request('sidebar.update').catch(() => null)
+  } else if (st.kind === 'approval') {
+    const copy = await confirmAction('update-approval', `Orca Flow ${st.version} needs your approval`, `${st.reason}\nTo approve and update, run:\n${st.command}`, 'Copy command', 'warning', 'warn', false)
+    if (copy) await navigator.clipboard?.writeText(st.command).catch(() => {})
+  }
+}
+
 // Search is its own control: it expands inline over the cockpit row and gives it back on close.
 function setSearching(on: boolean): void {
   searchBox.hidden = !on
   cockpitEl.hidden = on
   searchOpen.hidden = on
+  updateEl.hidden = on
   if (on) { ui.cockpitOpen = false; searchEl.focus() } else { searchEl.value = ''; ui.query = '' }
   draw()
 }
@@ -185,7 +211,8 @@ function showTip(target: HTMLElement): void {
   const text = target.dataset.tip
   if (!text) return
   tipTarget = target
-  tip.textContent = text
+  // A command in the update button's tip wraps at its spaces, never at its dashes.
+  tip.textContent = 'update' in target.dataset ? text.replace(/-/g, '\u2011') : text
   tip.className = `tip on ${target.dataset.tone ?? ''}`
   const r = target.getBoundingClientRect()
   const t = tip.getBoundingClientRect()
@@ -294,7 +321,9 @@ const MI: Record<string, string> = {
   moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
   trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   shuffle: '<path d="M3 7h3c4 0 5 10 9 10h6m-3-3 3 3-3 3M3 17h3c1.5 0 2.5-1.3 3.4-3M14.6 10C15.5 8.3 16.5 7 18 7h3m-3-3 3 3-3 3"/>',
-  restart: '<path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4h4"/>'
+  restart: '<path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4h4"/>',
+  download: '<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>',
+  warning: '<path d="M12 4 21.5 20h-19Z"/><path d="M12 10v4.5M12 17.2v.1"/>'
 }
 const svgIcon = (name?: string) => (name ? `<svg class="micon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${MI[name]}</svg>` : '<span class="micon"></span>')
 

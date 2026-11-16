@@ -4,7 +4,7 @@
 // Layout (agreed in the mockup): a one-row cockpit; Up next as collapsible briefings, the first
 // open (what it is about, the ask at a glance, one button to jump); then the coordinators tree.
 // Characters carry everything: color = project, shape = role, face = state.
-import type { AgentInfo, Capacity, CockpitStats, Coordinator, LookShape, Look, Snapshot, StartedGroup, WorkspaceRow } from './protocol.ts'
+import type { AgentInfo, Capacity, CockpitStats, Coordinator, LookShape, Look, Snapshot, StartedGroup, UpdateState, WorkspaceRow } from './protocol.ts'
 import { asksYou, claimsAsk, holdsWorkstream, monitoring, needsYou, waitingQueue } from './rank.ts'
 
 export type UiState = {
@@ -347,6 +347,39 @@ function cockpit(snap: Snapshot, ui: UiState): string {
   return `<div class="cockpit" data-cockpit role="button" tabindex="0" aria-expanded="${ui.cockpitOpen}">${gauges
     .map((g) => `<span class="gauge ${g.tone}" data-tip="${esc(g.tip)}" data-tone="${g.tone}" aria-label="${esc(g.tip)}">${ICON[g.icon]}${g.loading ? '<span class="refreshing"></span>' : `<span>${esc(g.text)}</span>`}</span>`)
     .join('')}<span class="spacer"></span><span class="chev">${ICON.chev}</span></div>`
+}
+
+// ---------- update button (top bar, left of search) ----------
+
+const UPDATE_ICON = {
+  download: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v7.5M4.75 7 8 10.25 11.25 7M3 13.25h10"/></svg>',
+  check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>',
+  warning: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5 14 13H2Z"/><path d="M8 6.5v3"/><circle cx="8" cy="11.2" r=".4" fill="currentColor"/></svg>',
+  error: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path d="M8 5v3.5"/><circle cx="8" cy="10.9" r=".4" fill="currentColor"/></svg>'
+}
+
+/**
+ * The top bar's update button, just left of search; empty when there is nothing to update. A new
+ * release shows a download arrow with an accent dot; the rest say how the update went.
+ */
+export function updateButton(state: UpdateState | undefined): string {
+  if (!state || state.kind === 'none') return ''
+  const v = state.version
+  const button = (cls: string, tip: string, inner: string, tone = '') =>
+    `<button class="icon update ${cls}" data-update="${cls}" data-tip="${esc(tip)}"${tone ? ` data-tone="${tone}"` : ''} aria-label="${esc(tip.replace(/\n/g, ' '))}">${inner}</button>`
+  switch (state.kind) {
+    case 'available':
+    case 'confirm':
+      return button('available', `Update Orca Flow to ${v}`, `${UPDATE_ICON.download}<span class="dot"></span>`, 'ask')
+    case 'updating':
+      return button('updating', `Updating Orca Flow to ${v}…`, '<span class="refreshing"></span>')
+    case 'updated':
+      return button('updated', `Orca Flow updated to ${v}`, UPDATE_ICON.check)
+    case 'approval':
+      return button('approval', `Orca Flow ${v} needs your approval: ${state.reason}\nTo approve and update, run:\n${state.command}`, UPDATE_ICON.warning, 'warn')
+    case 'failed':
+      return button('failed', `Update to ${v} failed: ${state.reason}\nClick to try again`, UPDATE_ICON.error, 'danger')
+  }
 }
 
 // ---------- up next ----------
