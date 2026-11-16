@@ -20,7 +20,7 @@ import { assignCoordinators, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, 
 import { askingRows, finishedAgents, freeLooks, showable } from './view.ts'
 import type { AgentInfo, AgentState, AgentSummary, Capacity, Priority, Snapshot, WorkspaceRow, WorkstreamCard } from './protocol.ts'
 import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
-import { summarizePane, turnSummarizer } from './summarize.ts'
+import { findTranscript, refreshStale, staleCards, summarizePane, turnSummarizer } from './summarize.ts'
 import { ensureLinks, ensureSeeds, linksFor, pluginDir, seedsFor } from './install.ts'
 import { latestRelease, newerVersion, onClick, readUpdateResult, startUpdate, updateItem, type UpdateState } from './update.ts'
 import { readFootprint, readProcs, startedGroups } from './started.ts'
@@ -346,6 +346,12 @@ function claudeProjectRoots(): string[] {
 /** Every row of the last snapshot, coordinator workspaces included (the panel's rows leave them out). */
 let allRows: WorkspaceRow[] = []
 
+/** Pure: the agent panes Orca lists now, in the panel's rows and the coordinators' sessions. */
+export function livePanes(snap: Pick<Snapshot, 'rows' | 'coordinators'>): string[] {
+  const panes = [...snap.rows.flatMap((r) => r.agents.map((a) => a.paneKey)), ...(snap.coordinators ?? []).map((c) => c.session?.paneKey ?? '')]
+  return [...new Set(panes.filter(Boolean))]
+}
+
 /** A coordinator's workspace has a live session: an open terminal with an agent in it. */
 export function isLive(dir: string, rows = allRows): boolean {
   return rows.some((r) => r.path === dir && r.liveTerminals > 0 && r.agents.length > 0)
@@ -535,9 +541,15 @@ export default function activate(orca: OrcaWorkerApi): void {
   disposers.push(() => timer && clearTimeout(timer))
   // Agent events arrive in bursts; one snapshot per burst is enough.
   let latest: Snapshot | null = null
+  // Once the first full snapshot is in, cards an older summarizer wrote are redone (see below).
+  let staleChecked = false
   const refresh = async (): Promise<Snapshot> => {
     // When the coordinator lineage finishes loading, draw again with it.
     latest = await snapshot(orca, runPs, () => void refresh())
+    if (!staleChecked && latest.source === 'cli') {
+      staleChecked = true
+      refreshOldSummaries(latest)
+    }
     orca.panels.post('sidebar.changed', latest)
     void orca.host.call('statusBar.update', statusOf(latest)).catch((e: Error) => orca.log(`statusBar.update failed: ${e.message}`))
     return latest
@@ -714,7 +726,29 @@ export default function activate(orca: OrcaWorkerApi): void {
     run: (job) => summarizePane({ ...job, goal: job.worktreeId ? readStore().cards[fileKey(job.worktreeId)]?.goal : undefined }),
     log: (m) => orca.log(m)
   })
-  disposers.push(() => summarizer.dispose())
+  let disposed = false
+  disposers.push(() => {
+    disposed = true
+    summarizer.dispose()
+  })
+
+  /**
+   * A fixed prompt or role rule should show at once, not at each agent's next turn: re-summarize
+   * the live agents whose card an older summarizer wrote, in the background, through the same
+   * queue (two Haiku calls at most) with a pause between them, so a restart costs no burst.
+   */
+  function refreshOldSummaries(snap: Snapshot): void {
+    const stale = staleCards(readStore().summaries, livePanes(snap))
+    if (stale.length === 0) return
+    const jobs = stale.flatMap(({ pane, transcript, worktreeId }) => {
+      const path = transcript && existsSync(transcript) ? transcript : findTranscript(pane).path
+      if (path) return [{ pane, transcript: path, worktreeId }]
+      orca.log(`summary for ${pane} not refreshed: no transcript found`)
+      return []
+    })
+    orca.log(`refreshing ${jobs.length} summaries an older summarizer wrote`)
+    void refreshStale({ jobs, enqueue: summarizer.enqueue, stopped: () => disposed })
+  }
 
   // The summarizer and `orca-flow set` write here; a new summary should show without an event.
   try {

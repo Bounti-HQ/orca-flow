@@ -414,6 +414,73 @@ test('turns are summarized once per burst, one run per pane, newest job after a 
   s.dispose()
 })
 
+test('a card is stale when an older summarizer wrote it, and only for a pane Orca lists now', async () => {
+  const { SUMMARIZER_VERSION, staleCards } = await import('./summarize.ts')
+  const cards = {
+    'tab_old': { pane: 'tab:old', transcript: '/t/old.jsonl', worktreeId: 'w1' },
+    'tab_same': { pane: 'tab:same', transcript: '/t/same.jsonl', summarizer: SUMMARIZER_VERSION },
+    'tab_lower': { pane: 'tab:lower', summarizer: SUMMARIZER_VERSION - 1 },
+    'tab_closed': { pane: 'tab:closed', transcript: '/t/closed.jsonl' }
+  }
+  assert.deepEqual(staleCards(cards, ['tab:old', 'tab:same', 'tab:lower', 'tab:new', 'tab:old', '']), [
+    { pane: 'tab:old', transcript: '/t/old.jsonl', worktreeId: 'w1' },
+    { pane: 'tab:lower', transcript: undefined, worktreeId: undefined }
+  ], 'no field = stale, equal = fresh, a live pane with no card and a closed pane are left alone')
+  assert.deepEqual(staleCards(cards, ['tab:same'], SUMMARIZER_VERSION + 1).map((c) => c.pane), ['tab:same'], 'a bump makes current cards stale')
+})
+
+test('live panes are the rows\' agents and the coordinators\' sessions', () => {
+  const agent = (paneKey: string) => ({ paneKey }) as any
+  const panes = main.livePanes({
+    rows: [{ agents: [agent('a'), agent('b')] }, { agents: [agent('a'), agent('')] }] as any,
+    coordinators: [{ session: agent('c') }, { session: null }] as any
+  })
+  assert.deepEqual(panes, ['a', 'b', 'c'])
+})
+
+test('stale cards are re-summarized forced, through the shared queue, two at a time with a gap, failures logged and skipped', async () => {
+  const { refreshStale, turnSummarizer } = await import('./summarize.ts')
+  const logs: string[] = []
+  const started: string[] = []
+  let inFlight = 0
+  let most = 0
+  const s = turnSummarizer({
+    log: (m) => logs.push(m),
+    run: async (job) => {
+      started.push(`${job.pane}${job.force ? '!' : ''}`)
+      most = Math.max(most, ++inFlight)
+      await new Promise((r) => setTimeout(r, 5))
+      inFlight--
+      if (job.pane === 'p3') throw new Error('Haiku timed out')
+    }
+  })
+  const gaps: number[] = []
+  const jobs = ['p1', 'p2', 'p3', 'p4', 'p5'].map((pane) => ({ pane, transcript: `/t/${pane}` }))
+  // A turn finishing meanwhile shares the same two slots.
+  const turn = s.enqueue({ pane: 'p9', transcript: '/t/p9' })
+  await refreshStale({ jobs, enqueue: s.enqueue, gapMs: 1000, wait: async (ms) => void gaps.push(ms) })
+  await turn
+  assert.deepEqual([...started].sort(), ['p1!', 'p2!', 'p3!', 'p4!', 'p5!', 'p9'])
+  assert.equal(most, 2, 'never more than two Haiku calls at once')
+  assert.ok(gaps.length >= 3 && gaps.every((g) => g === 1000), 'a pause between refreshes')
+  assert.deepEqual(logs, ['summary for p3 failed: Haiku timed out'])
+  s.dispose()
+})
+
+test('a refresh stops when the worker is deactivated', async () => {
+  const { refreshStale } = await import('./summarize.ts')
+  const ran: string[] = []
+  let stopped = false
+  await refreshStale({
+    jobs: ['p1', 'p2', 'p3'].map((pane) => ({ pane, transcript: `/t/${pane}` })),
+    parallel: 1,
+    enqueue: async (job) => { ran.push(job.pane); stopped = true },
+    wait: async () => {},
+    stopped: () => stopped
+  })
+  assert.deepEqual(ran, ['p1'])
+})
+
 test('setup links the CLI, skill and coordinator CLAUDE.md, repoints old links, keeps real files', async () => {
   const { ensureLinks } = await import('./install.ts')
   const { mkdtempSync, mkdirSync, readlinkSync, symlinkSync, writeFileSync, readFileSync } = await import('node:fs')

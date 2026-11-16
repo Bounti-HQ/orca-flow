@@ -339,7 +339,7 @@ async function summarizeRun(args) {
   const card = Object.values(readCardsByWorktreeId()).find((c) => c.worktreeId === worktreeId)
   const started = Date.now()
   const result = await summarize.summarizePane({ pane, transcript, worktreeId, goal: card?.goal, force: !!args.force, dir: AGENTS })
-  console.log(`${pane}: ${result} in ${Date.now() - started}ms`)
+  console.log(`${pane}: ${result} in ${Date.now() - started}ms (summarizer v${summarize.SUMMARIZER_VERSION})`)
 }
 
 function readCardsByWorktreeId() {

@@ -20,6 +20,8 @@ export type AgentSummary = {
   priority: Priority
   role: 'lead' | 'coordinator' | 'worker' | 'solo'
   updatedAt: number
+  /** The SUMMARIZER_VERSION that wrote it; cards from before the field count as 0. */
+  summarizer?: number
 }
 
 /** What a coordinator wrote for a workstream with `orca-flow set`. */

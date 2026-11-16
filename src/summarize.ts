@@ -11,6 +11,14 @@ export const DATA_DIR = join(homedir(), '.orca-flow')
 const AGENTS = join(DATA_DIR, 'agents')
 const ORCA_DATA = join(homedir(), 'Library', 'Application Support', 'orca')
 
+/**
+ * Written into every card as `summarizer`. Bump it whenever SYSTEM_PROMPT, COORDINATOR_ASKS,
+ * SUMMARY_SCHEMA, promptFor or role detection (roleOf/digest) changes: when the plugin worker
+ * starts, it re-summarizes live agents whose card an older summarizer wrote (no field = 0), so the
+ * fix shows at once instead of at the agent's next turn.
+ */
+export const SUMMARIZER_VERSION = 1
+
 export const SUMMARY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -308,7 +316,8 @@ export function promptFor(d: Digest, previous: { title?: string; about?: string 
 
 /**
  * Summarizes one pane's latest turn into ~/.orca-flow/agents/<pane>.json. Skips a turn already
- * summarized, and keeps the newest when two finish close together. Returns what it did.
+ * summarized (unless forced), and keeps the newest when two finish close together (even when
+ * forced). Returns what it did.
  */
 export async function summarizePane(input: { pane: string; transcript: string; worktreeId?: string; goal?: string; force?: boolean; dir?: string }): Promise<'written' | 'skipped' | 'empty'> {
   const out = join(input.dir ?? AGENTS, `${fileKey(input.pane)}.json`)
@@ -317,17 +326,18 @@ export async function summarizePane(input: { pane: string; transcript: string; w
   const previous = readJson(out)
   if (!input.force && previous?.turnAt && d.turnAt && previous.turnAt >= d.turnAt) return 'skipped'
   const { summary } = await callHaiku(promptFor(d, previous, input.goal))
-  // A newer turn may have finished while Haiku ran; keep the newest.
+  // A newer turn may have finished while Haiku ran; keep the newest, even when forced.
   const latest = readJson(out)
-  if (!input.force && latest?.turnAt && d.turnAt && latest.turnAt > d.turnAt) return 'skipped'
-  writeJson(out, { pane: input.pane, worktreeId: input.worktreeId ?? '', transcript: input.transcript, turnAt: d.turnAt, updatedAt: Date.now(), role: d.role, ...summary })
+  if (latest?.turnAt && d.turnAt && latest.turnAt > d.turnAt) return 'skipped'
+  writeJson(out, { pane: input.pane, worktreeId: input.worktreeId ?? '', transcript: input.transcript, turnAt: d.turnAt, updatedAt: Date.now(), role: d.role, summarizer: SUMMARIZER_VERSION, ...summary })
   return 'written'
 }
 
 // ---------- when to summarize ----------
 
 type StatusEvent = { paneKey: string; workspaceId: string | null; state: string }
-type Job = { pane: string; transcript: string; worktreeId?: string }
+type Job = { pane: string; transcript: string; worktreeId?: string; force?: boolean }
+type Queued = Job & { waiters: (() => void)[] }
 
 /**
  * Runs the summarizer when Orca reports that an agent's turn ended (done) or it asked the user
@@ -348,8 +358,9 @@ export function turnSummarizer(opts: {
   let warned = false
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const running = new Set<string>()
-  const again = new Map<string, Job>()
-  const queue: Job[] = []
+  const again = new Map<string, Queued>()
+  const queue: Queued[] = []
+  const settle = (job: Queued) => { for (const w of job.waiters) w() }
 
   const pump = () => {
     while (running.size < (opts.parallel ?? 2)) {
@@ -357,10 +368,12 @@ export function turnSummarizer(opts: {
       if (i < 0) return
       const [job] = queue.splice(i, 1)
       running.add(job.pane)
-      opts.run(job)
+      const { waiters: _, ...plain } = job
+      opts.run(plain)
         .catch((e) => opts.log?.(`summary for ${job.pane} failed: ${(e as Error).message}`))
         .finally(() => {
           running.delete(job.pane)
+          settle(job)
           const next = again.get(job.pane)
           if (next) {
             again.delete(job.pane)
@@ -371,13 +384,19 @@ export function turnSummarizer(opts: {
     }
   }
 
-  const enqueue = (job: Job) => {
-    if (running.has(job.pane)) return void again.set(job.pane, job)
-    const i = queue.findIndex((j) => j.pane === job.pane)
-    if (i >= 0) queue[i] = job
-    else queue.push(job)
-    pump()
-  }
+  /** A newer job for the same pane replaces a waiting one; it keeps the waiters and any force. */
+  const merge = (old: Queued | undefined, job: Queued): Queued =>
+    old ? { ...job, force: job.force || old.force, waiters: [...old.waiters, ...job.waiters] } : job
+
+  const enqueue = (job: Job): Promise<void> =>
+    new Promise((resolve) => {
+      const queued: Queued = { ...job, waiters: [resolve] }
+      if (running.has(job.pane)) return void again.set(job.pane, merge(again.get(job.pane), queued))
+      const i = queue.findIndex((j) => j.pane === job.pane)
+      if (i >= 0) queue[i] = merge(queue[i], queued)
+      else queue.push(queued)
+      pump()
+    })
 
   return {
     onStatus(event: StatusEvent): void {
@@ -391,7 +410,7 @@ export function turnSummarizer(opts: {
         timers.set(pane, setTimeout(() => {
           timers.delete(pane)
           const found = find(pane)
-          if (found.path !== null) return enqueue({ pane, transcript: found.path, worktreeId: event.workspaceId ?? undefined })
+          if (found.path !== null) return void enqueue({ pane, transcript: found.path, worktreeId: event.workspaceId ?? undefined })
           if (n < retries.length) return attempt(n + 1, retries[n])
           if (warned) return
           warned = true
@@ -400,10 +419,61 @@ export function turnSummarizer(opts: {
       }
       attempt(0, opts.delayMs ?? 2000)
     },
+    /** Queues a job through the same per-pane and parallel limits; resolves once it has run (or failed, logged). */
+    enqueue,
     dispose(): void {
       for (const t of timers.values()) clearTimeout(t)
       timers.clear()
-      queue.length = 0
+      for (const job of queue.splice(0)) settle(job)
+      for (const job of again.values()) settle(job)
+      again.clear()
     }
   }
+}
+
+// ---------- refreshing cards an older summarizer wrote ----------
+
+type Card = { pane?: string; transcript?: string; worktreeId?: string; summarizer?: number }
+
+/**
+ * Pure: the cards to re-summarize, one per live agent pane whose card an older summarizer wrote
+ * (no `summarizer` field counts as 0). Only panes Orca lists now; a closed pane's card is left alone.
+ * Cards are keyed as on disk (the pane with unsafe characters replaced).
+ */
+export function staleCards(cards: Record<string, Card>, livePanes: Iterable<string>, version = SUMMARIZER_VERSION): { pane: string; transcript?: string; worktreeId?: string }[] {
+  const out: { pane: string; transcript?: string; worktreeId?: string }[] = []
+  const seen = new Set<string>()
+  for (const pane of livePanes) {
+    if (!pane || seen.has(pane)) continue
+    seen.add(pane)
+    const card = cards[fileKey(pane)]
+    if (!card || (card.summarizer ?? 0) >= version) continue
+    out.push({ pane, transcript: card.transcript || undefined, worktreeId: card.worktreeId || undefined })
+  }
+  return out
+}
+
+/**
+ * Re-summarizes stale cards without a burst: jobs go through `enqueue` (the turn summarizer's
+ * queue, so turn summaries and refreshes share its parallel limit), at most `parallel` in flight
+ * from here, each lane pausing `gapMs` before its next. A failure is logged once per pane by the
+ * queue and the rest go on. `stopped` ends it early (the worker was deactivated).
+ */
+export async function refreshStale(opts: {
+  jobs: Job[]
+  enqueue: (job: Job) => Promise<unknown>
+  parallel?: number
+  gapMs?: number
+  wait?: (ms: number) => Promise<unknown>
+  stopped?: () => boolean
+}): Promise<void> {
+  const wait = opts.wait ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)))
+  const jobs = [...opts.jobs]
+  const lane = async () => {
+    for (let job = jobs.shift(); job && !opts.stopped?.(); job = jobs.shift()) {
+      await opts.enqueue({ ...job, force: true })
+      if (jobs.length) await wait(opts.gapMs ?? 3000)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, opts.parallel ?? 2) }, lane))
 }
