@@ -112,8 +112,13 @@ export function character(color: string, shape: Shape, face: Face, size = 16, ba
   // there. Without them (the New coordinator preview, the loader) the body sits centered.
   const pad = s * 0.16
   const reaches = face === 'asks' || (badge && Boolean(badges[face]))
-  const box = reaches ? `${-pad / 2} ${-pad} ${s + pad * 1.5} ${s + pad * 1.5}` : `0 0 ${s} ${s}`
-  const svg = `<svg class="ch${face === 'idle' ? ' faded' : ''}" width="${s}" height="${s}" viewBox="${box}" aria-hidden="true">${body}${faces[face]}${hand}${badge ? (badges[face] ?? '') : ''}</svg>`
+  // The review badge is larger and reaches further to the bottom-right: grow the frame and the svg
+  // there, at the frame's own scale so the body keeps its size, and take the growth back with negative
+  // margins so the character still lays out as s by s, aligned with its neighbours.
+  const room = badge && face === 'asks' && ask === 'review' ? s * REVIEW_ROOM : 0
+  const grow = Math.round((room * s) / (s + pad * 1.5) * 100) / 100
+  const box = reaches ? `${-pad / 2} ${-pad} ${s + pad * 1.5 + room} ${s + pad * 1.5 + room}` : `0 0 ${s} ${s}`
+  const svg = `<svg class="ch${face === 'idle' ? ' faded' : ''}" width="${s + grow}" height="${s + grow}"${grow ? ` style="margin:0 -${grow}px -${grow}px 0"` : ''} viewBox="${box}" aria-hidden="true">${body}${faces[face]}${hand}${badge ? (badges[face] ?? '') : ''}</svg>`
   return svg
 }
 
@@ -143,12 +148,17 @@ export function askKindOf(a: AgentInfo): AskKind {
 const ASK_TIP: Record<AskKind, string> = { review: 'Wants a review', approval: 'Needs a yes/no', question: 'Asks a question' }
 /** Tooltip tone (src/panel/panel.css .tip.<tone>), matching the badge's color. */
 const ASK_TONE: Record<AskKind, string> = { review: 'review', approval: 'warn', question: 'ask' }
+/** How much (a share of the size) the frame grows for the larger review badge. */
+const REVIEW_ROOM = 0.12
 const ASK_BADGE: Record<AskKind, (rim: string, bx: number, by: number, br: number, s: number) => string> = {
   question: (rim, bx, by, br) =>
     `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="ask-badge"/><text x="${bx}" y="${by + br * 0.42}" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="${br * 1.3}" font-weight="800" fill="#161618">?</text>`,
-  // An eye: look at something.
-  review: (rim, bx, by, br, s) =>
-    `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="review-badge"/><path d="M${bx - br * 0.62} ${by} Q${bx} ${by - br * 0.62} ${bx + br * 0.62} ${by} Q${bx} ${by + br * 0.62} ${bx - br * 0.62} ${by} Z" fill="none" stroke="#161618" stroke-width="${s * 0.05}" stroke-linejoin="round"/><circle cx="${bx}" cy="${by}" r="${br * 0.2}" fill="#161618"/>`,
+  // A white eye: look at something. Its badge is 1.2x the others so the eye reads at 20 px; it
+  // brings its own rim, and character() gives the frame REVIEW_ROOM so the larger badge is not clipped.
+  review: (_rim, bx, by, br, s) => {
+    const R = br * 1.2, w = R * 0.78, h = R * 0.8
+    return `<circle cx="${bx}" cy="${by}" r="${R + s * 0.06}" class="rim"/><circle cx="${bx}" cy="${by}" r="${R}" class="review-badge"/><path d="M${bx - w} ${by} Q${bx} ${by - h} ${bx + w} ${by} Q${bx} ${by + h} ${bx - w} ${by} Z" fill="#fff" stroke="#161618" stroke-width="${s * 0.045}" stroke-linejoin="round"/><circle cx="${bx}" cy="${by}" r="${R * 0.3}" fill="#161618"/>`
+  },
   // A check on amber: a quick yes/no (green with a check stays "done").
   approval: (rim, bx, by, br, s) =>
     `${rim}<circle cx="${bx}" cy="${by}" r="${br}" class="approval-badge"/><path d="M${bx - br * 0.45} ${by} l${br * 0.32} ${br * 0.32} l${br * 0.6} -${br * 0.62}" fill="none" stroke="#161618" stroke-width="${s * 0.07}" stroke-linecap="round" stroke-linejoin="round"/>`

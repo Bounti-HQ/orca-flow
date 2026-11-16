@@ -493,6 +493,18 @@ test('an ask wears its kind: an eye for a review, a check on amber for a yes/no,
   assert.match(character('#fff', 'solo', 'asks', 20), /class="ask-badge"/, 'a question by default')
 })
 
+test('the review badge is a larger white eye, and only its frame grows to fit it', () => {
+  const review = character('#fff', 'lead', 'asks', 20, true, 'review')
+  assert.match(review, /class="review-badge"/)
+  assert.match(review, /r="6" class="review-badge"/, '1.2x the usual badge radius of 5')
+  assert.match(review, /fill="#fff" stroke="#161618"/, 'the eye is white, outlined')
+  assert.match(review, /width="21.94" height="21.94" style="margin:0 -1.94px -1.94px 0" viewBox="-1.6 -3.2 27.2 27.2"/, 'room for the larger badge, laid out as 20 px')
+  for (const ask of ['question', 'approval'] as const) {
+    assert.match(character('#fff', 'lead', 'asks', 20, true, ask), /width="20" height="20" viewBox="-1.6 -3.2 24.8 24.8"/, `${ask} keeps its frame`)
+  }
+  assert.match(character('#fff', 'lead', 'asks', 20, false, 'review'), /width="20" height="20"/, 'no badge, no extra room')
+})
+
 test("a coordinator's badge is the kind of the ask it shows; a review with a PR offers Open PR", () => {
   const review = summary({ glance: 'Review the PR?', needs: { type: 'review', ask: 'Review the PR?', options: [] } })
   const session = agent('p-home', 'Home', 'done', { summary: review })
