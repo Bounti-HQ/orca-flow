@@ -484,11 +484,13 @@ function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], sof
 }
 
 /**
- * A lead whose dispatch settled (worker_done, failed or abandoned), with nothing of its own still
- * running: its worktree can go. The remove flow still refuses a dirty checkout or an unmerged PR.
+ * A lead whose dispatch settled (worker_done, failed or abandoned), or whose worktree's PR merged
+ * (nothing wakes a lead to report worker_done then), with nothing of its own still running: its
+ * worktree can go. The remove flow still refuses a dirty checkout or an unmerged PR.
  */
 export const removable = ({ a, row }: Placed, all: AgentInfo[]) =>
-  a.summary?.role === 'lead' && a.dispatch === 'settled' && !row.main && faceOf(a) === 'done' && !leadsOpenWork(a, all)
+  a.summary?.role === 'lead' && (a.dispatch === 'settled' || row.pr?.state === 'merged') &&
+  !row.main && faceOf(a) === 'done' && !leadsOpenWork(a, all)
 
 /** A review of a worktree with an open PR: the PR is what to look at, one click away. */
 const reviewPr = ({ a, row }: Placed) =>
@@ -503,12 +505,12 @@ const leadsOpenWork = (a: AgentInfo, all: AgentInfo[]) => all.some((b) => b.lead
 
 /**
  * A done agent that still has work in flight is available, not finished: it is a lead that has not
- * reported worker_done, it leads agents that are still open, or it owns its worktree's open (or draft) PR, which is steered over several rounds
+ * reported worker_done and whose PR has not merged, it leads agents that are still open, or it owns its worktree's open (or draft) PR, which is steered over several rounds
  * until it merges. The owner is the agent no one else in that worktree dispatched (a lead, or a chat
  * you started); its own workers are tasks and finish as usual.
  */
 function inFlight(a: AgentInfo, row: WorkspaceRow, all: AgentInfo[]): boolean {
-  if (holdsWorkstream(a) || leadsOpenWork(a, all)) return true
+  if (holdsWorkstream(a, row.pr) || leadsOpenWork(a, all)) return true
   const prOpen = row.pr?.state === 'open' || row.pr?.state === 'draft'
   const worker = a.leadPane !== null && row.agents.some((b) => b.paneKey === a.leadPane)
   return prOpen && !worker

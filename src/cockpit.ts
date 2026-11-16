@@ -41,7 +41,7 @@ export function buildCockpit(
     started,
     // Heaviest by what each session costs in all: itself plus what it started.
     heaviest: agents.map(({ row, a }) => ref(row, a)).filter((s) => s.memMB > 0).sort((x, y) => y.memMB + startedMB(y.paneKey) - x.memMB - startedMB(x.paneKey)).slice(0, 3),
-    finished: agents.filter(({ a }) => finished(a)).map(({ row, a }) => ref(row, a)).filter((s) => s.terminal),
+    finished: agents.filter(({ row, a }) => finished(a, row.pr)).map(({ row, a }) => ref(row, a)).filter((s) => s.terminal),
     merged
   }
 }
@@ -84,7 +84,7 @@ const mergedCache = new Map<string, { at: number; result: Awaited<ReturnType<typ
 
 async function mergedWorktrees(rows: WorkspaceRow[]): Promise<CockpitStats['merged']> {
   // Only quiet worktrees: nothing working, asking or watching in them.
-  const candidates = rows.filter((r) => !r.main && r.path && r.branch && r.agents.every(finished))
+  const candidates = rows.filter((r) => !r.main && r.path && r.branch && r.agents.every((a) => finished(a, r.pr)))
   const out: CockpitStats['merged'] = []
   for (const row of candidates) {
     const cached = mergedCache.get(row.id)
@@ -136,7 +136,7 @@ export async function closeSessions(run: Run, panes: string[]): Promise<{ closed
 /** Re-checks right before removing: the worktree may have changed since the cockpit opened. */
 export async function removeWorktree(run: Run, row: WorkspaceRow | undefined, force = false): Promise<{ removed: boolean; reason?: string; dirty?: string[] }> {
   if (!row) return { removed: false, reason: 'workspace not found' }
-  if (!row.agents.every(finished)) return { removed: false, reason: 'an agent is still active' }
+  if (!row.agents.every((a) => finished(a, row.pr))) return { removed: false, reason: 'an agent is still active' }
   const check = await checkRemovable(row)
   // `force` waives uncommitted files only, after the person confirmed losing them; a PR that is
   // not merged, or anything else, still keeps the worktree.

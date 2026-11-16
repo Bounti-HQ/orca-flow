@@ -4,6 +4,7 @@ import type { AgentInfo, AgentSummary, Snapshot, WorkspaceRow } from './protocol
 import { askKindOf, character, emptyUi, faceOf, finishedAgents, freeLooks, gaugesOf, prBadge, render, updateButton } from './view.ts'
 import type { CockpitStats } from './protocol.ts'
 import { pressGate } from './panel/press.ts'
+import { removeWorktree } from './cockpit.ts'
 
 const noMatch = (text: string, re: RegExp, message?: string) => assert.ok(!re.test(text), message ?? `unexpected ${re}`)
 
@@ -441,6 +442,36 @@ test('only a lead that reported worker_done shows remove on its row; progress sh
   assert.equal(inline([lead(), agent('p-w', 'Fix', 'working', { coordinator: 'alpha', leadPane: 'p-ob' })]), false, 'not while its worker runs')
   ui.status.set('agent:p-ob', { text: 'Removing…', tone: 'pending' })
   assert.match(render(s, ui).main, /Onboarding<\/span><span class="r"><span class="rstatus pending"><span class="refreshing"><\/span>Removing…/)
+})
+
+test('a lead whose PR merged shows remove and finishes, even if it never reported worker_done', () => {
+  const pr = (state: string) => ({ number: 6239, url: 'u', state, checks: null })
+  const lead = agent('p-ob', 'Draft shifts missing from calendar', 'done', { coordinator: 'alpha', terminal: 'term-1', dispatch: 'open', summary: summary({ role: 'lead' }) })
+  const rows = (agents: AgentInfo[], over: Partial<WorkspaceRow> = {}) => [row('ob', 'mono', agents, { pr: pr('merged'), ...over })]
+  const inline = (r: WorkspaceRow[]) => /data-remove="ob"/.test(render({ ...snap, rows: r }, emptyUi()).main)
+  const finished = (r: WorkspaceRow[]) => finishedAgents(r).map((a) => a.paneKey).sort()
+
+  assert.equal(inline(rows([lead])), true, 'merged, done, nothing open: remove')
+  assert.deepEqual(finished(rows([lead])), ['p-ob'], 'and it counts as finished')
+  assert.match(render({ ...snap, rows: rows([lead]) }, emptyUi()).main, /<div class="item finished" data-menu="agent:p-ob"/)
+  for (const state of ['open', 'draft']) {
+    assert.equal(inline(rows([lead], { pr: pr(state) })), false, `${state} PR: no remove`)
+    assert.deepEqual(finished(rows([lead], { pr: pr(state) })), [], `${state} PR: the lead stays in flight`)
+  }
+  const working = agent('p-w', 'Fix', 'working', { coordinator: 'alpha', leadPane: 'p-ob' })
+  assert.equal(inline(rows([lead, working])), false, 'not while its worker runs')
+  assert.deepEqual(finished(rows([lead, working])), [], 'a lead of open work stays in flight')
+  assert.equal(inline(rows([lead], { main: true })), false, 'never the main checkout')
+  assert.equal(inline(rows([{ ...lead, state: 'working' }])), false, 'not while the lead itself works')
+  assert.equal(inline(rows([{ ...lead, dispatch: 'settled' }], { pr: null })), true, 'the settled path still works without a PR')
+  assert.equal(inline(rows([{ ...lead, dispatch: 'settled' }], { pr: pr('open') })), true, 'and with any PR')
+})
+
+test("removing a merged lead's worktree gets past the active-agent guard to the checkout checks", async () => {
+  const lead = agent('p-ob', 'Draft shifts', 'done', { dispatch: 'open', summary: summary({ role: 'lead' }) })
+  const at = (state: string) => row('ob', 'mono', [lead], { path: '/nonexistent/orca-flow-test', pr: { number: 6239, url: 'u', state, checks: null } })
+  assert.deepEqual(await removeWorktree(async () => ({}), at('open')), { removed: false, reason: 'an agent is still active' }, 'open PR: the lead holds it')
+  assert.deepEqual(await removeWorktree(async () => ({}), at('merged')), { removed: false, reason: 'not a git checkout' }, 'merged: on to the checkout checks')
 })
 
 test('a redraw between pointerdown and pointerup waits until the click has run', () => {

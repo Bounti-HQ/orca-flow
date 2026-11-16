@@ -23,14 +23,17 @@ export const asksYou = (a: AgentInfo) =>
 export const monitoring = (a: AgentInfo) => a.workingMode === 'monitoring' && !asksYou(a)
 
 /**
- * A lead owns its workstream until it reports worker_done for its dispatch (it does that when the
- * user calls the workstream done or its PR merges). Until then a quiet turn ("PR open, waiting on
+ * A lead owns its workstream until the user calls it done or its PR merges. It reports worker_done
+ * for its dispatch then, but nothing wakes a lead when its PR merges, so a merged PR on its row
+ * (`pr`, when the caller knows it) releases it too. Until then a quiet turn ("PR open, waiting on
  * CI") leaves it available, never finished, and nothing offers to put it to sleep.
  */
-export const holdsWorkstream = (a: AgentInfo) => a.summary?.role === 'lead' && a.dispatch !== 'settled'
+export const holdsWorkstream = (a: AgentInfo, pr?: WorkspaceRow['pr']) =>
+  a.summary?.role === 'lead' && a.dispatch !== 'settled' && pr?.state !== 'merged'
 
-/** Done, nothing asked, not monitoring: a session that only holds memory. */
-export const finished = (a: AgentInfo) => a.state !== 'working' && !asksYou(a) && !monitoring(a) && !holdsWorkstream(a)
+/** Done, nothing asked, not monitoring: a session that only holds memory. `pr` is its row's PR, when known. */
+export const finished = (a: AgentInfo, pr?: WorkspaceRow['pr']) =>
+  a.state !== 'working' && !asksYou(a) && !monitoring(a) && !holdsWorkstream(a, pr)
 
 /** The agent that speaks for the workspace: the one asking, else the most urgent state. */
 export function leadAgent(row: WorkspaceRow): AgentInfo | undefined {
