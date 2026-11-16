@@ -441,11 +441,30 @@ const PR_ICON: Record<string, string> = {
   draft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M18 6V5"/><path d="M18 11v-1"/><path d="M6 9v12"/></svg>'
 }
 
-function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], soft: boolean, indent: boolean, ui: UiState, done = false): string {
+/**
+ * Whether an agent's row wears the current border: its pane is in front in the focused workspace,
+ * so its lead, its workers and other agents in that worktree are not. When Orca told only which
+ * workspace is focused (focused is null), the worktree's lead stands for it.
+ */
+export function isCurrent(a: AgentInfo, row: WorkspaceRow, focused: string[] | null | undefined): boolean {
+  if (!row.active) return false
+  if (focused) return focused.includes(a.paneKey)
+  return worktreeLead(row)?.paneKey === a.paneKey
+}
+
+/** The agent no other agent in its worktree dispatched (the first, when several were started by hand). */
+export const worktreeLead = (row: WorkspaceRow): AgentInfo | undefined =>
+  row.agents.find((a) => ![a.leadPane, a.parentPane].some((p) => p && row.agents.some((b) => b.paneKey === p)))
+
+/** A coordinator's row is current when its own session's tab is in front (or, focus known only by workspace, its folder is focused). */
+const coordinatorCurrent = (c: Coordinator, focused: string[] | null | undefined) =>
+  Boolean(c.active) && (focused ? !!c.session && focused.includes(c.session.paneKey) : true)
+
+function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], soft: boolean, indent: boolean, ui: UiState, done = false, current = false): string {
   const status = rowStatus(ui, `agent:${p.a.paneKey}`)
   const right = status ?? `${soft ? `<span class="soft">${esc(p.row.repo)}</span>` : ''}${prBadge(p.row.pr)}<span>${ago(p.row.lastActivityAt, ui.now)}</span>`
-  const cls = `item${indent ? ' indent' : ''}${done ? ' finished' : ''}${p.row.active ? ' current' : ''}`
-  const menu = `data-menu="agent:${esc(p.a.paneKey)}"${p.row.active ? ' aria-current="true"' : ''}`
+  const cls = `item${indent ? ' indent' : ''}${done ? ' finished' : ''}${current ? ' current' : ''}`
+  const menu = `data-menu="agent:${esc(p.a.paneKey)}"${current ? ' aria-current="true"' : ''}`
   // A lead that reported worker_done leaves its worktree ready for cleanup: offer remove on the row.
   // A button cannot hold a button, so this row is a div whose name opens the session.
   if (removable(p, all) && !status) {
@@ -498,7 +517,7 @@ const finishedOf = (placed: Placed[]) => {
 /** Rows keep the order their workstreams started in; agent activity never moves them. */
 const byStart = (x: Placed, y: Placed) => x.row.createdAt - y.row.createdAt || x.a.paneKey.localeCompare(y.a.paneKey)
 
-function coordinatorBlock(c: Coordinator & { you?: boolean }, mine: Placed[], all: AgentInfo[], coordinators: Coordinator[], ui: UiState): string {
+function coordinatorBlock(c: Coordinator & { you?: boolean }, mine: Placed[], all: AgentInfo[], coordinators: Coordinator[], ui: UiState, focused?: string[] | null): string {
   // You only shows when you have chats; a coordinator always shows, so you can open it.
   if (c.you && mine.length === 0) return ''
   mine = [...mine].sort(byStart)
@@ -518,15 +537,17 @@ function coordinatorBlock(c: Coordinator & { you?: boolean }, mine: Placed[], al
   const panes = new Set(mine.map((p) => p.a.paneKey))
   const roots = mine.filter((p) => !p.a.leadPane || !panes.has(p.a.leadPane))
   const done = (p: Placed) => faceOf(p.a) === 'done' && !inFlight(p.a, p.row, all)
+  const line = (p: Placed, indent: boolean) => agentLine(p, all, coordinators, !single, indent, ui, done(p), isCurrent(p.a, p.row, focused))
   const body = roots
-    .map((p) => agentLine(p, all, coordinators, !single, false, ui, done(p)) + mine.filter((w) => w.a.leadPane === p.a.paneKey).map((w) => agentLine(w, all, coordinators, !single, true, ui, done(w))).join(''))
+    .map((p) => line(p, false) + mine.filter((w) => w.a.leadPane === p.a.paneKey).map((w) => line(w, true)).join(''))
     .join('')
+  const current = !c.you && coordinatorCurrent(c, focused)
   const folded = ui.folded.has(c.key)
   const head = `${tipped(character(color, shape, face, 28, true, ask), tip, face === 'asks' ? ASK_TONE[ask] : '')}<span class="grow"><span class="name">${esc(c.name)}</span><span class="sub">${esc(sub)}</span></span><span class="r">${rowStatus(ui, `coordinator:${c.key}`) ?? ''}</span>`
   // A coordinator's row opens its session; the chevron folds its team. You only folds.
   const row = c.you
     ? `<button class="item coord" data-fold="${esc(c.key)}" aria-expanded="${!folded}">${head}</button>`
-    : `<div class="item coord${c.active ? ' current' : ''}" data-menu="coordinator:${esc(c.key)}"${c.active ? ' aria-current="true"' : ''}><button class="coord-open" data-coordinator="${esc(c.key)}" aria-label="Open ${esc(c.name)}">${head}</button>${mine.length ? `<button class="coord-fold" data-fold="${esc(c.key)}" aria-expanded="${!folded}" aria-label="Fold ${esc(c.name)}">${ICON.chev}</button>` : ''}</div>`
+    : `<div class="item coord${current ? ' current' : ''}" data-menu="coordinator:${esc(c.key)}"${current ? ' aria-current="true"' : ''}><button class="coord-open" data-coordinator="${esc(c.key)}" aria-label="Open ${esc(c.name)}">${head}</button>${mine.length ? `<button class="coord-fold" data-fold="${esc(c.key)}" aria-expanded="${!folded}" aria-label="Fold ${esc(c.name)}">${ICON.chev}</button>` : ''}</div>`
   return `<section class="coordinator">${row}${folded || !body ? '' : `<div class="group">${body}</div>`}</section>`
 }
 
@@ -571,7 +592,7 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
   const sleeping = snap.coordinators.filter((c) => !awake(c))
   const you = { key: 'you', name: 'You', repos: [], workspaceId: null, you: true }
   // Sleeping coordinators use the same full row; they only come after the active ones.
-  const tree = [...active, you, ...sleeping].map((c) => coordinatorBlock(c, teamOf(c.key), all, snap.coordinators, ui)).join('')
+  const tree = [...active, you, ...sleeping].map((c) => coordinatorBlock(c, teamOf(c.key), all, snap.coordinators, ui, snap.focusedPanes)).join('')
 
   const idle = idleRows.map((r) => `<button class="item" data-open="${esc(r.id)}">${tipped(character(colorOf(r.repo), 'solo', 'idle', 20), 'Idle')}<span class="t muted">${esc(r.name)}</span><span class="r soft">${esc(r.repo)}</span></button>`)
 

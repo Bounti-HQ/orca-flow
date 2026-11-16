@@ -432,6 +432,41 @@ export function withFocus(snap: Snapshot, context: { branch: string; displayName
   }
 }
 
+/** A pane tree inside one tab, and tab groups split side by side, as `orca terminal list --include-visual-layouts` gives them. */
+type LayoutPane = { type?: string; tabId?: string; leafId?: string; first?: LayoutPane; second?: LayoutPane }
+type LayoutNode = { type?: string; activeTabId?: string | null; tabs?: { tabId?: string; activeLeafId?: string | null; panes?: LayoutPane }[]; first?: LayoutNode; second?: LayoutNode }
+export type VisualLayout = { worktreeId?: string; root?: LayoutNode }
+
+/**
+ * Pure: the pane in front in each tab group: the group's active tab, and that tab's active pane, as
+ * `<tabId>:<leafId>` (the agents' paneKey). No Orca event or host call names the focused tab, and
+ * Orca does not say which of several side-by-side groups has focus, so each group's front pane counts.
+ */
+export function focusedPanes(layouts: VisualLayout[] | undefined): string[] {
+  const leaves = (p?: LayoutPane): LayoutPane[] =>
+    !p ? [] : p.type === 'pane-split' ? [...leaves(p.first), ...leaves(p.second)] : p.type === 'terminal' ? [p] : []
+  const front = (n?: LayoutNode): string[] => {
+    if (!n) return []
+    if (n.type === 'split') return [...front(n.first), ...front(n.second)]
+    const tab = n.tabs?.find((t) => t.tabId === n.activeTabId)
+    const pane = leaves(tab?.panes).find((l) => l.leafId === tab?.activeLeafId)
+    return pane?.tabId && pane.leafId ? [`${pane.tabId}:${pane.leafId}`] : []
+  }
+  return (layouts ?? []).flatMap((l) => front(l.root))
+}
+
+/** The focused workspace's front panes, or null when Orca could not say (then only its lead is marked). */
+export async function readFocus(run: (args: string[], options?: { timeoutMs?: number }) => Promise<any>): Promise<string[] | null> {
+  try {
+    const listed = await run(['terminal', 'list', '--worktree', 'active', '--include-visual-layouts'], { timeoutMs: 5000 })
+    return focusedPanes(listed?.visualLayouts)
+  } catch {
+    return null
+  }
+}
+
+const samePanes = (a: string[] | null, b: string[] | null) => (a === null || b === null ? a === b : a.length === b.length && a.every((p) => b.includes(p)))
+
 const LEVEL_WORD: Record<Priority, string> = { P0: 'now', P1: 'today', P2: 'soon', P3: 'someday' }
 
 /** The status bar item: how much is waiting, how urgent the top is, and whether there is room. */
@@ -523,12 +558,17 @@ export default function activate(orca: OrcaWorkerApi): void {
   let latest: Snapshot | null = null
   // The panel's update button reads the update state from every snapshot it gets.
   let updateState: UpdateState = { kind: 'none' }
-  const shared = (snap: Snapshot): Snapshot => ({ ...snap, update: updateState })
+  // The panes in front in the focused workspace; only their agents wear the current border.
+  let focus: string[] | null = null
+  const shared = (snap: Snapshot): Snapshot => ({ ...snap, update: updateState, focusedPanes: focus })
+  const run = orcaRunner(ORCA_BIN)
   // Once the first full snapshot is in, cards an older summarizer wrote are redone (see below).
   let staleChecked = false
   const refresh = async (): Promise<Snapshot> => {
     // When the coordinator lineage finishes loading, draw again with it.
-    latest = await snapshot(orca, runPs, () => void refresh())
+    const [snap, front] = await Promise.all([snapshot(orca, runPs, () => void refresh()), readFocus(run)])
+    latest = snap
+    focus = front
     if (!staleChecked && latest.source === 'cli') {
       staleChecked = true
       refreshOldSummaries(latest)
@@ -569,8 +609,21 @@ export default function activate(orca: OrcaWorkerApi): void {
     if (latest) orca.panels.post('sidebar.changed', shared(latest))
   })
 
+  // No Orca event reports a tab switch inside a workspace, so the panel asks every few seconds while
+  // it is visible; the border moves only when the front pane changed.
+  let focusReading: Promise<{ changed: boolean }> | null = null
+  const rereadFocus = () =>
+    (focusReading ??= readFocus(run)
+      .then((front) => {
+        if (samePanes(front, focus)) return { changed: false }
+        focus = front
+        if (latest) orca.panels.post('sidebar.changed', shared(latest))
+        return { changed: true }
+      })
+      .finally(() => (focusReading = null)))
+  orca.panels.handle('sidebar.focus', () => rereadFocus())
+
   // The opened cockpit and its two actions. Each action redraws the panel afterwards.
-  const run = orcaRunner(ORCA_BIN)
   orca.panels.handle('sidebar.cockpit', async () => {
     const stats = await loadCockpit(run, (latest ?? (await refresh())).rows)
     // The top bar and the opened details read the same Orca report, so they show the same numbers.
@@ -755,12 +808,15 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
   orca.events.on('workspace.created', refreshSoon)
   orca.events.on('workspace.removed', refreshSoon)
-  // Focus moved to another workspace: move the border at once, then refresh the rest.
+  // Focus moved to another workspace: move the border at once, read which tab is in front there,
+  // then refresh the rest.
   orca.events.on('workspace.changed', (event) => {
     if (latest) {
       latest = withFocus(latest, event.context)
       orca.panels.post('sidebar.changed', shared(latest))
     }
+    // A read already in flight may predate the switch; read again after it.
+    void (focusReading ?? Promise.resolve()).then(rereadFocus)
     refreshSoon()
   })
 }

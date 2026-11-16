@@ -619,6 +619,37 @@ test('focus moves at once from the workspace.changed event, by terminal or by na
   assert.deepEqual([coordinator.rows.some((r) => r.active), coordinator.coordinators[0].active], [false, true])
 })
 
+test('the focused tab: each tab group\'s front tab and that tab\'s front pane, as a paneKey', async () => {
+  const term = (tabId: string, leafId: string) => ({ type: 'terminal', handle: `term-${leafId}`, tabId, leafId, title: leafId, connected: true, active: false })
+  // Two tab groups side by side; the left one's front tab is split in two panes.
+  const layouts = [{
+    worktreeId: 'repo::/w/isola',
+    root: {
+      type: 'split', direction: 'horizontal',
+      first: {
+        type: 'group', groupId: 'g1', activeTabId: 'tab-b',
+        tabs: [
+          { tabId: 'tab-a', title: 'lead', activeLeafId: 'lead', panes: term('tab-a', 'lead') },
+          { tabId: 'tab-b', title: 'worker', activeLeafId: 'right', panes: { type: 'pane-split', direction: 'vertical', first: term('tab-b', 'left'), second: term('tab-b', 'right') } }
+        ]
+      },
+      second: { type: 'group', groupId: 'g2', activeTabId: 'tab-c', tabs: [{ tabId: 'tab-c', title: 'shell', activeLeafId: 'shell', panes: term('tab-c', 'shell') }] }
+    }
+  }]
+  assert.deepEqual(main.focusedPanes(layouts), ['tab-b:right', 'tab-c:shell'])
+  // One group, its front tab named: only that tab, not the workspace's other agent tabs.
+  const one = [{ root: { ...layouts[0].root.first, activeTabId: 'tab-a' } }]
+  assert.deepEqual(main.focusedPanes(one), ['tab-a:lead'])
+  assert.deepEqual(main.focusedPanes([]), [], 'no terminal shown in the focused workspace')
+  assert.deepEqual(main.focusedPanes(undefined), [])
+
+  const calls: string[][] = []
+  const front = await main.readFocus(async (args) => { calls.push(args); return { terminals: [], visualLayouts: one } })
+  assert.deepEqual(front, ['tab-a:lead'])
+  assert.deepEqual(calls, [['terminal', 'list', '--worktree', 'active', '--include-visual-layouts']])
+  assert.equal(await main.readFocus(async () => { throw new Error('selector_not_found') }), null, 'unknown: the panel falls back to the lead')
+})
+
 test('remove anyway waives uncommitted files only, after the person confirmed', async () => {
   const { removeWorktree } = await import('./cockpit.ts')
   const calls: string[][] = []

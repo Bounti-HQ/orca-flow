@@ -59,6 +59,11 @@ orca.plugin.request('sidebar.list').then((s) => ((snap = s as Snapshot), draw())
 orca.plugin.on('sidebar.changed', (s) => ((snap = s as Snapshot), draw()))
 // Relative times ("4m") stay current.
 setInterval(draw, 60_000)
+// No Orca event reports a switch between tabs of one workspace. While the panel shows, the worker
+// looks every 2 s (one quick `orca terminal list`) and posts sidebar.changed only when the front tab moved.
+const lookAtFocus = () => { if (document.visibilityState === 'visible') void orca.plugin.request('sidebar.focus').catch(() => null) }
+setInterval(lookAtFocus, 2000)
+document.addEventListener('visibilitychange', lookAtFocus)
 
 document.addEventListener('click', (event) => {
   // A finished row's remove button: the same confirm and inline progress as the menu's Remove worktree.

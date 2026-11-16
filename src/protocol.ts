@@ -123,7 +123,7 @@ export type Coordinator = {
   session?: AgentInfo | null
   /** The character it was given at creation. */
   look?: Look | null
-  /** Its workspace is the one focused in Orca. */
+  /** Its workspace is the one focused in Orca (its row is marked only when its session's tab is, see Snapshot.focusedPanes). */
   active?: boolean
 }
 
@@ -151,6 +151,13 @@ export type Snapshot = {
   ready?: boolean
   /** The update the worker knows of; absent or 'none' hides the panel's update button. */
   update?: UpdateState
+  /**
+   * The panes Orca shows in the focused workspace (`<tabId>:<leafId>`, the front tab and pane of
+   * each tab group), from `orca terminal list --include-visual-layouts`; only an agent here wears
+   * the current border. Empty: no terminal is shown there. Absent or null: Orca told only which
+   * workspace is focused, so only that worktree's lead is marked.
+   */
+  focusedPanes?: string[] | null
 }
 
 /** What the opened cockpit shows; loaded on demand because Orca's memory report is slow. */
@@ -205,6 +212,11 @@ declare module 'orca' {
     'sidebar.update': { output: { started: boolean; message: string } }
     /** Shows a workspace in Orca and, given an agent's terminal, that agent's tab in it. */
     'sidebar.open': { input: { workspaceId: string; terminal?: string }; output: { opened: boolean } }
+    /**
+     * Re-reads which tab is in front in the focused workspace (no Orca event reports a tab switch);
+     * the panel asks every few seconds while it is visible. A change is posted as sidebar.changed.
+     */
+    'sidebar.focus': { output: { changed: boolean } }
   }
   interface PluginPanelEvents {
     /** Posted to open panels when a workspace or agent status changes. */

@@ -402,6 +402,31 @@ test('the agent in the workspace focused in Orca, and a focused coordinator, get
   assert.match(main, /class="item coord current" data-menu="coordinator:alpha"/)
 })
 
+test('only the agent whose tab is in front wears the current border, not its lead or the rest of the worktree', () => {
+  // A lead and its worker share one worktree; a chat of yours runs in another.
+  const lead = agent('p-lead', 'Isola on-demand services', 'done', { terminal: 'term-lead' })
+  const worker = agent('p-work', 'pnpm dev:native runs on Metro', 'working', { leadPane: 'p-lead', parentPane: 'p-lead', terminal: 'term-work' })
+  const rows = [row('isola', 'mono', [worker, lead], { active: true }), row('other', 'mono', [agent('p-other', 'Other', 'working')])]
+  const coordinators = [{ ...snap.coordinators[0], active: false, session: agent('p-alpha', 'alpha', 'working') }]
+  const current = (s: Snapshot) => [...render(s, emptyUi()).main.matchAll(/class="item[^"]*current"[^>]*data-menu="(agent|coordinator):([^"]+)"/g)].map((m) => m[2])
+
+  assert.deepEqual(current({ ...snap, rows, coordinators, focusedPanes: ['p-work'] }), ['p-work'], 'the worker in front, not its lead')
+  assert.deepEqual(current({ ...snap, rows, coordinators, focusedPanes: ['p-lead'] }), ['p-lead'], 'the lead in front, not its worker')
+  assert.deepEqual(current({ ...snap, rows, coordinators, focusedPanes: [] }), [], 'a plain shell or editor in front: none')
+  assert.deepEqual(current({ ...snap, rows, coordinators, focusedPanes: ['p-shell'] }), [], 'a shell tab that is no agent: none')
+  assert.deepEqual(current({ ...snap, rows, coordinators, focusedPanes: ['p-other'] }), [], 'a pane of a workspace that is not focused: none')
+  assert.deepEqual(current({ ...snap, rows, coordinators, focusedPanes: null }), ['p-lead'], 'focus known by workspace only: its lead')
+  assert.deepEqual(current({ ...snap, rows, coordinators }), ['p-lead'], 'no focus read yet: its lead')
+  assert.match(render({ ...snap, rows, coordinators, focusedPanes: ['p-work'] }, emptyUi()).main, /class="item indent current"[^>]*data-menu="agent:p-work" aria-current="true"/)
+
+  // A coordinator follows the same rule: only its own session's tab in front.
+  const focusedCoord = [{ ...coordinators[0], active: true }]
+  const idle = rows.map((r) => ({ ...r, active: false }))
+  assert.deepEqual(current({ ...snap, rows: idle, coordinators: focusedCoord, focusedPanes: ['p-alpha'] }), ['alpha'])
+  assert.deepEqual(current({ ...snap, rows: idle, coordinators: focusedCoord, focusedPanes: ['p-shell'] }), [], 'a shell tab in its folder: none')
+  assert.deepEqual(current({ ...snap, rows: idle, coordinators: focusedCoord, focusedPanes: null }), ['alpha'], 'focus known by workspace only: the coordinator')
+})
+
 test('only a lead that reported worker_done shows remove on its row; progress shows in the row', () => {
   const lead = (over: Partial<AgentInfo> = {}) => agent('p-ob', 'Onboarding', 'done', { coordinator: 'alpha', terminal: 'term-1', dispatch: 'settled', summary: summary({ role: 'lead' }), ...over })
   const inline = (agents: AgentInfo[], over: Partial<WorkspaceRow> = {}) => /data-remove=/.test(render({ ...snap, rows: [row('ob', 'shop', agents, over)] }, emptyUi()).main)
