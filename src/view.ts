@@ -27,11 +27,13 @@ export type UiState = {
   /** A row's inline action status: running, done, or failed (keyed like data-menu). */
   status: Map<string, { text: string; tone: 'pending' | 'ok' | 'bad' }>
   notice: { key: string; text: string; ok: boolean } | null
+  /** The chart color each memory consumer wears, kept between refreshes (see colorSlots). */
+  colors: Map<string, number>
 }
 
 export const emptyUi = (): UiState => ({
   opened: new Set(), closed: new Set(), folded: new Set(), unfolded: new Set(), query: '', now: Date.now(),
-  cockpitOpen: false, stats: null, statsLoading: false, confirming: null, pending: null, notice: null, status: new Map()
+  cockpitOpen: false, stats: null, statsLoading: false, confirming: null, pending: null, notice: null, status: new Map(), colors: new Map()
 })
 
 // ---------- small helpers ----------
@@ -277,12 +279,15 @@ function rowStatus(ui: UiState, key: string): string | null {
   return st.tone === 'pending' ? busy(st.text) : `<span class="rstatus ${st.tone}">${esc(st.text)}</span>`
 }
 
+type ActOpts = { ask?: boolean; tip?: string; cls?: string; icon?: string; aria?: string }
+
 /** An action that asks "Yes · No" in place (unless `ask` is false), then shows its result. */
-function action(key: string, label: string, question: string, ui: UiState, ask = true): string {
+function action(key: string, label: string, question: string, ui: UiState, o: ActOpts = {}): string {
   if (ui.pending === key) return busy(key.startsWith('remove:') ? 'Removing…' : 'Sleeping…')
   if (ui.notice?.key === key) return `<span class="rstatus ${ui.notice.ok ? 'ok' : 'bad'}">${esc(ui.notice.text)}</span>`
-  if (ui.confirming === key) return `<span class="confirm">${esc(question)} <button class="yes" data-yes="${esc(key)}">Yes</button> <button class="no" data-no>No</button></span>`
-  return ask ? `<button class="act" data-act="${esc(key)}">${esc(label)}</button>` : `<button class="act" data-yes="${esc(key)}">${esc(label)}</button>`
+  if (ui.confirming === key) return `<span class="confirm"><span class="q">${esc(question)}</span> <button class="yes" data-yes="${esc(key)}">Yes</button> <button class="no" data-no>No</button></span>`
+  const attrs = `${o.ask === false ? 'data-yes' : 'data-act'}="${esc(key)}"${o.tip ? ` data-tip="${esc(o.tip)}"` : ''}${o.aria ? ` aria-label="${esc(o.aria)}"` : ''}`
+  return `<button class="act${o.cls ? ` ${o.cls}` : ''}" ${attrs}>${o.icon ?? ''}${esc(label)}</button>`
 }
 
 /** While Orca's memory report runs the first time: three characters hop in turn over a quiet line. */
@@ -296,63 +301,299 @@ function loader(): string {
   return `<div class="copen">${crew('Checking what’s running…')}</div><div class="hair"></div>`
 }
 
+/** Chart colors for the heaviest consumers (panel.css --c0..--c2): three, the most a treemap's touching tiles tell apart for every reader. */
+const SERIES = 3
+/** Consumers that may get a tile of their own; the rest fold into the sliver. */
+const TILES = 6
+/** The treemap's box: laid out at the narrowest it is drawn, 236 px (a 260 px panel less its padding),
+ *  and drawn in percentages, so a wider panel only gives labels more room. */
+const TM = { w: 236, h: 136 }
+/** How much wider than tall tiles aim to be. */
+const WIDE = 1.5
+
+/** What a consumer's tile shows; its legend pill shows the rest. */
+type Shows = { name: boolean; size: boolean; sleep: boolean }
+
+/** Text width in the panel's font, per character as measured in SF at the weights tiles use, rounded up. */
+export function textWidth(s: string, px: number): number {
+  let em = 0
+  for (const ch of s) {
+    em += /[0-9+]/.test(ch) ? 0.67 : /[.,:·]/.test(ch) ? 0.34 : ch === ' ' ? 0.27 : ch === '-' ? 0.48
+      : /[MW]/.test(ch) ? 0.92 : /[A-Z]/.test(ch) ? 0.76 : /[mw]/.test(ch) ? 0.9 : /[ijl|!']/.test(ch) ? 0.28 : /[frt()]/.test(ch) ? 0.44 : 0.62
+  }
+  return em * px + 1
+}
+
+/** A tile's label: its size in one of three type sizes, its character beside or above, its name below or after. */
+export type Fit = { value: 'md' | 'sm' | 'xs' | null; avatar: 'row' | 'stack' | null; name: 'below' | 'inline' | null; room: boolean }
+/** Type sizes with the padding around them (panel.css .tile, .fit-sm, .fit-xs). */
+const TYPE = { md: { px: 12, line: 16, side: 6, pad: 11 }, sm: { px: 10.5, line: 13, side: 4, pad: 3 }, xs: { px: 9.5, line: 12, side: 3, pad: 3 } }
+
+/**
+ * How a tile w×h px (its 2 px surface gap included) labels itself. The size is never cut: the name
+ * gives way first (shown whole, or at least its first 12 characters, never a stub), then the
+ * character, then the type gets smaller; a tile with no room for its size shows nothing. `room`
+ * says whether a 20 px button still fits above the label.
+ */
+export function fitLabel(w: number, h: number, value: string, name: string, avatar: boolean): Fit {
+  const AV = 16, NAME = 13
+  const options: { fit: Omit<Fit, 'room'>; width: number; height: number }[] = []
+  for (const kind of ['md', 'sm', 'xs'] as const) {
+    const t = TYPE[kind], v = textWidth(value, t.px)
+    const add = (av: Fit['avatar'], nm: Fit['name'], width: number, height: number) => options.push({ fit: { value: kind, avatar: av, name: nm }, width, height: height + t.pad })
+    if (kind === 'md' && name) {
+      if (avatar) add('row', 'below', AV + 4 + v, AV + 2 + NAME)
+      if (avatar) add('stack', 'below', Math.max(AV, v), AV + 3 + t.line + NAME)
+      add(null, 'below', v, t.line + NAME)
+    }
+    if (name) add(null, 'inline', v + textWidth(` · ${name}`, 10.5), t.line)
+    if (kind === 'md' && avatar) {
+      add('row', null, AV + 4 + v, AV)
+      add('stack', null, Math.max(AV, v), AV + 3 + t.line)
+    }
+    add(null, null, v, t.line)
+  }
+  for (const o of options) {
+    const cw = w - 2 - 2 * TYPE[o.fit.value!].side, spare = h - 2 - o.height
+    if (spare < 0 || o.width > cw) continue
+    if (o.fit.name === 'below' && textWidth(name, 10.5) > cw && textWidth(`${name.slice(0, 12)}…`, 10.5) > cw) continue
+    return { ...o.fit, room: o.fit.value === 'md' && spare >= 29 && cw >= 24 }
+  }
+  return { value: null, avatar: null, name: null, room: false }
+}
+
+/** What uses memory: a session with what it started, or what a sleeping agent left running. */
+type Consumer = { key: string; ch: string; name: string; mb: number; tip: string; pane: string | null }
+type Box = { x: number; y: number; w: number; h: number }
+
+const hashOf = (s: string) => [...s].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 0)
+
+/**
+ * Stable chart colors. A consumer keeps its slot while it is among the colored ones, gets it back when
+ * it returns if the slot is free, and a new one starts from a slot picked by its key. `memo` lives in
+ * the UI state, so colors never jump when the order changes between refreshes.
+ */
+export function colorSlots(keys: string[], memo: Map<string, number>, n = SERIES): Map<string, number> {
+  const out = new Map<string, number>()
+  const taken = new Set<number>()
+  for (const k of keys) {
+    const s = memo.get(k)
+    if (s !== undefined && s < n && !taken.has(s)) { out.set(k, s); taken.add(s) }
+  }
+  for (const k of keys) {
+    if (out.has(k)) continue
+    const s = Array.from({ length: n }, (_, i) => (hashOf(k) + i) % n).find((slot) => !taken.has(slot))
+    if (s === undefined) break
+    out.set(k, s)
+    taken.add(s)
+  }
+  for (const [k, s] of out) { memo.delete(k); memo.set(k, s) }
+  for (const k of [...memo.keys()].slice(0, Math.max(0, memo.size - 64))) memo.delete(k)
+  return out
+}
+
+/** Squarified treemap: the values (largest first) as boxes filling `box`, each as square as it can be. */
+export function squarify(values: number[], box: Box): Box[] {
+  const total = values.reduce((a, v) => a + v, 0)
+  if (total <= 0) return values.map(() => ({ ...box, w: 0, h: 0 }))
+  const scale = (box.w * box.h) / total
+  const worst = (row: number[], side: number) => {
+    const s = row.reduce((a, v) => a + v, 0) * scale
+    return Math.max(...row.map((v) => Math.max((side * side * v * scale) / (s * s), (s * s) / (side * side * v * scale))))
+  }
+  const out: Box[] = []
+  let b = { ...box }
+  for (let i = 0; i < values.length;) {
+    const side = Math.min(b.w, b.h)
+    const row = [values[i]]
+    while (i + row.length < values.length && worst([...row, values[i + row.length]], side) <= worst(row, side)) row.push(values[i + row.length])
+    const area = row.reduce((a, v) => a + v, 0) * scale
+    if (b.w >= b.h) {
+      const w = area / b.h
+      let y = b.y
+      for (const v of row) { const h = (v * scale) / w; out.push({ x: b.x, y, w, h }); y += h }
+      b = { x: b.x + w, y: b.y, w: b.w - w, h: b.h }
+    } else {
+      const h = area / b.w
+      let x = b.x
+      for (const v of row) { const w = (v * scale) / h; out.push({ x, y: b.y, w, h }); x += w }
+      b = { x: b.x, y: b.y + h, w: b.w, h: b.h - h }
+    }
+    i += row.length
+  }
+  return out
+}
+
+const MOON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.4 5.4 0 0 1 6.4 2.8a5.4 5.4 0 1 0 6.8 6.8Z"/></svg>'
+const TRASH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5M4.25 4.25l.6 8.4a1 1 0 0 0 1 .85h4.3a1 1 0 0 0 1-.85l.6-8.4M6.75 7v4M9.25 7v4"/></svg>'
+
+/** A tile's place in the treemap, in percentages with a 2 px surface gap, so it fits any panel width. */
+const place = (b: Box) => {
+  const pct = (v: number, of: number) => Math.round((v / of) * 10000) / 100
+  return `left:calc(${pct(b.x, TM.w)}% + 1px);top:calc(${pct(b.y, TM.h)}% + 1px);width:calc(${pct(b.w, TM.w)}% - 2px);height:calc(${pct(b.h, TM.h)}% - 2px)`
+}
+
+/**
+ * All of RAM as tiles: each consumer sized by its memory, the ones too small to label folded into one
+ * sliver, everything else, and free. Says what each consumer's tile shows (its name, its size, its
+ * sleep button) and which color it wears; its legend pill carries whatever the tile cannot.
+ */
+function treemap(cs: Consumer[], ram: { usedGB: number; totalGB: number }, ui: UiState): { html: string; slots: Map<string, number>; shows: Map<string, Shows>; folded: Set<string> } {
+  const totalMb = ram.totalGB * 1024
+  const usedMb = Math.min(ram.usedGB * 1024, totalMb)
+  const usedW = totalMb > 0 ? (TM.w * usedMb) / totalMb : 0
+  // Footprints can count swapped memory, so together they may exceed what RAM reports as used.
+  const allMb = cs.reduce((n, c) => n + c.mb, 0)
+  const scale = allMb > usedMb ? usedMb / allMb : 1
+  const restMb = Math.max(0, usedMb - allMb * scale)
+  type Part = { kind: 'own'; c: Consumer; mb: number } | { kind: 'sliver' | 'rest'; mb: number }
+  // The parts largest first, as squarify wants them. A sliver is drawn at least 2% of what is used, so
+  // it stays visible; the rest gives that room.
+  const layout = (own: Consumer[], folded: Consumer[]) => {
+    const foldedMb = folded.reduce((n, c) => n + c.mb, 0) * scale
+    const sliver = folded.length ? Math.max(foldedMb, usedMb * 0.02) : 0
+    const rest = Math.max(0, restMb - (sliver - foldedMb))
+    const parts: Part[] = [...own.map((c) => ({ kind: 'own' as const, c, mb: c.mb * scale })), ...(folded.length ? [{ kind: 'sliver' as const, mb: sliver }] : []), ...(rest >= 1 ? [{ kind: 'rest' as const, mb: rest }] : [])]
+      .sort((x, y) => y.mb - x.mb)
+    // Laid out squarified in a box squeezed by WIDE, then stretched back: tiles come out wider than
+    // tall, which is the shape a one-line label needs.
+    const boxes = squarify(parts.map((p) => p.mb), { x: 0, y: 0, w: usedW / WIDE, h: TM.h })
+    return parts.map((p, i) => ({ ...p, b: { x: boxes[i].x * WIDE, y: boxes[i].y, w: boxes[i].w * WIDE, h: boxes[i].h } }))
+  }
+  // A consumer whose tile cannot show even its size folds into the sliver; repeat until the rest fit.
+  let own = cs.slice(0, TILES)
+  let folded = cs.slice(TILES)
+  let laid = layout(own, folded)
+  for (;;) {
+    const failing = laid.flatMap((p) => (p.kind === 'own' && !fitLabel(p.b.w, p.b.h, size(p.c.mb), p.c.name, true).value ? [p.c] : []))
+    if (!failing.length) break
+    own = own.filter((c) => !failing.includes(c))
+    folded = [...failing, ...folded].sort((x, y) => y.mb - x.mb)
+    laid = layout(own, folded)
+  }
+  const slots = colorSlots(own.slice(0, SERIES).map((c) => c.key), ui.colors)
+  const shows = new Map<string, Shows>()
+  const label = (fit: Fit, value: string, name: string, ch = '') => {
+    if (!fit.value) return ''
+    const v = `<span class="t-v">${value}</span>`
+    if (fit.name === 'inline') return `<span class="t-line">${v}<span class="t-n">· ${esc(name)}</span></span>`
+    const n = fit.name === 'below' ? `<span class="t-n">${esc(name)}</span>` : ''
+    return fit.avatar === 'row' ? `<span class="t-row">${ch}${v}</span>${n}` : fit.avatar === 'stack' ? `<span class="t-av">${ch}</span>${v}${n}` : `${v}${n}`
+  }
+  const fitClass = (fit: Fit) => (fit.value === 'md' ? '' : fit.value ? ` fit-${fit.value}` : ' bare')
+  const foldedMb = folded.reduce((n, c) => n + c.mb, 0)
+  const free = +(ram.totalGB - ram.usedGB).toFixed(1)
+  const tiles = laid.map((p) => {
+    if (p.kind === 'own') {
+      const c = p.c
+      const fit = fitLabel(p.b.w, p.b.h, size(c.mb), c.name, true)
+      // A session sleeps from its tile when the tile shows its name and has room above it, else from its pill.
+      const sleep = Boolean(c.pane && fit.name && fit.room)
+      shows.set(c.key, { name: Boolean(fit.name), size: true, sleep })
+      const slot = slots.get(c.key)
+      const act = sleep ? `<span class="t-act">${action(`close:${c.pane}`, '', '', ui, { ask: false, icon: MOON, cls: 't-sleep', aria: `Sleep ${c.name}`, tip: 'Sleep' })}</span>` : ''
+      return `<div class="tile ${slot === undefined ? 'plain' : `c${slot}`}${fitClass(fit)}" style="${place(p.b)}" data-use="${esc(c.key)}" data-tip="${esc(c.tip)}">${act}${label(fit, size(c.mb), c.name, c.ch)}</div>`
+    }
+    if (p.kind === 'sliver') {
+      const fit = fitLabel(p.b.w, p.b.h, size(foldedMb), `${folded.length} small`, false)
+      const tip = `${folded.length} small · ${size(foldedMb)}\n${folded.map((c) => `${c.name}: ${size(c.mb)}`).join('\n')}`
+      return `<div class="tile plain folded${fitClass(fit)}" style="${place(p.b)}" data-use="small" data-tip="${esc(tip)}">${label(fit, size(foldedMb), `${folded.length} small`)}</div>`
+    }
+    const fit = fitLabel(p.b.w, p.b.h, size(Math.round(restMb)), 'other', false)
+    return `<div class="tile rest${fitClass(fit)}" style="${place(p.b)}" data-tip="${esc(`Everything else · ${size(Math.round(restMb))}\nOther apps and sessions`)}">${label(fit, size(Math.round(restMb)), 'other')}</div>`
+  })
+  if (TM.w - usedW >= 1) {
+    const b = { x: usedW, y: 0, w: TM.w - usedW, h: TM.h }
+    const fit = fitLabel(b.w, b.h, `${free} GB`, 'free', false)
+    tiles.push(`<div class="tile free${fitClass(fit)}" style="${place(b)}" data-tip="${free} GB free of ${ram.totalGB} GB">${label(fit, `${free} GB`, 'free')}</div>`)
+  }
+  return { slots, shows, folded: new Set(folded.map((c) => c.key)), html: `<div class="tm" style="height:${TM.h}px" role="img" aria-label="${esc(`RAM: ${ram.usedGB} of ${ram.totalGB} GB used, ${free} GB free`)}">${tiles.join('')}</div>` }
+}
+
+/** A small round gauge in a chip: swap used of total, warning when nearly full. */
+function swapChip(swap: { usedGB: number; totalGB: number }): string {
+  const r = 5.25, c = 2 * Math.PI * r
+  const warn = swap.usedGB / swap.totalGB >= 0.85
+  const arc = Math.min(1, swap.usedGB / swap.totalGB) * c
+  return `<span class="chip${warn ? ' warn' : ''}" data-tip="Swap: ${swap.usedGB} of ${swap.totalGB} GB used"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="${r}" class="g-track"/><circle cx="7" cy="7" r="${r}" class="g-arc" stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 7 7)"/></svg>Swap ${swap.usedGB} / ${swap.totalGB} GB</span>`
+}
+
+/** Overlapping characters, at most `max`, then how many more. */
+function avatarStack(placed: Placed[], all: AgentInfo[], max = 6): string {
+  const faces = placed.slice(0, max).map((p) => `<span class="sav">${character(colorOf(p.row.repo), shapeOf(p.a, all), faceOf(p.a), 14, false)}</span>`).join('')
+  return `<span class="stack">${faces}${placed.length > max ? `<span class="sav more">+${placed.length - max}</span>` : ''}</span>`
+}
+
 function cockpitOpen(snap: Snapshot, ui: UiState): string {
   if (!ui.stats && ui.notice?.key === 'load') return `<div class="copen"><div class="empty">Could not check what’s running: ${esc(ui.notice.text)}</div></div><div class="hair"></div>`
   if (!ui.stats) return loader()
   const st = ui.stats
-  const all = snap.rows.flatMap((r) => r.agents)
-  const placed = (pane: string) => snap.rows.flatMap((row) => row.agents.map((a) => ({ a, row }))).find((p) => p.a.paneKey === pane)
-  const swap = st.swap && st.swap.totalGB > 0 ? st.swap : null
-  const pct = swap ? Math.round((swap.usedGB / swap.totalGB) * 100) : 0
-  const ram = st.ram ?? null
-  const ramPct = ram ? Math.min(100, Math.round((ram.usedGB / ram.totalGB) * 100)) : 0
-  // A labelled bar: neutral until it is nearly full.
-  const meter = (label: string, pct: number, text: string) =>
-    `<div class="swap"><span class="meter-label">${label}</span><span class="bar${pct >= 85 ? ' warn' : ''}"><span style="width:${pct}%"></span></span><span class="${pct >= 85 ? 'warn' : 'muted'}">${text}</span></div>`
   const placedAll = snap.rows.flatMap((row) => row.agents.map((a) => ({ a, row })))
-  const stat = (n: number, label: string, cls = '', attrs = '') =>
-    n > 0 ? `<${attrs ? 'button' : 'div'} class="stat ${cls}"${attrs}><span class="n">${n}</span><span class="l">${label}</span></${attrs ? 'button' : 'div'}>` : ''
-  const counts = [
-    stat(all.filter((a) => faceOf(a) === 'asks').length, 'asking', 'ask'),
-    stat(all.filter((a) => faceOf(a) === 'working').length, 'working'),
-    stat(all.filter((a) => faceOf(a) === 'monitoring').length, 'monitoring'),
-    stat(finishedOf(placedAll).length, 'finished')
-  ].join('')
-  // What a session started outside itself (a dev server) sits under it; Orca does not count it.
+  const all = placedAll.map((p) => p.a)
+  const placed = (pane: string) => placedAll.find((p) => p.a.paneKey === pane)
+  // What a session started outside itself (a dev server) counts toward it; Orca does not count it.
   const startedName = (g: StartedGroup) => (g.count > 1 ? `${g.name} +${g.count - 1}` : g.name)
-  const startedLine = (g: StartedGroup, ch = '', where = '') =>
-    `<div class="item static${ch ? '' : ' started'}">${ch || '<span class="sub-mark">↳</span>'}<span class="t">${esc(startedName(g))}${where ? ` <span class="soft">${esc(where)}</span>` : ''}</span><span class="r">${size(g.memMB)}</span></div>`
   const started = st.started ?? []
-  const heavy = st.heaviest.map((h) => {
-    const p = placed(h.paneKey)
-    const ch = p ? character(colorOf(p.row.repo), shapeOf(p.a, all), faceOf(p.a), 16) : character(colorOf(h.repo), 'solo', 'done', 16)
-    return `<div class="item static">${ch}<span class="t">${esc(h.title)}</span><span class="r">${size(h.memMB)}</span>${action(`close:${h.paneKey}`, 'sleep', '', ui, false)}</div>` +
-      started.filter((g) => g.paneKey === h.paneKey).map((g) => startedLine(g)).join('')
-  }).join('')
-  // Started by an agent that is not open any more (it slept): still running, still costing memory.
   const live = new Set(all.map((a) => a.paneKey))
-  const orphans = started.filter((g) => !g.paneKey || !live.has(g.paneKey)).map((g) => startedLine(g, character(colorOf(g.repo), 'solo', 'idle', 16), g.worktreeName)).join('')
+  const consumers: Consumer[] = [
+    ...st.heaviest.map((h) => {
+      const p = placed(h.paneKey)
+      const groups = started.filter((g) => g.paneKey === h.paneKey)
+      const mb = h.memMB + groups.reduce((n, g) => n + g.memMB, 0)
+            return {
+        key: `pane:${h.paneKey}`, ch: p ? character(colorOf(p.row.repo), shapeOf(p.a, all), faceOf(p.a), 16) : character(colorOf(h.repo), 'solo', 'done', 16), name: h.title, mb, pane: h.paneKey,
+        tip: [`${h.title} · ${size(mb)}`, `Session: ${size(h.memMB)}`, ...groups.map((g) => `${startedName(g)}: ${size(g.memMB)}`)].join('\n')
+      }
+    }),
+    // Started by an agent that is not open any more (it slept): still running, still costing memory.
+    ...started.filter((g) => !g.paneKey || !live.has(g.paneKey)).map((g) => ({
+      key: `started:${g.key}`, ch: character(colorOf(g.repo), 'solo', 'idle', 16),
+      name: `${startedName(g)} · ${g.worktreeName}`, mb: g.memMB, pane: null,
+      tip: `${startedName(g)} · ${size(g.memMB)}\nLeft running in ${g.worktreeName}`
+    }))
+  ].sort((x, y) => y.mb - x.mb)
+  const ram = st.ram && st.ram.totalGB > 0 ? st.ram : null
+  const swap = st.swap && st.swap.totalGB > 0 ? st.swap : null
+  const map = ram ? treemap(consumers, ram, ui) : null
+  const free = ram ? +(ram.totalGB - ram.usedGB).toFixed(1) : 0
+  const head = ram || swap
+    ? `<div class="mhead">${ram ? `<span class="mused${ram.usedGB / ram.totalGB >= 0.85 ? ' warn' : ''}" data-tip="RAM: ${ram.usedGB} of ${ram.totalGB} GB used, ${free} GB free"><b>${ram.usedGB}</b> / ${ram.totalGB} GB used</span>` : '<span></span>'}${swap ? swapChip(swap) : ''}</div>`
+    : ''
+  // A pill carries what its consumer's tile cannot: the name, the size, the sleep button. Pills of the
+  // ones folded into the sliver light up with it. Without RAM figures there is no treemap, only pills.
+  const legend = consumers.map((c) => {
+    const shows = map?.shows.get(c.key) ?? { name: false, size: false, sleep: false }
+    if (shows.name && (shows.sleep || !c.pane)) return ''
+    const slot = map?.slots.get(c.key)
+    const sleep = c.pane && !shows.sleep ? action(`close:${c.pane}`, '', '', ui, { ask: false, icon: MOON, cls: 'lg-sleep', aria: `Sleep ${c.name}`, tip: 'Sleep' }) : ''
+    return `<span class="lg ${slot === undefined ? 'plain' : `c${slot}`}" data-use="${esc(c.key)}"${map?.folded.has(c.key) ? ' data-in="small"' : ''} data-tip="${esc(c.tip)}"><i class="key"></i><span class="lg-n">${esc(c.name)}</span>${shows.size ? '' : `<span class="lg-v">${size(c.mb)}</span>`}${sleep}</span>`
+  }).join('')
+  const memory = `<div class="cgroup mem"><span class="label">Memory${ui.statsLoading ? ' <span class="refreshing" aria-label="Refreshing"></span>' : ''}</span>${head}${map?.html ?? ''}${legend ? `<div class="legend">${legend}</div>` : ''}</div>`
+  // What agents are doing right now, as small crowds.
+  const doing = (['asks', 'working', 'monitoring'] as const).map((face) => {
+    const these = placedAll.filter((p) => faceOf(p.a) === face)
+    const word = { asks: 'asking', working: 'working', monitoring: 'monitoring' }[face]
+    return these.length ? `<span class="tally${face === 'asks' ? ' ask' : ''}">${avatarStack(these, all, 4)}<span><b>${these.length}</b> ${word}</span></span>` : ''
+  }).join('')
   // Sleeping every finished session is offered only when memory is tight; otherwise they cost nothing
   // you need, and each one sleeps from its own menu. The same set the footer's Sleep all used.
   const finished = finishedOf(placedAll)
-  const freedMb = finished.reduce((n, p) => n + (st.finished.find((f) => f.paneKey === p.a.paneKey)?.memMB ?? 0), 0)
-  const tight = (snap.capacity?.verdict ?? 'ok') !== 'ok'
   const n = finished.length
+  const freedMb = finished.reduce((m, p) => m + (st.finished.find((f) => f.paneKey === p.a.paneKey)?.memMB ?? 0), 0)
+  const tight = (snap.capacity?.verdict ?? 'ok') !== 'ok'
+  const sessions = n === 1 ? 'session' : 'sessions'
   const sleepAll = tight && n > 0
-    ? `<div class="closeall">${action('closeall', `${freedMb ? `Free ${size(freedMb)}: sleep` : 'Sleep'} ${n} finished ${n === 1 ? 'session' : 'sessions'}`, `Sleep ${n} ${n === 1 ? 'session' : 'sessions'}?`, ui)}</div>`
+    ? action('closeall', freedMb ? `Sleep all · ${size(freedMb)}` : 'Sleep all', `Sleep ${n} ${sessions}?`, ui, { icon: MOON, cls: 'pill', tip: `Sleep ${n} finished ${sessions}${freedMb ? ` to free ${size(freedMb)}` : ''}` })
     : ''
-  const actions = [
-    sleepAll,
-    ...st.merged.map((m) => `<div class="merged">${action(`remove:${m.workspaceId}`, `Remove ${m.name}`, `Remove ${m.name}?`, ui)}<span class="soft">PR #${m.pr} merged · clean</span></div>`)
-  ].filter(Boolean).join('')
+  const finishedRow = n ? `<div class="fin">${avatarStack(finished, all)}<span class="fin-n"><b>${n}</b> finished</span>${sleepAll}</div>` : ''
+  // A merged, clean worktree: a card with its PR, removed with the trash button after a Yes.
+  const merged = st.merged.map((m) =>
+    `<div class="wt" data-tip="${esc(`${m.name}\nPR #${m.pr} merged · clean`)}"><span class="prb pr-merged">${PR_ICON.merged}</span><span class="wt-main"><span class="wt-name">${esc(m.name)}</span><span class="wt-sub">#${m.pr} · merged · clean</span></span>${action(`remove:${m.workspaceId}`, '', 'Remove?', ui, { icon: TRASH, cls: 'ibtn danger', aria: `Remove ${m.name}`, tip: 'Remove worktree' })}</div>`
+  ).join('')
   return `<div class="copen">
-    <div class="cgroup"><span class="label">Memory${ui.statsLoading ? ' <span class="refreshing" aria-label="Refreshing"></span>' : ''}</span>
-      ${ram ? meter('RAM', ramPct, `${ram.usedGB} of ${ram.totalGB} GB used`) : ''}
-      ${swap ? meter('Swap', pct, `${swap.usedGB} of ${swap.totalGB} GB`) : ''}
-    </div>
-    ${heavy || orphans ? `<div class="cgroup"><span class="label">Heaviest</span>${heavy}${orphans}</div>` : ''}
-    ${counts ? `<div class="cgroup"><span class="label">Agents</span><div class="stats">${counts}</div></div>` : ''}
-    ${actions ? `<div class="cactions">${actions}</div>` : ''}
+    ${memory}
+    ${doing ? `<div class="cgroup"><span class="label">Agents</span><div class="tallies">${doing}</div></div>` : ''}
+    ${finishedRow || merged ? `<div class="cgroup"><span class="label">Clean up</span>${finishedRow}${merged}</div>` : ''}
   </div><div class="hair"></div>`
 }
 

@@ -1,7 +1,7 @@
 // The panel's HTML from a snapshot, checked in Node.
 import { assert, test } from 'orca/testing'
 import type { AgentInfo, AgentSummary, Snapshot, WorkspaceRow } from './protocol.ts'
-import { askingRows, askKindOf, character, emptyUi, faceOf, finishedAgents, freeLooks, gaugesOf, prBadge, render, updateButton } from './view.ts'
+import { askingRows, askKindOf, character, colorSlots, emptyUi, faceOf, fitLabel, textWidth, finishedAgents, freeLooks, gaugesOf, prBadge, render, updateButton } from './view.ts'
 import type { CockpitStats } from './protocol.ts'
 import { pressGate } from './panel/press.ts'
 import { removeWorktree } from './cockpit.ts'
@@ -140,7 +140,16 @@ test('monitoring comes from Orca: its working mode, even while its state says wo
   noMatch(main, /Up next/)
 })
 
-test('the opened cockpit: memory, heaviest, counts and actions that confirm in place', () => {
+/** What a person can read in the panel's HTML: its text, and every tooltip. */
+const readable = (html: string) =>
+  `${html.replace(/<[^>]+>/g, ' ')}\n${[...html.matchAll(/data-tip="([^"]*)"/g)].map((m) => m[1]).join('\n')}`.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+/** The treemap's tiles: their classes, consumer key, tooltip and inner HTML. */
+const tilesOf = (html: string) =>
+  [...html.matchAll(/<div class="tile ([^"]*)" style="([^"]*)"(?: data-use="([^"]*)")? data-tip="([^"]*)">([\s\S]*?)<\/div>/g)].map((m) => ({ cls: m[1], style: m[2], use: m[3] ?? '', tip: m[4], inner: m[5] }))
+/** The legend's pills by consumer key. */
+const pillsOf = (html: string) => new Map([...html.matchAll(/<span class="lg ([^"]*)" data-use="([^"]*)"( data-in="small")? data-tip="([^"]*)">/g)].map((m) => [m[2], { cls: m[1], tip: m[4], inSliver: Boolean(m[3]) }]))
+
+test('the opened cockpit: RAM as a treemap with a legend, agents, and clean up that confirms in place', () => {
   const stats: CockpitStats = {
     swap: { usedGB: 20.1, totalGB: 21 }, ram: { usedGB: 15.1, totalGB: 16 },
     started: [
@@ -158,24 +167,190 @@ test('the opened cockpit: memory, heaviest, counts and actions that confirm in p
   assert.match(render(snap, ui).copen, /class="copen"><div class="loader" aria-busy="true"[\s\S]*class="hop"[\s\S]*Checking what’s running…/, 'first open shows the hopping crew')
   ui.stats = stats
   ui.statsLoading = true
-  assert.match(render(snap, ui).copen, /class="refreshing"/, 'reopening keeps the last stats with a spinner')
+  assert.match(render(snap, ui).copen, /Memory <span class="refreshing" aria-label="Refreshing">/, 'reopening keeps the last stats with a spinner')
   ui.statsLoading = false
   const open = render(snap, ui).copen
-  assert.match(open, /meter-label">Swap<\/span><span class="bar warn">[\s\S]*?20\.1 of 21 GB/)
-  assert.match(open, /class="warn">15\.1 of 16 GB used/, 'RAM shows total and used, warning when nearly full')
-  noMatch(open, /By process|after the 2 GB margin/)
-  assert.match(open, /Pricing page[\s\S]*?class="item static started"><span class="sub-mark">↳<\/span><span class="t">next-server \+3<\/span><span class="r">1\.3 GB<\/span><\/div>/, 'what a session started sits under it')
-  assert.match(open, /vite <span class="soft">old-feature<\/span><\/span><span class="r">300 MB/, 'what a sleeping agent left running is listed with its worktree')
-  assert.match(open, /Pricing page[\s\S]*1\.5 GB[\s\S]*data-yes="close:p-pricing">sleep/)
-  assert.match(open, /data-act="closeall">Free 430 MB: sleep 1 finished session</, 'memory is tight here (agents-only)')
-  assert.match(open, /class="stat ask"><span class="n">2<\/span><span class="l">asking/)
-  assert.match(open, /<div class="stat "><span class="n">1<\/span><span class="l">finished/)
-  assert.match(open, /Remove state-cleanup[\s\S]*PR #1753 merged · clean/)
+  assert.match(open, /<span class="mused warn" data-tip="RAM: 15\.1 of 16 GB used, 0\.9 GB free"><b>15\.1<\/b> \/ 16 GB used<\/span>/, 'used and total, warning when nearly full')
+  assert.match(open, /<span class="chip warn" data-tip="Swap: 20\.1 of 21 GB used"><svg[\s\S]*?<\/svg>Swap 20\.1 \/ 21 GB<\/span>/, 'swap as a gauge chip, warning when nearly full')
+  const tiles = tilesOf(open)
+  const pricing = tiles.find((t) => t.use === 'pane:p-pricing')!
+  assert.equal(pricing.tip, 'Pricing page · 2.7 GB\nSession: 1.5 GB\nnext-server +3: 1.3 GB', 'a session and what it started are one tile; the split on hover')
+  assert.match(pricing.cls, /^c[0-2]\b/, 'the heaviest wear a chart color')
+  assert.equal(pillsOf(open).get('started:/w/old|p-gone')!.tip, 'vite · 300 MB\nLeft running in old-feature', 'what a sleeping agent left running')
+  assert.equal(tiles.find((t) => t.use === 'small')!.tip, '1 small · 300 MB\nvite · old-feature: 300 MB', 'too small for a label: folded into the sliver')
+  assert.equal(tiles.find((t) => t.cls.startsWith('rest'))!.tip, 'Everything else · 12.1 GB\nOther apps and sessions')
+  assert.match(tiles.find((t) => t.cls.startsWith('free'))!.tip, /^0\.9 GB free of 16 GB$/)
+  assert.equal((open.match(/data-yes="close:p-pricing"/g) ?? []).length, 1, 'one sleep button per session, on its tile or its pill')
+  noMatch(open, /data-yes="close:p-gone"/, 'nothing to sleep for what is left running')
+  assert.match(open, /<span class="label">Agents<\/span><div class="tallies"><span class="tally ask"><span class="stack">(<span class="sav">[\s\S]*?<\/span>){2}<\/span><span><b>2<\/b> asking<\/span><\/span><span class="tally">[\s\S]*?<b>2<\/b> working/)
+  assert.match(open, /<span class="label">Clean up<\/span><div class="fin"><span class="stack">[\s\S]*?<\/span><span class="fin-n"><b>1<\/b> finished<\/span><button class="act pill" data-act="closeall" data-tip="Sleep 1 finished session to free 430 MB"><svg[\s\S]*?<\/svg>Sleep all · 430 MB<\/button><\/div>/, 'memory is tight here (agents-only)')
+  assert.match(open, /<div class="wt" data-tip="state-cleanup\nPR #1753 merged · clean"><span class="prb pr-merged"><svg[\s\S]*?<\/svg><\/span><span class="wt-main"><span class="wt-name">state-cleanup<\/span><span class="wt-sub">#1753 · merged · clean<\/span><\/span><button class="act ibtn danger" data-act="remove:cleanup" data-tip="Remove worktree" aria-label="Remove state-cleanup"><svg/)
+  ui.confirming = 'remove:cleanup'
+  assert.match(render(snap, ui).copen, /#1753 · merged · clean<\/span><\/span><span class="confirm"><span class="q">Remove\?<\/span> <button class="yes" data-yes="remove:cleanup">Yes<\/button> <button class="no" data-no>No<\/button><\/span><\/div>/, 'removing confirms in place, in the card')
+  ui.confirming = null
   ui.pending = 'remove:cleanup'
   assert.match(render(snap, ui).copen, /class="rstatus pending"><span class="refreshing"><\/span>Removing…/, 'the same inline style as row actions')
   ui.pending = null
   ui.notice = { key: 'remove:cleanup', text: 'Removed', ok: true }
   assert.match(render(snap, ui).copen, /class="rstatus ok">Removed/)
+  ui.notice = null
+  ui.pending = 'close:p-pricing'
+  assert.match(render(snap, ui).copen, /class="rstatus pending"><span class="refreshing"><\/span>Sleeping…/, 'sleeping shows where its button was')
+})
+
+test('the treemap cockpit keeps every number, on its tiles, its pills or on hover', () => {
+  // The numbers in the cockpit as it was: 6 finished sessions, two dev servers under their sessions,
+  // two left running by sessions that slept, two merged worktrees.
+  const titles = ['BOU-3949 PR 2', 'Require auth for downloading documents', 'Api-node staging secrets rotation', 'Fix flaky test', 'Lint', 'Docs']
+  const rows = titles.map((t, i) => row(`ws${i}`, 'mono', [agent(`p${i}`, t, 'done', { terminal: `term-${i}`, summary: summary() })]))
+  const s: Snapshot = { ...snap, rows, capacity: { ...snap.capacity!, verdict: 'agents-only' } }
+  const ref = (i: number, memMB: number) => ({ paneKey: `p${i}`, terminal: `term-${i}`, workspaceId: `ws${i}`, title: titles[i], repo: 'mono', memMB })
+  const group = (paneKey: string, name: string, count: number, memMB: number, worktreeName: string) =>
+    ({ key: `/w/${worktreeName}|${paneKey}`, path: `/w/${worktreeName}`, paneKey, workspaceId: worktreeName, worktreeName, repo: 'mono', name, count, memMB })
+  const ui = emptyUi()
+  ui.cockpitOpen = true
+  ui.stats = {
+    ram: { usedGB: 29.3, totalGB: 48 }, swap: { usedGB: 13.6, totalGB: 15 },
+    started: [group('p0', 'dev-web.cjs', 23, 6451, 'bou-3949'), group('p1', 'node', 6, 1843, 'require-auth'), group('p-gone1', 'node', 26, 6861, 'employee repo'), group('p-gone2', 'node', 24, 6554, 'add document cleanup job')],
+    heaviest: [ref(0, 199), ref(1, 457), ref(2, 472)],
+    finished: [ref(0, 199), ref(1, 457), ref(2, 472), ref(3, 310), ref(4, 305), ref(5, 305)],
+    merged: [{ workspaceId: 'w1', name: 'bou-3949-durable-document-deletion', repo: 'mono', pr: 6125 }, { workspaceId: 'w2', name: 'employee repo', repo: 'mono', pr: 6213 }]
+  }
+  const open = render(s, ui).copen
+  const seen = readable(open)
+  for (const shown of [
+    'RAM: 29.3 of 48 GB used, 18.7 GB free', 'Swap: 13.6 of 15 GB used', '18.7 GB free of 48 GB', 'Everything else · 7.0 GB',
+    'BOU-3949 PR 2 · 6.5 GB\nSession: 199 MB\ndev-web.cjs +22: 6.3 GB', 'Require auth for downloading documents · 2.2 GB\nSession: 457 MB\nnode +5: 1.8 GB',
+    'Api-node staging secrets rotation · 472 MB\nSession: 472 MB', 'node +25 · 6.7 GB\nLeft running in employee repo', 'node +23 · 6.4 GB\nLeft running in add document cleanup job',
+    ' 6  finished', 'Sleep all · 2.0 GB', 'Sleep 6 finished sessions to free 2.0 GB',
+    'PR #6125 merged · clean', '#6125 · merged · clean', 'PR #6213 merged · clean', '#6213 · merged · clean'
+  ]) assert.ok(seen.includes(shown), `${JSON.stringify(shown)} is readable`)
+  const text = open.replace(/<[^>]+>/g, ' ')
+  for (const total of ['29.3', '6.7 GB', '6.5 GB', '6.4 GB', '2.2 GB', '472 MB']) assert.ok(text.includes(total), `${total} is on screen, not only on hover`)
+  const tiles = tilesOf(open)
+  const pills = pillsOf(open)
+  for (const t of tiles.filter((x) => x.use && x.use !== 'small')) {
+    assert.match(t.inner, /class="t-v"/, `${t.use}: a consumer's own tile shows its size`)
+    if (!/class="t-n"/.test(t.inner)) assert.ok(pills.has(t.use), `${t.use}: a tile without room for its name has a pill`)
+  }
+  for (const [key, pill] of pills) if (pill.inSliver) assert.ok(tiles.some((t) => t.use === 'small'), `${key} is folded into a sliver that is drawn`)
+  for (const pane of ['p0', 'p1', 'p2']) assert.equal((open.match(new RegExp(`data-yes="close:${pane}"`, 'g')) ?? []).length, 1, `${pane} sleeps from one place`)
+  assert.ok(tiles.filter((t) => /^c[0-2]\b/.test(t.cls)).length <= 3, 'three consumers in color at most, the rest neutral')
+})
+
+test('chart colors stay with their consumer between refreshes', () => {
+  const memo = new Map<string, number>()
+  const first = colorSlots(['x', 'y', 'z'], memo)
+  assert.deepEqual(new Set(first.values()), new Set([0, 1, 2]))
+  assert.deepEqual(colorSlots(['z', 'x', 'y'], memo), new Map([['z', first.get('z')], ['x', first.get('x')], ['y', first.get('y')]]), 'a new order repaints nothing')
+  const later = colorSlots(['z', 'w', 'x'], memo)
+  assert.equal(later.get('w'), first.get('y'), 'a newcomer takes the color that was freed')
+  assert.equal(later.get('z'), first.get('z'))
+  assert.equal(colorSlots(['y', 'z', 'x'], memo).get('y'), first.get('y'), 'one that comes back gets its color back when it is free')
+  // In the panel: the same consumers, heaviest first one time and last the next, keep their tiles' colors.
+  const orphan = (i: number, memMB: number) => ({ key: `/w/o${i}|`, path: `/w/o${i}`, paneKey: null, workspaceId: `o${i}`, worktreeName: `o${i}`, repo: 'shop', name: `proc${i}`, count: 1, memMB })
+  const ui = emptyUi()
+  ui.cockpitOpen = true
+  const colorsAt = (sizes: number[]) => {
+    ui.stats = { ram: { usedGB: 12, totalGB: 16 }, swap: null, heaviest: [], finished: [], merged: [], started: sizes.map((mb, i) => orphan(i, mb)) }
+    return new Map(tilesOf(render(snap, ui).copen).filter((t) => t.use).map((t) => [t.use, t.cls.split(' ')[0]]))
+  }
+  const before = colorsAt([3000, 2000, 1000])
+  const after = colorsAt([1000, 2000, 3000])
+  assert.deepEqual(after, before)
+})
+
+test('the treemap never draws more than is used, folds a seventh consumer into the sliver, and copes without figures', () => {
+  const g = (i: number, memMB: number) => ({ key: `/w/x${i}|`, path: `/w/x${i}`, paneKey: null, workspaceId: `x${i}`, worktreeName: `x${i}`, repo: 'shop', name: `proc${i}`, count: 1, memMB })
+  const ui = emptyUi()
+  ui.cockpitOpen = true
+  // Footprints can include swapped memory, so together they can exceed what RAM reports as used.
+  ui.stats = { ram: { usedGB: 4, totalGB: 16 }, swap: null, heaviest: [], finished: [], merged: [], started: [1, 2, 3].map((i) => g(i, 2048)) }
+  let open = render(snap, ui).copen
+  noMatch(open, /class="tile rest/, 'nothing else is left of the 4 GB used')
+  assert.match(tilesOf(open).find((t) => t.cls.startsWith('free'))!.style, /^left:calc\(25% \+ 1px\);top:calc\(0% \+ 1px\);width:calc\(75% - 2px\)/, 'free starts where used ends')
+  noMatch(open, /class="chip/, 'no swap, no swap chip')
+  // Six consumers at most get a tile of their own.
+  ui.stats = { ...ui.stats, ram: { usedGB: 14, totalGB: 16 }, started: [1, 2, 3, 4, 5, 6, 7].map((i) => g(i, 1536)) }
+  open = render(snap, ui).copen
+  const tiles = tilesOf(open)
+  assert.equal(tiles.filter((t) => t.use.startsWith('started:')).length, 6)
+  assert.equal(tiles.find((t) => t.use === 'small')!.tip, '1 small · 1.5 GB\nproc7 · x7: 1.5 GB')
+  assert.match(open, /data-use="started:\/w\/x7\|" data-in="small" data-tip="proc7 · 1\.5 GB[^"]*"><i class="key"><\/i><span class="lg-n">proc7 · x7<\/span><span class="lg-v">1\.5 GB<\/span>/, 'the seventh is a pill with its size, lit with the sliver')
+  ui.stats = { ...ui.stats, ram: null }
+  open = render(snap, ui).copen
+  noMatch(open, /class="tm"|class="mhead"/, 'no RAM figures: no headline, no treemap')
+  assert.equal((open.match(/<span class="lg-v">1\.5 GB<\/span>/g) ?? []).length, 7, 'every consumer a pill with its size')
+  ui.stats = { ...ui.stats, ram: { usedGB: 8, totalGB: 16 }, swap: { usedGB: 1, totalGB: 4 }, started: [] }
+  open = render(snap, ui).copen
+  assert.deepEqual(tilesOf(open).map((t) => t.cls), ['rest', 'free'], 'no consumers: everything else and free')
+  noMatch(open, /class="legend"/)
+  assert.match(open, /<span class="chip" data-tip="Swap: 1 of 4 GB used">/, 'swap with room to spare is a quiet chip')
+})
+
+test('tile labels: the size is never cut; the name and the character give way first, then the type shrinks', () => {
+  // The estimate errs wide of what SF really draws (measured in Chromium on macOS), so a label judged to fit does.
+  for (const [text, px, real] of [['12.8 GB', 12, 48.5], ['3.0 GB', 12, 40.5], ['592 MB', 12, 46.1], ['100.0 GB', 12, 56.5], ['3.0 GB', 10.5, 35.7], ['12.8 GB', 10.5, 42.7],
+    ['next-server +5 · employee repo', 10.5, 158.1], ['Clock terminal mock for e2e', 10.5, 141.7], ['BOU-3949 PR 2', 10.5, 81.4]] as const) {
+    assert.ok(textWidth(text, px) >= real, `${text} at ${px}px: ${textWidth(text, px)} < ${real}`)
+  }
+  // The live case: a 12.8 GB column 63 px wide keeps its size whole and leaves its long name to the pill.
+  const live = fitLabel(63, 70, '12.8 GB', 'next-server +5 · employee repo', true)
+  assert.equal(live.value, 'sm', 'one size down, whole')
+  assert.equal(live.name, null)
+  assert.equal(fitLabel(68, 70, '12.8 GB', 'next-server +5 · employee repo', true).value, 'md', 'a little wider, full size')
+  assert.deepEqual(fitLabel(120, 60, '6.5 GB', 'BOU-3949 PR 2', true), { value: 'md', avatar: 'row', name: 'below', room: false }, 'room for all of it')
+  assert.equal(fitLabel(120, 80, '6.5 GB', 'BOU-3949 PR 2', true).room, true, 'and for a sleep button above it')
+  assert.deepEqual(fitLabel(120, 22, '3.7 GB', '8 small', false), { value: 'sm', avatar: null, name: 'inline', room: false }, 'a short tile puts the name after the size')
+  assert.deepEqual(fitLabel(44, 50, '3.0 GB', 'Search index', true), { value: 'xs', avatar: null, name: null, room: false }, 'a narrow tile shrinks the type')
+  assert.equal(fitLabel(20, 20, '592 MB', 'Clock', true).value, null, 'a tiny tile shows nothing')
+  // Whatever the box, what is shown fits it.
+  const SIDE = { md: 6, sm: 4, xs: 3 }, PX = { md: 12, sm: 10.5, xs: 9.5 }
+  for (let w = 8; w <= 240; w += 4) for (let h = 8; h <= 136; h += 4) for (const [value, name] of [['12.8 GB', 'next-server +5 · employee repo'], ['592 MB', 'Docs'], ['100.0 GB', 'other']]) {
+    const fit = fitLabel(w, h, value, name, true)
+    if (!fit.value) continue
+    const cw = w - 2 - 2 * SIDE[fit.value]
+    assert.ok(textWidth(value, PX[fit.value]) + (fit.avatar === 'row' ? 20 : 0) <= cw, `${value} in ${w}×${h}`)
+    if (fit.name === 'below') assert.ok(textWidth(name, 10.5) <= cw || textWidth(`${name.slice(0, 12)}…`, 10.5) <= cw, `${name} in ${w}×${h}`)
+    if (fit.name === 'inline') assert.ok(textWidth(value, PX[fit.value]) + textWidth(` · ${name}`, 10.5) <= cw, `${value} · ${name} in ${w}×${h}`)
+  }
+})
+
+test('in the treemap no label is wider than its tile, whatever the data', () => {
+  const session = (i: number, title: string, mb: number) => ({ paneKey: `p${i}`, terminal: `t${i}`, workspaceId: `w${i}`, title, repo: 'mono', memMB: mb })
+  const left = (i: number, name: string, count: number, mb: number, worktreeName: string) => ({ key: `/o/${i}|`, path: `/o/${i}`, paneKey: null, workspaceId: `o${i}`, worktreeName, repo: 'mono', name, count, memMB: mb })
+  const shapes: [string, CockpitStats][] = [
+    ['one dominant, several small', { ram: { usedGB: 23.5, totalGB: 48 }, swap: { usedGB: 22.2, totalGB: 23 }, finished: [], merged: [],
+      heaviest: [session(0, 'Clock terminal mock for e2e', 592), session(1, 'Shared store terminal state', 537), session(2, 'Orca-flow repository review', 461)],
+      started: [left(0, 'next-server', 6, 13107, 'employee repo'), left(1, 'idb_companion', 2, 20, 'ios-sim')] }],
+    ['many small', { ram: { usedGB: 20, totalGB: 48 }, swap: null, finished: [], merged: [], started: [],
+      heaviest: [880, 640, 520, 470, 410, 350].map((mb, i) => session(i, `Task number ${i}`, mb)) }],
+    ['five even', { ram: { usedGB: 30, totalGB: 48 }, swap: null, finished: [], merged: [], heaviest: [],
+      started: [0, 1, 2, 3, 4].map((i) => left(i, 'next-server', 3, 3072, `feature-${i}`)) }],
+    ['no free', { ram: { usedGB: 48, totalGB: 48 }, swap: null, finished: [], merged: [], heaviest: [],
+      started: [10240, 8192, 6144, 2048, 1024].map((mb, i) => left(i, 'node', 2, mb, `wt-${i}`)) }]
+  ]
+  const ui = emptyUi()
+  ui.cockpitOpen = true
+  const SIDE: Record<string, number> = { '': 6, 'fit-sm': 4, 'fit-xs': 3 }, PX: Record<string, number> = { '': 12, 'fit-sm': 10.5, 'fit-xs': 9.5 }
+  const folds: Record<string, number> = {}
+  for (const [name, stats] of shapes) {
+    ui.stats = stats
+    const open = render({ ...snap, rows: [] }, ui).copen
+    for (const t of tilesOf(open)) {
+      // The narrowest panel draws the treemap 236 px wide; a tile's width is its share less the 2 px gap.
+      const [, wp, hp] = /width:calc\(([\d.]+)% - 2px\);height:calc\(([\d.]+)% - 2px\)/.exec(t.style)!.map(Number)
+      const w = (wp * 236) / 100, h = (hp * 136) / 100
+      const kind = /fit-(sm|xs)/.exec(t.cls)?.[0] ?? ''
+      const value = /class="t-v">([^<]*)</.exec(t.inner)?.[1]
+      if (t.use && t.use !== 'small') assert.ok(value, `${name}: ${t.use} shows its size`)
+      if (!value) continue
+      assert.ok(textWidth(value, PX[kind]) <= w - 2 - 2 * SIDE[kind], `${name}: ${value} fits ${w.toFixed(1)} px`)
+      assert.ok(h - 2 >= (kind ? 13 : 16), `${name}: ${value} fits ${h.toFixed(1)} px high`)
+    }
+    folds[name] = (open.match(/data-in="small"/g) ?? []).length
+  }
+  assert.deepEqual(folds, { 'one dominant, several small': 4, 'many small': 6, 'five even': 0, 'no free': 2 }, 'only consumers too small for a label fold')
 })
 
 test('sleeping every finished session is offered only when memory is tight, and confirms in place', () => {
@@ -188,13 +363,14 @@ test('sleeping every finished session is offered only when memory is tight, and 
   ui.stats = { swap: null, ram: null, started: [], heaviest: [], merged: [],
     finished: [{ paneKey: 'p-f1', terminal: 'term-1', workspaceId: 'f1', title: 'First done', repo: 'shop', memMB: 400 }, { paneKey: 'p-f2', terminal: 'term-2', workspaceId: 'f2', title: 'Second done', repo: 'shop', memMB: 700 }] }
   noMatch(render(at('ok'), ui).copen, /closeall/, 'room to spare: nothing to sleep in bulk')
-  for (const v of ['agents-only', 'full', 'pressure'] as const) assert.match(render(at(v), ui).copen, /data-act="closeall">Free 1\.1 GB: sleep 2 finished sessions</, v)
+  assert.match(render(at('ok'), ui).copen, /<b>2<\/b> finished<\/span><\/div>/)
+  for (const v of ['agents-only', 'full', 'pressure'] as const) assert.match(render(at(v), ui).copen, /<b>2<\/b> finished<\/span><button class="act pill" data-act="closeall" data-tip="Sleep 2 finished sessions to free 1\.1 GB"><svg[\s\S]*?<\/svg>Sleep all · 1\.1 GB</, v)
   assert.deepEqual(finishedAgents(at('full').rows).map((a) => a.paneKey), ['p-f1', 'p-f2'], 'the set Sleep all puts to sleep')
   ui.confirming = 'closeall'
-  assert.match(render(at('full'), ui).copen, /Sleep 2 sessions\? <button class="yes" data-yes="closeall">Yes/)
+  assert.match(render(at('full'), ui).copen, /<span class="q">Sleep 2 sessions\?<\/span> <button class="yes" data-yes="closeall">Yes/)
   ui.confirming = null
   ui.stats = { ...ui.stats, finished: [] }
-  assert.match(render(at('full'), ui).copen, /data-act="closeall">Sleep 2 finished sessions</, 'memory not known yet')
+  assert.match(render(at('full'), ui).copen, /data-act="closeall" data-tip="Sleep 2 finished sessions"><svg[\s\S]*?<\/svg>Sleep all</, 'memory not known yet')
 })
 
 test('coordinators show no team characters on the right', () => {
