@@ -4,9 +4,10 @@
 // Layout (agreed in the mockup): a one-row cockpit; Up next as collapsible briefings, the first
 // open (what it is about, the ask at a glance, one button to jump); then the coordinators tree.
 // Characters carry everything: color = project, shape = role, face = state.
-import type { AgentInfo, Capacity, CockpitStats, Coordinator, LookShape, Look, Snapshot, StartedGroup, UpdateState, WorkspaceRow } from './protocol.ts'
+import type { AgentInfo, Capacity, CockpitStats, Coordinator, LinearData, LinearIssue, LookShape, Look, Snapshot, StartedGroup, UpdateState, WorkspaceRow } from './protocol.ts'
 import { asksYou, canRemove, claimsAsk, holdsWorkstream, monitoring, needsYou, waitingQueue } from './rank.ts'
 import { BEAMS, capGlyph, headLines, rowLines, trunkX, type NodeState } from './lines.ts'
+import { DEFAULT_DISPLAY, FILTER_NAME, FILTERS, isDefaultDisplay, LINEAR_MARK, linkRows, priorityIcon, rowsByIssue, STATE_NAME, statusIcon, teamsOf, viewOf, type Display, type LinearFilter, type LinearGroup } from './linear.ts'
 
 export type UiState = {
   /** Up-next items the person opened, and ones they closed (the first is open by default). */
@@ -30,11 +31,18 @@ export type UiState = {
   notice: { key: string; text: string; ok: boolean } | null
   /** The chart color each memory consumer wears, kept between refreshes (see colorSlots). */
   colors: Map<string, number>
+  /** The Linear section: folded to its header, and which issues it shows. */
+  linearFolded: boolean
+  linearFilter: LinearFilter
+  /** Its display options (grouping, order, states shown, projects), and the groups folded ("<group by>:<key>"). */
+  linearDisplay: Display
+  linearGroupFolds: Set<string>
 }
 
 export const emptyUi = (): UiState => ({
   opened: new Set(), closed: new Set(), folded: new Set(), unfolded: new Set(), query: '', now: Date.now(),
-  cockpitOpen: false, stats: null, statsLoading: false, confirming: null, pending: null, notice: null, status: new Map(), colors: new Map()
+  cockpitOpen: false, stats: null, statsLoading: false, confirming: null, pending: null, notice: null, status: new Map(), colors: new Map(),
+  linearFolded: false, linearFilter: 'mine', linearDisplay: DEFAULT_DISPLAY, linearGroupFolds: new Set()
 })
 
 // ---------- small helpers ----------
@@ -695,22 +703,16 @@ export function prBadge(pr: WorkspaceRow['pr']): string {
   return `<span class="pr pr-${tone}" role="link" data-pr="${esc(pr.url)}" data-tip="${esc(tip)}" aria-label="${esc(`PR #${pr.number} ${word}`)}">#${pr.number}</span>`
 }
 
-/** GitHub's mark (Octicons mark-github, MIT), in the row's muted text color. */
-const GH_MARK = '<svg class="gh" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>'
-
-/** A branch as a row shows it: without its leading user/ prefix (berkantay/bou-4186 → bou-4186). */
-export const branchName = (branch: string) => branch.replace(/^[^/]+\/(?=[^/])/, '')
-
 /**
  * How many branch colors there are (panel.css --c0..--c2). Any two branches can sit in neighboring
  * lanes, so the palette was validated all-pairs (the dataviz validator, both modes): three is the
- * most that pass, and the branch's name beside the mark is the second channel.
+ * most that pass.
  */
 export const BRANCH_COLORS = 3
 /** A branch's color slot: stable for the same repo and branch, so rows on one branch share it. */
 export const branchColor = (repo: string, branch: string) => hashOf(`${repo}\n${branch}`) % BRANCH_COLORS
 
-/** A long-lived branch (a main checkout's main or dev) shows quieter than feature work. */
+/** A long-lived branch (a main checkout's main or dev) draws neutral lines, not a color. */
 const BASE_BRANCH = /^(main|master|dev|develop|development|trunk|staging)$/
 
 /** The color a row's tree lines wear: its branch's, or none (neutral) without one or on a long-lived one. */
@@ -719,17 +721,6 @@ export const laneColor = (row: Pick<WorkspaceRow, 'repo' | 'branch'>): number | 
 const branchAttr = (row: Pick<WorkspaceRow, 'repo' | 'branch'>) => {
   const c = laneColor(row)
   return c === null ? '' : ` data-branch="${c}"`
-}
-
-/**
- * The worktree a chat runs in, minimal: GitHub's mark, the branch without its user/ prefix (the
- * whole branch and the project on hover), then the PR's number when there is one. Nothing without a
- * branch.
- */
-export function branchChip(row: Pick<WorkspaceRow, 'repo' | 'branch' | 'pr'>): string {
-  if (!row.branch) return prBadge(row.pr)
-  const quiet = BASE_BRANCH.test(row.branch)
-  return `<span class="br${quiet ? ' quiet' : ''}"><span class="br-b" data-tip="${esc(`${row.branch}${row.repo ? ` · ${row.repo}` : ''}`)}">${GH_MARK}<span class="br-n">${esc(branchName(row.branch))}</span></span>${prBadge(row.pr)}</span>`
 }
 
 /** A merged PR's icon, on the cockpit's clean-up cards. */
@@ -775,12 +766,16 @@ const FOCUS = '<i class="fb" aria-hidden="true"></i>'
 function agentLine(p: Placed, all: AgentInfo[], coordinators: Coordinator[], soft: boolean, lead: Placed | undefined, ui: UiState, done = false, current = false, deco = ''): string {
   const status = rowStatus(ui, `agent:${p.a.paneKey}`)
   const indent = Boolean(lead)
-  // A worker nested under its lead in the same worktree: the lead's row already shows project,
-  // branch, PR and age; the branch's color alone groups it with its lead. One working in a worktree
-  // of its own shows that worktree's branch.
+  // The worktree's Linear issue, on the right of the row that stands for the worktree.
+  const own = !lead || lead.row.id !== p.row.id
+  const chip = p.row.linearIssue && own ? idChip(p.row.linearIssue) : ''
+  // The title gets the room: on the right only the Linear issue, the PR's number, the project and
+  // the age. A worker nested under its lead in the same worktree shows none of them (its lead's row
+  // does; the branch's color on the lines groups them); one in a worktree of its own shows that
+  // worktree's issue and PR.
   const right = status ?? (lead
-    ? (lead.row.id === p.row.id ? '' : branchChip(p.row))
-    : `${soft ? `<span class="soft">${esc(p.row.repo)}</span>` : ''}${branchChip(p.row)}<span class="age">${ago(p.row.lastActivityAt, ui.now)}</span>`)
+    ? (own ? `${chip}${prBadge(p.row.pr)}` : '')
+    : `${chip}${prBadge(p.row.pr)}${soft ? `<span class="soft">${esc(p.row.repo)}</span>` : ''}<span class="age">${ago(p.row.lastActivityAt, ui.now)}</span>`)
   const cls = `item${indent ? ' indent' : ''}${done ? ' finished' : ''}${current ? ' current' : ''}`
   // A row on a feature branch draws its connector and ring in the branch's color (panel.css, tree lines).
   const menu = `data-menu="agent:${esc(p.a.paneKey)}"${current ? ' aria-current="true"' : ''}${branchAttr(p.row)} data-node="${nodeOf(p.a, p.row, all)}"`
@@ -840,9 +835,17 @@ const finishedOf = (placed: Placed[]) => {
 /** Rows keep the order their workstreams started in; agent activity never moves them. */
 const byStart = (x: Placed, y: Placed) => x.row.createdAt - y.row.createdAt || x.a.paneKey.localeCompare(y.a.paneKey)
 
+/** A coordinator's color: its look's, else its one project's, else neutral. */
+const coordinatorColor = (c: Coordinator) => c.look?.color ?? (c.repos.length === 1 ? colorOf(c.repos[0]) : NEUTRAL)
+
+/** A coordinator's character in its own state (asleep without a session), for menus and the Linear section. */
+export function coordinatorCharacter(c: Coordinator, size = 16, face: Face = c.session ? faceOf(c.session) : 'idle'): string {
+  return character(coordinatorColor(c), c.look?.shape ?? 'pentagon', face, size, true, c.session ? askKindOf(c.session) : 'question')
+}
+
 function coordinatorBlock({ c, mine, lines }: TreeBlock, all: AgentInfo[], coordinators: Coordinator[], ui: UiState, focused: string[] | null | undefined): string {
   const single = c.repos.length === 1 ? c.repos[0] : null
-  const color = c.look?.color ?? (single ? colorOf(single) : NEUTRAL)
+  const color = coordinatorColor(c)
   const shape: Shape = c.you ? 'solo' : (c.look?.shape ?? 'pentagon')
   const sub = single ?? (c.you ? 'chats you started' : c.repos.length ? c.repos.join(', ') : 'all projects')
   // A coordinator shows its own state only; its workers show theirs below it. You has no session of
@@ -916,6 +919,11 @@ function treeBlocks(snap: Pick<Snapshot, 'rows' | 'coordinators'>): TreeBlock[] 
   })
 }
 
+/** The coordinators in the order the tree shows them (awake first, then sleeping): the send menu lists them so. */
+export function coordinatorOrder(snap: Pick<Snapshot, 'rows' | 'coordinators'>): Coordinator[] {
+  return treeBlocks(snap).flatMap(({ c }) => ('you' in c ? [] : [c]))
+}
+
 /** How many chats get a shortcut: Option+1 to Option+9. */
 export const CHAT_KEYS = 9
 /** Where the panel keeps its folded groups (plugin storage), so the worker's numbers skip them too. */
@@ -959,7 +967,9 @@ function foldList(key: string, title: string, rows: string[], ui: UiState, count
  * pinned below it, and the pinned footer. Up next sits at the bottom so the tree never moves when an
  * ask comes or goes: it starts at the top of its own scroll area, which only gets shorter.
  */
-export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: string; main: string; attention: string; footer: string } {
+export function render(given: Snapshot, ui: UiState, linear: LinearData | null = null): { cockpit: string; copen: string; main: string; attention: string; linear: string; footer: string } {
+  // A worktree created without --linear-issue is linked by the issue in its branch name, in the tree and the section alike.
+  const snap = linear ? { ...given, rows: linkRows(given.rows, teamsOf(linear)) } : given
   const copen = ui.cockpitOpen && !ui.query ? cockpitOpen(snap, ui) : ''
   const all = snap.rows.flatMap((r) => r.agents)
   // One briefing per asking agent, workspaces in urgency order; several agents in one workspace each
@@ -973,7 +983,7 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
       found.length
         ? found.map((r) => `<button class="item" data-open="${esc(r.id)}">${character(colorOf(r.repo), 'solo', r.agents.length ? faceOf(r.agents[0]) : 'idle', 20)}<span class="t">${esc(r.agents[0]?.title ?? r.name)}</span><span class="r soft">${esc(r.repo)}</span></button>`).join('')
         : '<div class="empty">No matching workspaces</div>'
-    }</div>`, attention: '', footer: '' }
+    }</div>`, attention: '', linear: '', footer: '' }
   }
 
   // Sleep and remove are in the rows' menus.
@@ -987,8 +997,121 @@ export function render(snap: Snapshot, ui: UiState): { cockpit: string; copen: s
     copen,
     main: `<div class="tree"><div class="label">Coordinators</div>${tree || '<div class="empty">No agents running</div>'}<button class="newcoord" data-new-coordinator>${ICON.plus}New coordinator</button></div>`,
     attention: upNext(asking, all, snap.coordinators, ui),
+    linear: linearSection(snap, ui, linear),
     footer: idle.length ? `<div class="folds">${foldList('idle', 'Idle', idle, ui)}</div>` : ''
   }
+}
+
+// ---------- Linear ----------
+
+/** A worktree's Linear issue, as a small chip before its row's title. */
+export const idChip = (id: string) => `<span class="idchip">${LINEAR_MARK}${esc(id)}</span>`
+
+const ARROW = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3"/></svg>'
+
+/** Rows a filter shows before "N more", so a big team list stays quick to draw. */
+export const LINEAR_ROWS = 50
+
+/** The state a sent issue shows until Linear's own catches up. */
+const STARTED = { name: 'In Progress', type: 'started', color: '' }
+
+/**
+ * One issue on one line: Linear's status and priority icons, its ID and title. On the right: the
+ * lead and coordinator of the worktree that links it; else the coordinator it was sent to, starting;
+ * else (Team and Cycle) its assignee when that is not you, and on hover "Send".
+ */
+function linearRow(i: LinearIssue, snap: Snapshot, ui: UiState, data: LinearData, linked: Map<string, WorkspaceRow>): string {
+  const status = rowStatus(ui, `linear:${i.id}`)
+  const row = linked.get(i.id)
+  const sent = row ? undefined : data.sent[i.id]
+  const coordinator = sent && snap.coordinators.find((c) => c.key === sent.coordinator)
+  const glyphs = `${statusIcon(sent ? STARTED : i.state)}${priorityIcon(i.priority)}<span class="lid">${esc(i.id)}</span><span class="t">${esc(i.title)}</span>`
+  if (row) {
+    const all = snap.rows.flatMap((r) => r.agents)
+    const lead = worktreeLead(row)
+    const right = lead
+      ? `${agentCharacter(lead, row, all, 14)}<span>${esc(coordinatorName(lead.coordinator, snap.coordinators))}</span>`
+      : `${character(colorOf(row.repo), 'lead', 'idle', 14, false)}<span>${esc(row.name)}</span>`
+    const open = lead ? openAttrs({ a: lead, row }) : `data-open="${esc(row.id)}"`
+    return `<button class="item lrow linked" ${open}>${glyphs}<span class="r">${status ?? right}</span></button>`
+  }
+  if (sent) {
+    const name = coordinator?.name ?? sent.coordinator
+    const who = coordinator ? coordinatorCharacter(coordinator, 14, 'working') : ''
+    return `<button class="item lrow" data-coordinator="${esc(sent.coordinator)}" data-menu="linear:${esc(i.id)}">${glyphs}<span class="r">${status ?? `${who}<span class="rstatus pending">${esc(name)} · starting</span>`}</span></button>`
+  }
+  const who = ui.linearFilter === 'mine' || (i.assignee && i.assignee.id === data.me) ? '' : i.assignee ? i.assignee.name : 'unassigned'
+  const right = status ?? `${who ? `<span class="rest">${esc(who)}</span>` : ''}<span class="act pill send">Send ${ARROW}</span>`
+  return `<button class="item lrow" data-lsend="${esc(i.id)}" data-menu="linear:${esc(i.id)}" aria-haspopup="menu">${glyphs}<span class="r">${right}</span></button>`
+}
+
+const SLIDERS = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h6.5M13 4.5h.5M2.5 11.5h.5M7 11.5h6.5"/><circle cx="11" cy="4.5" r="1.75"/><circle cx="5" cy="11.5" r="1.75"/></svg>'
+const CROSS = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M5 5l6 6M11 5l-6 6"/></svg>'
+
+/** A project's color dot; the color is checked to be a hex color when read. */
+export const projectDot = (color: string) => `<i class="pdot"${/^#[0-9a-f]{3,8}$/i.test(color) ? ` style="background:${color}"` : ''} aria-hidden="true"></i>`
+
+/** A group's glyph: its status icon, project dot or priority icon (assignee groups go by name alone). */
+function groupGlyph(g: LinearGroup, by: Display['group']): string {
+  const first = g.issues[0]
+  if (!first) return ''
+  if (by === 'status') return statusIcon(first.state)
+  if (by === 'priority') return priorityIcon(first.priority)
+  if (by === 'project') return projectDot(g.key ? first.projectColor : '')
+  return ''
+}
+
+/**
+ * The Linear section, pinned under Up next: a header that folds it (Linear · team, with the count
+ * and filter while folded), the Display button and the Mine / Team / Cycle switch, a chip that
+ * clears a project filter, then the filter's issues in groups that fold; states the display leaves
+ * out fold away at the end. Empty when Linear is not connected.
+ */
+export function linearSection(snap: Snapshot, ui: UiState, data: LinearData | null): string {
+  if (!data) return ''
+  const linked = rowsByIssue(snap.rows)
+  const ids = new Set(linked.keys())
+  const display = ui.linearDisplay
+  const views = Object.fromEntries(FILTERS.map((f) => [f, viewOf(data, f, ids, display)])) as Record<LinearFilter, ReturnType<typeof viewOf>>
+  const f = ui.linearFilter
+  const view = views[f]
+  const team = data.teams.length > 1 ? `${data.teams[0]} +${data.teams.length - 1}` : (data.teams[0] ?? '')
+  const folded = ui.linearFolded
+  const starting = Object.keys(data.sent).filter((id) => !linked.has(id))
+  const startingCoord = starting.length ? snap.coordinators.find((c) => c.key === data.sent[starting[0]].coordinator) : undefined
+  const fold = `<button class="label lfold" data-lfold aria-expanded="${!folded}"${data.teams.length > 1 ? ` data-tip="${esc(data.teams.join(', '))}"` : ''}>${ICON.chev}${LINEAR_MARK}<span>Linear${team ? ` · ${esc(team)}` : ''}</span>${folded ? `<span class="fc">${view.count}</span>` : ''}</button>`
+  const changed = !isDefaultDisplay(display)
+  const displayButton = `<button class="icon ldisplay" data-ldisplay aria-haspopup="menu" aria-label="Display options${changed ? ' (changed)' : ''}" data-tip="Display">${SLIDERS}${changed ? '<span class="dot"></span>' : ''}</button>`
+  const right = folded
+    ? `<span class="foldsum">${starting.length ? `${startingCoord ? coordinatorCharacter(startingCoord, 13, 'working') : ''}<span>${starting.length} starting</span><span class="sepd">${FILTER_NAME[f]}</span>` : FILTER_NAME[f]}</span>`
+    : `${displayButton}<span class="seg" role="group" aria-label="Filter">${FILTERS.map((k) => `<button data-lfilter="${k}" aria-pressed="${k === f}">${FILTER_NAME[k]} ${views[k].count}</button>`).join('')}</span>`
+  const head = `<div class="sechead">${fold}${right}</div>`
+  if (folded) return head
+  // A project filter shows as one chip that clears it.
+  const picked = display.projects
+  const projectName = (key: string) => view.projects.find((p) => p.key === key)?.name ?? (key || 'No project')
+  const chip = picked.length
+    ? `<div class="pchips"><button class="pchip" data-lprojects-clear aria-label="Show all projects">${picked.length === 1 ? `${projectDot(view.projects.find((p) => p.key === picked[0])?.color ?? '')}${esc(projectName(picked[0]))}` : `${picked.length} projects`}${CROSS}</button></div>`
+    : ''
+  const rowsOf = (issues: LinearIssue[], moreKey: string) => {
+    const all = ui.unfolded.has(moreKey)
+    const rows = (all ? issues : issues.slice(0, LINEAR_ROWS)).map((i) => linearRow(i, snap, ui, data, linked)).join('')
+    return issues.length > LINEAR_ROWS && !all ? `${rows}<button class="fold" data-lmore="${esc(moreKey)}" aria-expanded="false">${ICON.chev}${issues.length - LINEAR_ROWS} more</button>` : rows
+  }
+  const body = view.groups.map((g) => {
+    if (display.group === 'none') return rowsOf(g.issues, 'linear-all')
+    const key = `${display.group}:${g.key}`
+    const open = !ui.linearGroupFolds.has(key)
+    return `<button class="lgroup" data-lgroup="${esc(key)}" aria-expanded="${open}">${ICON.chev}${groupGlyph(g, display.group)}<span class="gl">${esc(g.label)}</span><span class="gc">${g.issues.length}</span></button>${open ? rowsOf(g.issues, `linear-all:${key}`) : ''}`
+  }).join('')
+  // A state the display leaves out folds away at the end and opens in place, so nothing is out of reach.
+  const hidden = view.hidden.map(({ state, issues }) => {
+    const key = `linear-hidden:${state}`
+    const open = ui.unfolded.has(key)
+    return `<button class="fold" data-lmore="${key}" aria-expanded="${open}">${ICON.chev}${issues.length} ${state === 'staging' ? 'on' : 'in'} ${STATE_NAME[state]}</button>${open ? rowsOf(issues, `linear-all:${key}`) : ''}`
+  }).join('')
+  const empty = view.count || view.hidden.length ? '' : `<div class="empty">Nothing open${picked.length ? ' in these projects' : f === 'cycle' && !data.cycles.length ? ': no active cycle found' : ''}</div>`
+  return `${head}${chip}<div class="group">${body}${empty}${hidden}</div>`
 }
 
 // ---------- looks for new coordinators ----------

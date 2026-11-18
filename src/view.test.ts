@@ -1,11 +1,12 @@
 // The panel's HTML from a snapshot, checked in Node.
 import { assert, test } from 'orca/testing'
 import { readFileSync } from 'node:fs'
-import type { AgentInfo, AgentSummary, Snapshot, WorkspaceRow } from './protocol.ts'
-import { type UiState, askingRows, askKindOf, BRANCH_COLORS, nodeOf, branchChip, branchColor, branchName, character, laneColor, chatDigit, chatTargets, colorSlots, emptyUi, faceOf, fitLabel, textWidth, finishedAgents, freeLooks, gaugesOf, prBadge, render, updateButton } from './view.ts'
+import type { AgentInfo, AgentSummary, LinearData, LinearIssue, Snapshot, WorkspaceRow } from './protocol.ts'
+import { type UiState, coordinatorOrder, LINEAR_ROWS, askingRows, askKindOf, BRANCH_COLORS, nodeOf, branchColor, character, laneColor, chatDigit, chatTargets, colorSlots, emptyUi, faceOf, fitLabel, textWidth, finishedAgents, freeLooks, gaugesOf, prBadge, render, updateButton } from './view.ts'
 import type { CockpitStats } from './protocol.ts'
 import { pressGate } from './panel/press.ts'
 import { capGlyph } from './lines.ts'
+import { DEFAULT_DISPLAY } from './linear.ts'
 import { removeWorktree } from './cockpit.ts'
 
 const noMatch = (text: string, re: RegExp, message?: string) => assert.ok(!re.test(text), message ?? `unexpected ${re}`)
@@ -555,28 +556,18 @@ test('the PR shows as its number in the state\'s color; the tooltip adds the sta
   assert.match(prBadge({ number: 7, url: 'u', state: 'draft', checks: null }), /data-tip="PR #7 draft"/, 'no title, no second line')
 })
 
-test('a branch shows without its user/ prefix; its color is stable per repo and branch', () => {
-  assert.equal(branchName('berkantay/bou-4186-clock-terminal'), 'bou-4186-clock-terminal')
-  assert.equal(branchName('pr-on-rows'), 'pr-on-rows', 'no prefix: unchanged')
-  assert.equal(branchName('team/feat/x'), 'feat/x', 'only the first segment goes')
+test("a branch's color is stable per repo and branch, and only its tree lines wear it", () => {
   const c = branchColor('mono', 'berkantay/bou-4186-clock-terminal')
   assert.ok(Number.isInteger(c) && c >= 0 && c < BRANCH_COLORS)
   assert.equal(branchColor('mono', 'berkantay/bou-4186-clock-terminal'), c, 'the same branch, the same color, every time')
   const spread = new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'].map((b) => branchColor('mono', `feat-${b}`)))
   assert.equal(spread.size, BRANCH_COLORS, 'branches spread over the whole palette')
-  assert.equal(branchChip({ repo: 'mono', branch: null, pr: null }), '', 'no branch: nothing')
-  const chip = branchChip({ repo: 'mono', branch: 'berkantay/bou-4186-clock-terminal', pr: null })
-  assert.match(chip, /^<span class="br"><span class="br-b" data-tip="berkantay\/bou-4186-clock-terminal · mono"><svg class="gh" viewBox="0 0 16 16"[\s\S]*<\/svg><span class="br-n">bou-4186-clock-terminal<\/span><\/span><\/span>$/, 'the GitHub mark, the short branch, the whole one on hover')
-  noMatch(chip, /class="pr /, 'no PR: no number')
-  assert.match(branchChip({ repo: 'mono', branch: 'dev', pr: null }), /^<span class="br quiet">/, 'a long-lived branch shows quieter')
-  noMatch(chip, /style=|data-branch|--br/, 'the mark and the branch are never painted in the branch color')
   assert.equal(laneColor({ repo: 'mono', branch: 'berkantay/bou-4186-clock-terminal' }), c, 'its tree lines wear its color')
   assert.equal(laneColor({ repo: 'mono', branch: 'dev' }), null, 'a long-lived branch draws neutral lines')
   assert.equal(laneColor({ repo: 'mono', branch: null }), null, 'no branch: neutral lines')
-  assert.match(branchChip({ repo: 'shop', branch: 'me/x', pr: { number: 9, url: 'u', state: 'open', checks: 'success' } }), /<span class="br-n">x<\/span><\/span><span class="pr pr-ok" role="link" data-pr="u"[^>]*>#9<\/span><\/span>$/, 'with a PR, its number follows the branch')
 })
 
-test('each chat shows its worktree\'s branch, colored per branch, with the PR number when there is one', () => {
+test("tree rows show no branch label: the PR's number, project and age on the right, the branch only as the lines' color", () => {
   const pr = (number: number, state: string, checks: 'success' | 'pending' | null = null) => ({ number, url: `https://github.com/o/r/pull/${number}`, state, title: `PR ${number}`, checks })
   const lead = agent('p-lead', 'Clock terminal', 'working', { coordinator: 'alpha', summary: summary({ role: 'lead' }) })
   const same = agent('p-same', 'Write tests', 'working', { coordinator: 'alpha', leadPane: 'p-lead' })
@@ -594,23 +585,19 @@ test('each chat shows its worktree\'s branch, colored per branch, with the PR nu
   const { main } = render(s, { ...emptyUi(), now: 3_600_001 })
   const line = (pane: string) => new RegExp(`<(button|div) class="item[^"]*"[^>]*data-menu="agent:${pane}"[\\s\\S]*?</\\1>`).exec(main)![0]
   const color = (pane: string) => /^<[^>]*data-branch="(\d)"/.exec(line(pane))?.[1] ?? null
-  const branch = (pane: string) => /class="br-n">([^<]*)</.exec(line(pane))?.[1] ?? null
   const prs = (pane: string) => [...line(pane).matchAll(/class="pr [^"]*"[^>]*>#(\d+)</g)].map((m) => Number(m[1]))
   const clock = String(branchColor('shop', 'berkantay/clock'))
-  assert.equal(branch('p-lead'), 'clock', 'the lead shows its branch, user/ prefix stripped')
-  assert.deepEqual(prs('p-lead'), [6241], 'and its PR\'s number')
-  assert.equal(color('p-lead'), clock, 'in its branch\'s color')
-  assert.match(line('p-lead'), /Clock terminal<\/span><span class="r"><span class="br">[\s\S]*?#6241<\/span><\/span><span class="age">1h<\/span><\/span><\/button>$/, 'branch, then age, last on the row')
-  assert.equal(branch('p-same'), null, 'a worker in its lead\'s worktree does not repeat the branch')
-  assert.deepEqual(prs('p-same'), [])
+  noMatch(main, /class="br|class="gh|berkantay\/clock|>clock</, 'no GitHub mark and no branch name anywhere in the tree')
+  assert.deepEqual(prs('p-lead'), [6241], 'the lead shows its PR\'s number')
+  assert.equal(color('p-lead'), clock, 'its lines wear its branch\'s color')
+  assert.match(line('p-lead'), /Clock terminal<\/span><span class="r"><span class="pr pr-ok"[^>]*>#6241<\/span><span class="age">1h<\/span><\/span><\/button>$/, 'the PR on its own, then the age, last on the row')
+  assert.deepEqual(prs('p-same'), [], 'a worker in its lead\'s worktree repeats nothing')
   assert.equal(color('p-same'), clock, 'but wears its color, so it groups with its lead')
   assert.match(line('p-same'), /^<button class="item indent"/)
-  assert.equal(branch('p-own'), 'split', 'a worker in a worktree of its own shows that worktree\'s branch')
-  assert.deepEqual(prs('p-own'), [6250])
+  assert.deepEqual(prs('p-own'), [6250], 'a worker in a worktree of its own shows that worktree\'s PR')
   assert.equal(color('p-twin'), clock, 'another worktree on the same branch: the same color')
   assert.equal(color('p-own'), String(branchColor('shop', 'berkantay/split')))
   assert.deepEqual(prs('p-twin'), [], 'no PR: no number')
-  assert.equal(branch('p-bare'), null, 'no branch: nothing')
   assert.equal(color('p-bare'), null)
   noMatch(line('p-bare'), /class="(br|pr)[ "]|data-branch|class="gh"/)
   assert.deepEqual(prs('p-gone'), [6113], 'a finished lead shows its merged PR')
@@ -737,7 +724,7 @@ test("a worker nested under its lead shows no project, PR or age; the lead keeps
   const s: Snapshot = { ...snap, rows: [row('bugs', 'orca-plugin', [lead, worker], { pr: { number: 42, url: 'u', state: 'open', checks: 'success' }, lastActivityAt: 1 })] }
   const { main } = render(s, { ...emptyUi(), now: 3_600_001 })
   const right = (pane: string) => new RegExp(`data-menu="agent:${pane}"[\\s\\S]*?<span class="r">([\\s\\S]*?)</span></button>`).exec(main)![1]
-  assert.match(right('p-lead'), /<span class="soft">orca-plugin<\/span><span class="br">[\s\S]*class="pr pr-ok"[\s\S]*<span class="age">1h<\/span>$/, 'the lead row keeps project, PR and age')
+  assert.match(right('p-lead'), /^<span class="pr pr-ok"[^>]*>#42<\/span><span class="soft">orca-plugin<\/span><span class="age">1h<\/span>$/, 'the lead row keeps PR, project and age')
   assert.equal(right('p-w'), '', 'the nested worker row has none of them')
 })
 
@@ -1083,4 +1070,190 @@ test('Remove worktree is offered only while no agent in the worktree is mid-turn
     assert.equal(canRemove(row('w', 'web-app', [done, agent('p-b', 'Other', state)])), true, `${state}: offered`)
   assert.equal(canRemove(row('w', 'web-app', [done, agent('p-b', 'Alert watch', 'working', { workingMode: 'monitoring' })])), false, 'a monitoring chat in the same worktree hides it')
   assert.equal(canRemove(row('w', 'web-app', [done], { main: true })), false, 'never the main checkout')
+})
+
+// ---------- the Linear section ----------
+
+const lin = (id: string, over: Partial<LinearIssue> = {}): LinearIssue => ({
+  id, title: `Issue ${id}`, url: `https://linear.app/acme/issue/${id}`, state: { name: 'Todo', type: 'unstarted', color: '' },
+  team: 'BOU', project: null, projectColor: '', assignee: { id: 'me', name: 'me' }, priority: 3, cycle: 'c1', updatedAt: 0, ...over
+})
+const linearData = (issues: LinearIssue[], over: Partial<LinearData> = {}): LinearData => ({
+  me: 'me', teams: ['BOU'], connectedTeams: ['BOU'], issues, cycles: ['c1'], sent: {}, lastSent: {}, at: 0, ...over
+})
+const linearUi = (over: Partial<UiState> = {}): UiState => ({ ...emptyUi(), ...over })
+/** The issue IDs a section shows, top to bottom. */
+const shownIds = (html: string) => [...html.matchAll(/class="lid">([^<]+)</g)].map((m) => m[1])
+
+test('the Linear section is hidden until Linear data comes, and while searching', () => {
+  assert.equal(render(snap, emptyUi()).linear, '')
+  assert.equal(render(snap, { ...emptyUi(), query: 'x' }, linearData([lin('BOU-1')])).linear, '')
+  assert.match(render(snap, emptyUi(), linearData([lin('BOU-1')])).linear, /Linear · BOU/)
+})
+
+test('Linear rows: status and priority icons, ID and title, escaped; a linked issue shows its lead and coordinator and sorts last', () => {
+  const lead = agent('p-lead', 'Raise the body limit', 'working', { coordinator: 'alpha', summary: summary({ role: 'lead' }), terminal: 'term-1' })
+  const s: Snapshot = { ...snap, rows: [...snap.rows, row('wt-87', 'mono', [lead], { linearIssue: 'BOU-87' })] }
+  const html = render(s, emptyUi(), linearData([
+    lin('BOU-87', { priority: 1 }),
+    lin('BOU-2', { title: '<img src=x onerror=alert(1)>', priority: 2 }),
+    lin('BOU-3', { priority: 0 })
+  ])).linear
+  assert.deepEqual(shownIds(html), ['BOU-2', 'BOU-3', 'BOU-87'])
+  noMatch(html, /<img/)
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/)
+  const linked = html.slice(html.indexOf('BOU-87'))
+  assert.match(html, /class="item lrow linked" data-open="wt-87" data-terminal="term-1">/)
+  assert.match(linked, /<span>alpha<\/span>/)
+  noMatch(linked.slice(0, linked.indexOf('</button>')), /Send/)
+  assert.match(html, /data-lsend="BOU-2"[^>]*>.*Send/)
+})
+
+test('the switch: Mine, Team and Cycle with their counts; Team and Cycle name the assignee when it is not me', () => {
+  const d = linearData([lin('BOU-1'), lin('BOU-2', { assignee: { id: 'u2', name: 'ernst' } }), lin('BOU-3', { assignee: null, cycle: 'old' })])
+  const mine = render(snap, emptyUi(), d).linear
+  assert.match(mine, /data-lfilter="mine" aria-pressed="true">Mine 1</)
+  assert.match(mine, /data-lfilter="team" aria-pressed="false">Team 3</)
+  assert.match(mine, /data-lfilter="cycle" aria-pressed="false">Cycle 2</)
+  noMatch(mine, /class="rest"/)
+  const team = render(snap, linearUi({ linearFilter: 'team' }), d).linear
+  assert.deepEqual(shownIds(team), ['BOU-3', 'BOU-2', 'BOU-1'])
+  assert.match(team, /<span class="rest">ernst<\/span>/)
+  assert.match(team, /<span class="rest">unassigned<\/span>/)
+  assert.equal((team.match(/class="rest"/g) ?? []).length, 2, 'not on my own issue')
+})
+
+test('folded, the section is its header: the count and name of the filter, and what is starting', () => {
+  const d = linearData([lin('BOU-1'), lin('BOU-2')], { sent: { 'BOU-2': { coordinator: 'alpha', at: 1 } } })
+  const html = render(snap, linearUi({ linearFolded: true }), d).linear
+  assert.match(html, /data-lfold aria-expanded="false"/)
+  assert.match(html, /<span class="fc">2<\/span>/)
+  assert.match(html, /1 starting<\/span><span class="sepd">Mine</)
+  noMatch(html, /class="lid"|data-lfilter/)
+})
+
+test('Staging folds away at the end; a long list shows its first rows and how many more', () => {
+  const many = Array.from({ length: LINEAR_ROWS + 5 }, (_, i) => lin(`BOU-${i + 1}`))
+  const staging = [lin('BOU-900', { state: { name: 'Staging', type: 'started', color: '' } }), lin('BOU-901', { state: { name: 'Staging', type: 'started', color: '' } })]
+  const html = render(snap, emptyUi(), linearData([...many, ...staging])).linear
+  assert.equal(shownIds(html).length, LINEAR_ROWS)
+  assert.match(html, /data-lmore="linear-all:status:Todo" aria-expanded="false">.*5 more<\/button>/)
+  assert.match(html, /data-lmore="linear-hidden:staging" aria-expanded="false">.*2 on Staging<\/button>/)
+  assert.ok(html.indexOf('5 more') < html.indexOf('on Staging'))
+  const open = render(snap, linearUi({ unfolded: new Set(['linear-all:status:Todo', 'linear-hidden:staging']) }), linearData([...many, ...staging])).linear
+  assert.equal(shownIds(open).length, LINEAR_ROWS + 7)
+  assert.match(render(snap, linearUi({ linearFilter: 'cycle' }), linearData([lin('BOU-1')], { cycles: [] })).linear, /Nothing open: no active cycle found/)
+})
+
+test('a sent issue shows its coordinator starting until a worktree links it; then its lead', () => {
+  const d = linearData([lin('BOU-5')], { sent: { 'BOU-5': { coordinator: 'alpha', at: 1 } } })
+  const sent = render(snap, emptyUi(), d).linear
+  assert.match(sent, /data-coordinator="alpha"/)
+  assert.match(sent, /alpha · starting/)
+  assert.match(sent, /data-tip="In Progress"/, 'shown In Progress, as the send moved it')
+  const lead = agent('p-l', 'Hours', 'working', { coordinator: 'alpha', summary: summary({ role: 'lead' }) })
+  const linked = render({ ...snap, rows: [...snap.rows, row('wt-5', 'mono', [lead], { linearIssue: 'BOU-5' })] }, emptyUi(), d).linear
+  noMatch(linked, /starting/)
+  assert.match(linked, /data-open="wt-5"/)
+})
+
+test("the tree shows a worktree's Linear issue on the right of its lead's row, before the PR, project and age; not on workers in the same worktree", () => {
+  // main covers every project, so its rows name theirs.
+  const lead = agent('p-l', 'Planner hours', 'working', { coordinator: 'main' })
+  const worker = agent('p-w', 'Write tests', 'working', { coordinator: 'main', leadPane: 'p-l' })
+  const pr = { number: 9, url: 'u', state: 'open', checks: 'success' as const }
+  const { main } = render({ ...snap, rows: [row('wt', 'shop', [lead, worker], { linearIssue: 'BOU-4179', pr, lastActivityAt: 1 })] }, { ...emptyUi(), now: 3_600_001 })
+  assert.equal((main.match(/class="idchip"/g) ?? []).length, 1)
+  assert.match(main, /<span class="t">Planner hours<\/span><span class="r"><span class="idchip">.*?BOU-4179<\/span><span class="pr pr-ok"[^>]*>#9<\/span><span class="soft">shop<\/span><span class="age">1h<\/span><\/span>/)
+  // A worker in a worktree of its own shows that worktree's issue, before its PR.
+  const own = agent('p-o', 'Split', 'working', { coordinator: 'main', leadPane: 'p-l' })
+  const split = render({ ...snap, rows: [row('wt', 'shop', [lead]), row('wt2', 'shop', [own], { linearIssue: 'BOU-7', pr })] }, emptyUi()).main
+  assert.match(split, /<span class="t">Split<\/span><span class="r"><span class="idchip">.*?BOU-7<\/span><span class="pr pr-ok"/)
+  // Below 300 px the chip gives its room to the title.
+  assert.match(readFileSync(new URL('./panel/panel.css', import.meta.url).pathname, 'utf8'), /@media \(max-width: 300px\) \{ \.r > \.idchip \{ display: none; \} \}/)
+})
+
+test('coordinators in tree order: awake ones first, then sleeping', () => {
+  const s: Snapshot = { ...snap, coordinators: [{ key: 'zz', name: 'zz', repos: [], workspaceId: null }, ...snap.coordinators] }
+  assert.deepEqual(coordinatorOrder(s).map((c) => c.key), ['alpha', 'main', 'zz'])
+})
+
+test('a worktree created without --linear-issue is linked by its branch: the section shows its lead, the tree its ID', () => {
+  const lead = agent('p-l', 'Planner staff-hour totals', 'working', { coordinator: 'alpha', summary: summary({ role: 'lead' }) })
+  const s: Snapshot = { ...snap, rows: [row('wt-hours', 'mono', [lead], { branch: 'bou-4179-planned-hours' })] }
+  const r = render(s, emptyUi(), linearData([lin('BOU-4179'), lin('BOU-1')]))
+  assert.match(r.linear, /class="item lrow linked" data-open="wt-hours"/)
+  noMatch(r.linear.slice(r.linear.indexOf('BOU-4179')), /data-lsend="BOU-4179"/)
+  assert.deepEqual(shownIds(r.linear), ['BOU-1', 'BOU-4179'])
+  assert.match(r.main, /<span class="t">Planner staff-hour totals<\/span><span class="r"><span class="idchip">.*?BOU-4179<\/span>/)
+  // Without Linear data no team is known, so a branch links nothing.
+  noMatch(render(s, emptyUi()).main, /idchip/)
+})
+
+test('display: a Display button left of the switch, with a dot once anything differs from the default; none while folded', () => {
+  const d = linearData([lin('BOU-1')])
+  const plain = render(snap, emptyUi(), d).linear
+  assert.match(plain, /data-ldisplay[^>]*aria-label="Display options"[^>]*>.*?<\/button><span class="seg"/)
+  noMatch(plain, /class="dot"/)
+  const changed = render(snap, linearUi({ linearDisplay: { ...DEFAULT_DISPLAY, sort: 'updated' } }), d).linear
+  assert.match(changed, /aria-label="Display options \(changed\)"[^>]*>.*?<span class="dot"><\/span><\/button>/)
+  noMatch(render(snap, linearUi({ linearFolded: true }), d).linear, /data-ldisplay/)
+})
+
+test('groups are sub-headers with a glyph, name and count; a folded group hides its rows; Backlog folds away at the end', () => {
+  const d = linearData([
+    lin('BOU-1', { state: { name: 'In Progress', type: 'started', color: '' } }),
+    lin('BOU-2'), lin('BOU-3'),
+    lin('BOU-4', { state: { name: 'Backlog', type: 'backlog', color: '' } })
+  ])
+  const html = render(snap, emptyUi(), d).linear
+  assert.match(html, /data-lgroup="status:In Progress" aria-expanded="true">.*?<span class="lic"[^>]*>.*?<span class="gl">In Progress<\/span><span class="gc">1<\/span>/)
+  assert.match(html, /data-lgroup="status:Todo" aria-expanded="true">.*?<span class="gc">2<\/span>/)
+  assert.match(html, /data-lmore="linear-hidden:backlog" aria-expanded="false">.*1 in Backlog<\/button>/)
+  assert.deepEqual(shownIds(html), ['BOU-1', 'BOU-3', 'BOU-2'])
+  const folded = render(snap, linearUi({ linearGroupFolds: new Set(['status:Todo']) }), d).linear
+  assert.match(folded, /data-lgroup="status:Todo" aria-expanded="false">/)
+  assert.deepEqual(shownIds(folded), ['BOU-1'])
+  const flat = render(snap, linearUi({ linearDisplay: { ...DEFAULT_DISPLAY, group: 'none' } }), d).linear
+  noMatch(flat, /data-lgroup/)
+  assert.deepEqual(shownIds(flat), ['BOU-1', 'BOU-3', 'BOU-2'])
+})
+
+test('grouped by project: a color dot per project, "No project" last; a project filter shows one chip that clears it', () => {
+  const d = linearData([lin('BOU-1', { project: 'Shift <Scheduling>', projectColor: '#26b5ce' }), lin('BOU-2', { project: 'Shift <Scheduling>', projectColor: '#26b5ce' }), lin('BOU-3'), lin('BOU-4', { project: 'ISO', projectColor: 'red;}' })])
+  const byProject = render(snap, linearUi({ linearDisplay: { ...DEFAULT_DISPLAY, group: 'project' } }), d).linear
+  assert.deepEqual([...byProject.matchAll(/<span class="gl">([^<]*)<\/span>/g)].map((m) => m[1]), ['Shift &lt;Scheduling&gt;', 'ISO', 'No project'])
+  assert.match(byProject, /<i class="pdot" style="background:#26b5ce"/)
+  noMatch(byProject, /red;\}/)
+  const one = render(snap, linearUi({ linearDisplay: { ...DEFAULT_DISPLAY, projects: ['Shift <Scheduling>'] } }), d).linear
+  assert.match(one, /<div class="pchips"><button class="pchip" data-lprojects-clear[^>]*><i class="pdot" style="background:#26b5ce"[^>]*><\/i>Shift &lt;Scheduling&gt;<svg/)
+  assert.deepEqual(shownIds(one).sort(), ['BOU-1', 'BOU-2'])
+  assert.match(one, /Mine 2</)
+  const two = render(snap, linearUi({ linearDisplay: { ...DEFAULT_DISPLAY, projects: ['ISO', ''] } }), d).linear
+  assert.match(two, /data-lprojects-clear[^>]*>2 projects<svg/)
+  assert.match(render(snap, linearUi({ linearDisplay: { ...DEFAULT_DISPLAY, projects: ['Gone'] } }), d).linear, /Nothing open in these projects/)
+})
+
+test('a Linear row keeps its height when hovered: rows are a fixed height, and the Send pill and right side fit in them', () => {
+  const css = readFileSync(new URL('./panel/panel.css', import.meta.url).pathname, 'utf8')
+  const px = (selector: string, prop: string) => {
+    const rule = new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`).exec(css)?.[1] ?? ''
+    const m = new RegExp(`(?:^|;)\\s*${prop}:\\s*([\\d.]+)px`).exec(rule)
+    return m ? Number(m[1]) : NaN
+  }
+  const row = px('.lrow', 'height'), line = px('.lrow .r', 'height'), pill = px('.lrow .send', 'height')
+  assert.ok(row > 0, '.lrow has a fixed height')
+  assert.ok(line > 0 && pill > 0 && pill <= line, `the pill (${pill}px) fits the right side's line (${line}px)`)
+  // .item pads a row 5px above and below.
+  assert.ok(line + 10 <= row, `the line (${line}px) fits the row (${row}px)`)
+})
+
+test("IDs share their neighbours' baseline whatever the monospace font: the chip with the PR, project and age, a Linear row's ID with its title", () => {
+  const css = readFileSync(new URL('./panel/panel.css', import.meta.url).pathname, 'utf8')
+  assert.match(css, /\n\.r > :is\(\.idchip, \.pr, \.soft, \.age\) \{ align-self: baseline; \}/)
+  assert.match(css, /\n\.lrow > :is\(\.lid, \.t\) \{ align-self: baseline; \}/)
+  // The chip's baseline is its text's: one line box as tall as the chip, not a flex box centering it.
+  const chip = /\n\.idchip \{([^}]*)\}/.exec(css)?.[1] ?? ''
+  assert.match(chip, /display: inline-block;/)
+  assert.match(chip, /height: 17px;[\s\S]*font: 10\.5px\/17px /)
 })
