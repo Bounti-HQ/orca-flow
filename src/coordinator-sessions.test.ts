@@ -1,7 +1,7 @@
 import { assert, test } from 'orca/testing'
 import { associateSession, askKey, chooseSession, currentRecipient, deliverCurrent, deliveryReceipt, DeliveryUncertainError, deliveryBlock, memberAgent, memberFrom, readMemberHistory, reconcileSessions, selectCurrent, sessionChoices, sessionKey, validSessions } from './coordinator-sessions.ts'
 import { assignCoordinators, coordinatorSession, readCoordinators, scaffoldCoordinator, writeCoordinatorSessions } from './coordinators.ts'
-import { foldCoordinatorFolders, fromPs, openAgent } from './worker.ts'
+import { foldCoordinatorFolders, fromPs, livePanes, openAgent, summaryAgents } from './worker.ts'
 import { askingRows, emptyUi, render } from './view.ts'
 import type { Coordinator, CoordinatorSessions } from './protocol.ts'
 
@@ -565,4 +565,52 @@ test('unselected alternatives use a neutral logo trigger; a single session keeps
   const mixed = render({ rows: [...singleRows, other], coordinators: single, source: 'cli', capacity: null }, emptyUi()).main
   assert.ok(!mixed.includes('class="session-trigger"'))
   assert.match(mixed, /class="provider" role="img" aria-label="Codex"/)
+})
+
+test('summary inventory includes all live coordinator members without changing selected recipients or nesting', () => {
+  const { rows, lineage, c } = fixture()
+  const all = assignCoordinators(rows, [c], lineage)
+  const coordinators: Coordinator[] = [{ ...c }]
+  const visible = foldCoordinatorFolders(all, coordinators, [c.dir])
+  const before = JSON.stringify(c.sessions)
+  const snap = { rows: visible, coordinators }
+  assert.deepEqual(summaryAgents(snap).map(({ agent }) => agent.paneKey).sort(), ['helper:1', 'lead:1', 'new:1', 'old:1', 'worker:1'])
+  assert.deepEqual(livePanes(snap, true), ['old:1'], 'an idle non-current member is still a refresh target')
+  assert.equal(currentRecipient(coordinators[0], all).agent.paneKey, 'new:1')
+  assert.equal(JSON.stringify(c.sessions), before)
+  const hierarchy = visible.map((r) => [r.agents[0].paneKey, r.agents[0].leadPane])
+  coordinators[0].sessions = selectCurrent(c.sessions, c.sessions.members[0].id)
+  const switched = foldCoordinatorFolders(all, coordinators, [c.dir])
+  assert.deepEqual(summaryAgents({ rows: switched, coordinators }).map(({ agent }) => agent.paneKey).sort(), livePanes(snap).sort())
+  assert.equal(currentRecipient(coordinators[0], all).agent.paneKey, 'old:1')
+  assert.deepEqual(switched.map((r) => [r.agents[0].paneKey, r.agents[0].leadPane]), hierarchy)
+})
+
+test('summary inventory deduplicates cross-workspace members and excludes archives or ambiguous identities', () => {
+  const { rows, c } = fixture()
+  const other = { ...rows[0], id: 'folder:other', agents: [{ ...rows[0].agents[1], paneKey: 'other:1' }] }
+  const member = memberFrom(other, other.agents[0])
+  const coordinators: Coordinator[] = [{ ...c, workspaceId: rows[0].id, members: [
+    { ...c.sessions.members[0], agent: null }, // lastAgent must never be read as live history
+    { ...member, agent: other.agents[0] }
+  ] }]
+  const targets = summaryAgents({ rows: [other], coordinators })
+  assert.equal(targets.length, 1)
+  assert.equal(targets[0].worktreeId, 'folder:other', 'member workspace, not coordinator home')
+  assert.equal(targets[0].agent.orcaSession, member.orcaSession)
+  const contradiction = { ...other, agents: [{ ...other.agents[0], orcaSession: 'replacement-session' }] }
+  assert.deepEqual(summaryAgents({ rows: [contradiction], coordinators }), [], 'do not choose the first or selected duplicate pane')
+  other.agents[0].live = false
+  assert.deepEqual(summaryAgents({ rows: [other], coordinators }), [], 'offline rows and members are not refreshed')
+  coordinators[0].members = []
+  coordinators[0].session = rows[0].agents[0]
+  assert.deepEqual(summaryAgents({ rows: [], coordinators }), [], 'explicit empty membership cannot fall back to a stale current pointer')
+})
+
+test('owned structured Codex chats remain summary targets without a PTY', () => {
+  const rows = fromPs([{ identity: { key: 'chat-workspace' }, agents: [
+    { paneKey: 'chat-pane', orcaSessionId: 'orca-chat', agentType: 'codex', state: 'done', hasLivePty: false, structuredHostOwned: true },
+    { paneKey: 'closed-pane', orcaSessionId: 'orca-closed', agentType: 'codex', state: 'done', hasLivePty: false }
+  ] }])
+  assert.deepEqual(summaryAgents({ rows, coordinators: [] }).map(({ agent }) => [agent.paneKey, agent.orcaSession]), [['chat-pane', 'orca-chat']])
 })

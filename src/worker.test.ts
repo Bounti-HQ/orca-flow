@@ -415,7 +415,7 @@ test("transcripts come from Orca's SQLite hook store, newest entry per pane, els
   assert.equal(transcriptOf('tab-b:leaf-2', files), null, 'a transcript that is gone')
   const commitmentOnly = findTranscript('tab-c:leaf-3', files)
   assert.equal(commitmentOnly.path, null, 'a commitment row has no transcript')
-  assert.match(commitmentOnly.path === null ? commitmentOnly.why : '', /last-status\.db has no entry for the pane; .*last-status\.json does not exist/)
+  assert.match(commitmentOnly.path === null ? commitmentOnly.why : '', /No exact pane transcript binding/)
   db.close()
 
   writeFileSync(files.json, JSON.stringify({ entries: { 'tab-d:leaf-4': { providerSession: { transcriptPath: legacy } } } }))
@@ -649,7 +649,7 @@ test('turns are summarized once per burst, one run per pane, newest job after a 
   s.onStatus({ paneKey: 'none-2', workspaceId: null, state: 'done' })
   await until(() => looked('none-2') === 2, "none-2's lookup and retry")
   assert.equal(logs.length, 1, 'a missing transcript is logged once, not every turn')
-  assert.match(logs[0], /SUMMARIES OFF: no Claude transcript found for pane none\b.*no entry/)
+  assert.match(logs[0], /SUMMARIES OFF: no supported transcript found for pane none\b.*no entry/)
   release()
   s.dispose()
 })
@@ -703,7 +703,7 @@ test('stale cards are re-summarized forced, through the shared queue, two at a t
   assert.deepEqual([...started].sort(), ['p1!', 'p2!', 'p3!', 'p4!', 'p5!', 'p9'])
   assert.equal(most, 2, 'never more than two Haiku calls at once')
   assert.ok(gaps.length >= 3 && gaps.every((g) => g === 1000), 'a pause between refreshes')
-  assert.deepEqual(logs, ['summary for p3 failed: Haiku timed out'])
+  assert.deepEqual(logs, ['summary for p3 failed: writer failed unexpectedly; check the writer integration (existing card preserved)'])
   s.dispose()
 })
 
@@ -1372,6 +1372,7 @@ function coordinatorFolder(withTabs = true) {
     { worktreeId: 'r::/c/bounti', path: '/c/bounti', isMainWorktree: true, displayName: 'bounti', repo: 'bounti', liveTerminalCount: tabs.length + 1, agents: [...tabs, { paneKey: 'tab-c:1', parentPaneKey: null, state: 'done', agentType: 'claude', conversationName: 'Isola on_demand expo support' }] },
     { identity: { key: 'wt-1' }, path: '/w/mono-1', displayName: 'bou-4100', repo: 'mono', branch: 'refs/heads/bou-4100', liveTerminalCount: 1, agents: [{ paneKey: 'tab-x:1', state: 'working', agentType: 'claude' }] }
   ]
+  for (const w of ps) for (const a of w.agents ?? []) a.hasLivePty = true
   const info = { key: 'bounti', name: 'bounti', repos: ['mono'], workspaceId: null, dir: '/c/bounti', about: '' }
   const lineage = { dispatcherOf: new Map<string, string>(), paneOf: new Map<string, string>([['term_c', 'tab-c:1'], ['term_l', 'tab-l:1'], ['term_w', 'tab-w:1']]), dispatchOf: new Map<string, 'open' | 'settled'>(withTabs ? [['tab-l:1', 'open'], ['tab-w:1', 'open']] : []) }
   const all = assignCoordinators(main.fromPs(ps, store, new Map([['/c/bounti', 'folder:bounti']])), [info], lineage)

@@ -1,18 +1,19 @@
-// The end-of-turn summarizer: reads an agent's Claude transcript and asks Haiku for a status card
+// The end-of-turn summarizer: reads an agent's Claude or Codex conversation and asks Haiku for a status card
 // (title, about, the ask at a glance, what it is watching, a priority guess). Shared by the plugin
 // worker, which runs it when Orca reports a finished turn, and `orca-flow summarize-run`.
-import { execFile } from 'node:child_process'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { homedir, userInfo } from 'node:os'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
+import { conversationalPrompt, discoverTranscript, normalizedRecords, readTranscript, sourceCurrent, type FoundTranscript, type TranscriptIdentity, type TranscriptSource } from './transcripts.ts'
 import { COORDINATOR_HOME, isCoordinatorHome } from './coordinators.ts'
 import type { AgentSummary } from './protocol.ts'
+export { claudeConfigDir } from './writer.ts'
+import { cliProviders, createWriter, WriterError, writerDiagnostic, type Writer } from './writer.ts'
 import { checkFrame, parseFrame, sentencesOf } from '../skills/orca-flow/scripts/frame.mjs'
 
 export const DATA_DIR = join(homedir(), '.orca-flow')
 const AGENTS = join(DATA_DIR, 'agents')
-const ORCA_DATA = join(homedir(), 'Library', 'Application Support', 'orca')
 
 /**
  * Written into every card as `summarizer`. Bump it whenever SYSTEM_PROMPT, COORDINATOR_ASKS,
@@ -20,7 +21,7 @@ const ORCA_DATA = join(homedir(), 'Library', 'Application Support', 'orca')
  * starts, it re-summarizes live agents whose card an older summarizer wrote (no field = 0), so the
  * fix shows at once instead of at the agent's next turn.
  */
-export const SUMMARIZER_VERSION = 7
+export const SUMMARIZER_VERSION = 8
 
 export const SUMMARY_SCHEMA = {
   type: 'object',
@@ -88,7 +89,7 @@ export function briefOf(text: string): string {
 }
 
 type Role = 'lead' | 'worker' | 'coordinator' | 'solo'
-type Event = { kind: 'user' | 'assistant' | 'tool'; text: string; raw?: string; at?: string; reports?: boolean }
+type Event = { final?: boolean; kind: 'user' | 'assistant' | 'tool'; text: string; raw?: string; at?: string; reports?: boolean }
 
 /** Decided from facts, not by the model: a lead's first prompt names its role; an agent Orca
  * dispatched carries Orca's worker preamble (or, outside a coordinator folder, its Dispatch id);
@@ -115,33 +116,29 @@ const SENDS_DONE = /^(?:.*(?:&&|;)\s*)?(?:\S*\/)?orca orchestration send\b.*--ty
  */
 export type Digest = { role: Role; firstPrompt: string; context: string; turn: string; lastAssistant: string; lastMessage: string; turnAt: string | null; reported: boolean }
 
-/** Condense a Claude Code transcript into what the summarizer needs. */
+/** Condense a Claude Code or Codex transcript into what the summarizer needs. */
 export function digest(lines: string[], home = COORDINATOR_HOME): Digest | null {
   const events: Event[] = []
   let cwd: string | null = null
-  for (const line of lines) {
-    let d: any
-    try {
-      d = JSON.parse(line)
-    } catch {
-      continue
-    }
+  let endedAt: string | null = null
+  for (const d of normalizedRecords(lines)) {
+    if (d.type === 'system' && d.subtype === 'turn_duration') endedAt = d.timestamp ?? endedAt
     if (d.isSidechain) continue
     if (!cwd && typeof d.cwd === 'string') cwd = d.cwd
     const content = d.message?.content
     if (d.type === 'user') {
       if (Array.isArray(content) && content.some((c: any) => c.type === 'tool_result')) continue
-      const raw = textOf(content).trim()
+      const raw = conversationalPrompt(textOf(content).trim())
       const text = briefOf(raw)
       // A dispatched worker's first message carries its Dispatch id: keep that fact for roleOf.
       if (text) events.push({ kind: 'user', text, raw, at: d.timestamp })
     } else if (d.type === 'assistant' && Array.isArray(content)) {
       for (const c of content) {
-        if (c.type === 'text' && c.text.trim()) events.push({ kind: 'assistant', text: c.text.trim(), at: d.timestamp })
+        if (c.type === 'text' && c.text.trim()) events.push({ kind: 'assistant', text: c.text.trim(), at: d.timestamp, final: !d.codex || !d.channel || d.channel === 'final' })
         if (c.type === 'tool_use') {
-          const detail = c.input?.command ?? c.input?.file_path ?? c.input?.description ?? ''
+          const detail = c.input?.command ?? c.input?.cmd ?? c.input?.file_path ?? c.input?.description ?? ''
           // Judged on the whole command: the shown one is clipped.
-          const reports = c.name === 'Bash' && SENDS_DONE.test(String(c.input?.command ?? '').replace(/\s+/g, ' '))
+          const reports = ['Bash', 'exec_command', 'functions.exec_command'].includes(c.name) && SENDS_DONE.test(String(c.input?.command ?? c.input?.cmd ?? '').replace(/\s+/g, ' '))
           events.push({ kind: 'tool', text: `${c.name}${detail ? `: ${clip(String(detail).replace(/\s+/g, ' '), 140)}` : ''}`, at: d.timestamp, reports })
         }
       }
@@ -154,7 +151,7 @@ export function digest(lines: string[], home = COORDINATOR_HOME): Digest | null 
   const earlier = prompts.length > 1 ? events.slice(events.indexOf(prompts.at(-2)!), latest) : []
   const turn = events.slice(latest)
   // The final message comes from the latest turn only; an earlier turn's is not this turn's.
-  const lastAssistant = [...turn].reverse().find((e) => e.kind === 'assistant')
+  const lastAssistant = [...turn].reverse().find((e) => e.kind === 'assistant' && e.final !== false)
   const render = (es: Event[]) => es
     .filter((e) => e !== lastAssistant)
     .map((e) => (e.kind === 'user' ? `USER: ${clip(e.text, 1500)}` : e.kind === 'assistant' ? `AGENT: ${clip(e.text, 800)}` : `  → ${e.text}`))
@@ -167,136 +164,17 @@ export function digest(lines: string[], home = COORDINATOR_HOME): Digest | null 
     turn: clip(render(turn), 10_000),
     lastAssistant: lastAssistant ? clip(lastAssistant.text, 4000) : '',
     lastMessage: lastAssistant?.text ?? '',
-    turnAt: events.at(-1)?.at ?? null,
+    turnAt: [events.at(-1)?.at, endedAt].filter((at): at is string => !!at).sort().at(-1) ?? null,
     reported: role === 'worker' && turn.some((e) => e.reports)
   }
 }
 
 // ---------- finding things on this Mac ----------
 
-const HOOKS_DIR = join(ORCA_DATA, 'agent-hooks')
-
-type Found = { path: string } | { path: null; why: string }
-
-/**
- * Where Orca's hook state records a pane's Claude transcript. Current Orca keeps that state in
- * SQLite (agent-hooks/last-status.db: one `entry\0<pane>` row per pane, its JSON value carrying
- * `providerSession.transcriptPath`); older Orca wrote agent-hooks/last-status.json. Reads the
- * database first, the JSON file second, and says why when neither has a transcript on disk.
- */
-export function findTranscript(pane: string, files = { db: join(HOOKS_DIR, 'last-status.db'), json: join(HOOKS_DIR, 'last-status.json') }): Found {
-  const misses: string[] = []
-  for (const [file, read] of [[files.db, entryFromDb], [files.json, entryFromJson]] as const) {
-    if (!existsSync(file)) {
-      misses.push(`${file} does not exist`)
-      continue
-    }
-    let entry: any
-    try {
-      entry = read(file, pane)
-    } catch (e) {
-      misses.push(`${file}: ${(e as Error).message}`)
-      continue
-    }
-    const path = entry?.providerSession?.transcriptPath ?? entry?.transcriptPath
-    if (typeof path === 'string' && existsSync(path)) return { path }
-    misses.push(entry ? `${file} names ${typeof path === 'string' ? `${path}, which does not exist` : 'no transcript'}` : `${file} has no entry for the pane`)
-  }
-  return { path: null, why: misses.join('; ') }
-}
-
+type Found = FoundTranscript
+export const findTranscript = discoverTranscript
 export function transcriptOf(pane: string, files?: { db: string; json: string }): string | null {
   return findTranscript(pane, files).path
-}
-
-/**
- * The newest entry row for the pane. Opened read-only: Orca writes the database live in WAL mode.
- * `node:sqlite` comes from the runtime (Node 22.13+ unflagged; Orca's plugin host runs Node 24), so
- * the plugin needs no native build; on a runtime without it the JSON fallback still applies.
- */
-function entryFromDb(file: string, pane: string): any {
-  const sqlite = process.getBuiltinModule?.('node:sqlite')
-  if (!sqlite) throw new Error('this runtime has no node:sqlite')
-  const db = new sqlite.DatabaseSync(file, { readOnly: true, timeout: 1000 })
-  try {
-    // Rows are keyed `entry\0<pane>`; match on the value's paneKey too, in case the key layout changes.
-    const rows = db.prepare(`SELECT value FROM rows WHERE key = ? OR (substr(key, 1, 5) = 'entry' AND instr(value, ?) > 0) ORDER BY seq DESC`)
-      .all(`entry\0${pane}`, JSON.stringify(pane)) as { value: string }[]
-    for (const row of rows) {
-      const entry = JSON.parse(row.value)
-      if (entry?.paneKey === pane) return entry
-    }
-    return null
-  } finally {
-    db.close()
-  }
-}
-
-function entryFromJson(file: string, pane: string): any {
-  return JSON.parse(readFileSync(file, 'utf8'))?.entries?.[pane] ?? null
-}
-
-/** The plugin worker does not inherit the shell's PATH, so look where Claude Code installs. */
-export function claudeBin(): string {
-  const home = homedir()
-  return [
-    '/opt/homebrew/bin/claude',
-    '/usr/local/bin/claude',
-    join(home, '.local', 'bin', 'claude'),
-    join(home, '.claude', 'local', 'claude')
-  ].find((p) => existsSync(p)) ?? 'claude'
-}
-
-/** The Claude login Orca's agents use (its selected profile), so Haiku bills the same account. */
-export function claudeConfigDir(): string | null {
-  try {
-    const dir = readFileSync(join(ORCA_DATA, 'claude-profiles', 'selected-host'), 'utf8').trim()
-    return dir && existsSync(dir) ? dir : null
-  } catch {
-    return null
-  }
-}
-
-function callHaiku(prompt: string): Promise<{ summary: any; costUSD?: number }> {
-  // Strip Orca's agent variables so Orca does not mistake this call for an agent in a pane.
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string' && !k.startsWith('ORCA_') && k !== 'CLAUDECODE') env[k] = v
-  env.ORCA_CARD_CHILD = '1'
-  env.MAX_THINKING_TOKENS = '0'
-  // Orca starts plugin workers without HOME/USER, and without them Claude cannot find its login in
-  // the macOS Keychain ("Not logged in").
-  env.HOME ??= homedir()
-  env.USER ??= userInfo().username
-  const config = claudeConfigDir()
-  if (config) env.CLAUDE_CONFIG_DIR = config
-  const args = [
-    '-p', '--model', 'haiku', '--tools', '', '--strict-mcp-config', '--no-session-persistence',
-    '--disable-slash-commands', '--setting-sources', '', '--system-prompt', SYSTEM_PROMPT,
-    '--output-format', 'json', '--json-schema', JSON.stringify(SUMMARY_SCHEMA)
-  ]
-  return new Promise((resolve, reject) => {
-    // The prompt goes on stdin: `claude -p` waits for stdin to close, and a transcript can be long.
-    const child = execFile(claudeBin(), args, { env, maxBuffer: 8 * 1024 * 1024, timeout: 90_000, cwd: homedir() }, (err, stdout, stderr) => {
-      if (err) return reject(new Error(errorOf(stdout, stderr) || err.message.split('\n')[0]))
-      try {
-        const out = JSON.parse(stdout)
-        if (out.is_error) return reject(new Error(out.result ?? 'claude -p error'))
-        resolve({ summary: out.structured_output ?? JSON.parse(out.result), costUSD: out.total_cost_usd })
-      } catch (e) {
-        reject(e as Error)
-      }
-    })
-    child.stdin?.end(prompt)
-  })
-}
-
-/** Claude's own words for a failure: the JSON result if it printed one, else stderr's last line. */
-function errorOf(stdout: string, stderr: string): string {
-  try {
-    const out = JSON.parse(stdout)
-    if (out?.result) return String(out.result)
-  } catch {}
-  return stderr.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('Warning: no stdin')).at(-1) ?? ''
 }
 
 // ---------- the card on disk ----------
@@ -413,23 +291,74 @@ export function withFrame<S extends { needs: Needs; glance?: string }>(d: Pick<D
   return { ...summary, needs, glance, ...(asks && reply ? { reply } : {}), ...(asks ? { status } : {}), source: 'frame' }
 }
 
+/** Validate before facts/frame overrides and before any write; reject unknown metadata too. */
+export function validateSummary(value: unknown): Omit<AgentSummary, 'role' | 'updatedAt'> {
+  const v = value as any
+  const strings = ['title', 'about', 'goal', 'since', 'glance', 'watching']
+  const keys = [...strings, 'needs', 'effort', 'priority']
+  if (!v || typeof v !== 'object' || Array.isArray(v)
+    || Object.keys(v).some((k) => !keys.includes(k))
+    || strings.some((k) => typeof v[k] !== 'string' || v[k].length > 4000)
+    || !v.title.trim() || !v.about.trim()
+    || !['quick', 'deep'].includes(v.effort) || !['P0', 'P1', 'P2', 'P3'].includes(v.priority)
+    || !v.needs || typeof v.needs !== 'object' || Array.isArray(v.needs)
+    || Object.keys(v.needs).some((k) => !['type', 'ask', 'options'].includes(k))
+    || !['none', 'decision', 'approval', 'review', 'info', 'action'].includes(v.needs.type)
+    || typeof v.needs.ask !== 'string' || v.needs.ask.length > 4000
+    || !Array.isArray(v.needs.options) || v.needs.options.length > 4
+    || v.needs.options.some((s: unknown) => typeof s !== 'string' || s.length > 500)) {
+    throw new Error('Invalid writer card')
+  }
+  return v
+}
+
+/** Provider validation is part of the boundary, never a programming-error fallback. */
+export function summaryProviders(providers = cliProviders()) {
+  const checked = (provider: 'haiku' | 'luna', run: Writer): Writer => async (request) => {
+    const value = await run(request)
+    try { return validateSummary(value) } catch { throw new WriterError(provider, 'invalid-output') }
+  }
+  return { haiku: checked('haiku', providers.haiku), luna: checked('luna', providers.luna) }
+}
+
+// The worker and summarize-run share the same writer and output validation.
+const summaryWriter = createWriter(summaryProviders())
+
 /**
  * Summarizes one pane's latest turn into ~/.orca-flow/agents/<pane>.json. Skips a turn already
  * summarized (unless forced), and keeps the newest when two finish close together (even when
  * forced). Returns what it did.
  */
-export async function summarizePane(input: { pane: string; transcript: string; worktreeId?: string; goal?: string; force?: boolean; dir?: string }): Promise<'written' | 'skipped' | 'empty'> {
+export async function summarizePane(input: { pane: string; transcript: string; transcriptSource?: TranscriptSource; isCurrent?: () => boolean; worktreeId?: string; goal?: string; force?: boolean; refresh?: boolean; dir?: string; writer?: Writer }): Promise<'written' | 'skipped' | 'empty'> {
   const out = join(input.dir ?? AGENTS, `${fileKey(input.pane)}.json`)
-  const d = digest(readFileSync(input.transcript, 'utf8').split('\n'))
+  const d = digest(readTranscript(input.transcript, input.transcriptSource))
   if (!d) return 'empty'
-  const previous = readJson(out)
-  if (!input.force && previous?.turnAt && d.turnAt && previous.turnAt >= d.turnAt) return 'skipped'
-  // Haiku still writes the title, about, since, watching and priority; a valid frame decides the ask.
-  const summary = withFrame(d, withFacts(d, (await callHaiku(promptFor(d, previous, input.goal))).summary))
-  // A newer turn may have finished while Haiku ran; keep the newest, even when forced.
+  const saved = readJson(out)
+  const sameSession = (card: any) => !input.transcriptSource || (
+    (!card?.transcript || card.transcript === input.transcript)
+    && (!card?.transcriptSource?.epoch || card.transcriptSource.epoch === input.transcriptSource.epoch)
+    && (!card?.orcaSession || card.orcaSession === input.transcriptSource.orcaSession)
+    && (!card?.providerSession || (card.providerSession.provider === input.transcriptSource.providerSession?.provider
+      && card.providerSession.id === input.transcriptSource.providerSession?.id))
+  )
+  const previous = sameSession(saved) ? saved : null
+  // A stale-card refresh can sit behind the turn job which already upgraded it. Manual --force
+  // still means regenerate, but a queued background refresh must not write that turn twice.
+  const refreshed = input.refresh && previous?.summarizer === SUMMARIZER_VERSION && summaryMatches(previous, {
+    orcaSession: input.transcriptSource?.orcaSession,
+    provider: input.transcriptSource?.providerSession?.provider,
+    sessionId: input.transcriptSource?.providerSession?.id
+  })
+  if ((!input.force || refreshed) && previous?.turnAt && d.turnAt && previous.turnAt >= d.turnAt) return 'skipped'
+  // Both providers write the same title/card contract; a valid frame still decides the ask.
+  const generated = await (input.writer ?? summaryWriter)({ prompt: promptFor(d, previous, input.goal), system: SYSTEM_PROMPT, schema: SUMMARY_SCHEMA })
+  const summary = withFrame(d, withFacts(d, validateSummary(generated)))
+  // Another call may have published while the provider ran; never overwrite that same/newer turn.
+  if (input.isCurrent?.() === false || (input.transcriptSource && !sourceCurrent(input.transcriptSource))) return 'skipped'
   const latest = readJson(out)
-  if (latest?.turnAt && d.turnAt && latest.turnAt > d.turnAt) return 'skipped'
-  writeJson(out, { pane: input.pane, worktreeId: input.worktreeId ?? '', transcript: input.transcript, turnAt: d.turnAt, updatedAt: Date.now(), role: d.role, summarizer: SUMMARIZER_VERSION, ...summary })
+  if (latest && !sameSession(latest) && latest.updatedAt !== saved?.updatedAt) return 'skipped'
+  if (sameSession(latest) && latest?.turnAt && d.turnAt && (latest.turnAt > d.turnAt || (latest.turnAt === d.turnAt && latest.updatedAt !== previous?.updatedAt))) return 'skipped'
+  writeJson(out, { pane: input.pane, worktreeId: input.worktreeId ?? '', transcript: input.transcript, ...(input.transcriptSource ? { transcriptSource: input.transcriptSource, orcaSession: input.transcriptSource.orcaSession, providerSession: input.transcriptSource.providerSession } : {}), turnAt: d.turnAt, updatedAt: Date.now(), role: d.role, summarizer: SUMMARIZER_VERSION, ...summary })
   return 'written'
 }
 
@@ -438,6 +367,7 @@ export async function summarizePane(input: { pane: string; transcript: string; w
 type StatusEvent = {
   paneKey: string
   workspaceId: string | null
+  sessionId?: string
   state: string
   /** The agent's own turn. Orca keeps `state` working while background work runs (an artifact watch, a job, a cron), so this is what says the turn ended. */
   mainAgent?: { state: string; stateStartedAt?: number }
@@ -452,28 +382,29 @@ export function endsTurn(event: Pick<StatusEvent, 'state' | 'mainAgent'>): boole
   const main = event.mainAgent?.state
   return event.state === 'working' && (main === 'done' || main === 'waiting')
 }
-type Job = { pane: string; transcript: string; worktreeId?: string; force?: boolean }
+export type Job = { pane: string; transcript: string; transcriptSource?: TranscriptSource; worktreeId?: string; force?: boolean; refresh?: boolean }
 type Queued = Job & { waiters: (() => void)[] }
 
 /**
  * Runs the summarizer when Orca reports that an agent's turn ended (done) or it asked the user
  * something (waiting). Waits a moment so the transcript is flushed, coalesces bursts per pane,
- * keeps one run per pane and at most `parallel` Haiku calls at once (each is a node process).
+ * keeps one run per pane and at most `parallel` writer calls at once (each is a node process).
  */
 export function turnSummarizer(opts: {
   run: (job: Job) => Promise<unknown>
-  findTranscript?: (pane: string) => Found
+  findTranscript?: (pane: string, identity?: TranscriptIdentity) => Found
   delayMs?: number
   /** Waits before looking again for a transcript that was not there yet. */
   retryMs?: number[]
   parallel?: number
   log?: (message: string) => void
 }) {
-  const find = opts.findTranscript ?? ((pane: string) => findTranscript(pane))
+  const find = opts.findTranscript ?? ((pane: string, identity?: TranscriptIdentity) => findTranscript(pane, undefined, identity))
   // A missing transcript means no summary at all; say so once, loudly, instead of failing silently.
   let warned = false
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const running = new Set<string>()
+  const failureNotices = new Map<string, number>()
   const again = new Map<string, Queued>()
   const queue: Queued[] = []
   const settle = (job: Queued) => { for (const w of job.waiters) w() }
@@ -488,7 +419,16 @@ export function turnSummarizer(opts: {
       running.add(job.pane)
       const { waiters: _, ...plain } = job
       opts.run(plain)
-        .catch((e) => opts.log?.(`summary for ${job.pane} failed: ${(e as Error).message}`))
+        .catch((e) => {
+          const diagnostic = writerDiagnostic(e)
+          // A provider outage can affect every pane; one actionable notice is enough.
+          if (e instanceof WriterError) {
+            const now = Date.now()
+            if ((failureNotices.get(diagnostic) ?? 0) + 5 * 60_000 > now) return
+            failureNotices.set(diagnostic, now)
+          }
+          opts.log?.(`summary for ${job.pane} failed: ${diagnostic}`)
+        })
         .finally(() => {
           running.delete(job.pane)
           settle(job)
@@ -518,26 +458,30 @@ export function turnSummarizer(opts: {
 
   return {
     onStatus(event: StatusEvent): void {
-      if (!endsTurn(event)) return
+      if (!endsTurn(event)) {
+        clearTimeout(timers.get(event.paneKey))
+        timers.delete(event.paneKey)
+        return
+      }
       const pane = event.paneKey
       if (event.mainAgent?.stateStartedAt !== undefined) {
-        const end = `${event.mainAgent.state}@${event.mainAgent.stateStartedAt}`
+        const end = `${event.sessionId ?? ""}:${event.mainAgent.state}@${event.mainAgent.stateStartedAt}`
         if (lastEnd.get(pane) === end) return
         lastEnd.set(pane, end)
       }
-      // A new session can report its first status a moment before Claude creates its transcript
+      // A new session can report its first status a moment before its provider creates its transcript
       // file, so a miss is looked up again before it counts.
       const retries = opts.retryMs ?? [5000, 15_000]
       const attempt = (n: number, delay: number) => {
         clearTimeout(timers.get(pane))
         timers.set(pane, setTimeout(() => {
           timers.delete(pane)
-          const found = find(pane)
-          if (found.path !== null) return void enqueue({ pane, transcript: found.path, worktreeId: event.workspaceId ?? undefined })
+          const found = find(pane, { sessionId: event.sessionId })
+          if (found.path !== null) return void enqueue({ pane, transcript: found.path, ...(found.source ? { transcriptSource: found.source } : {}), worktreeId: event.workspaceId ?? undefined })
           if (n < retries.length) return attempt(n + 1, retries[n])
           if (warned) return
           warned = true
-          opts.log?.(`SUMMARIES OFF: no Claude transcript found for pane ${pane}, so its turn was not summarized (${found.why}). Further misses are not logged.`)
+          opts.log?.(`SUMMARIES OFF: no supported transcript found for pane ${pane}, so its turn was not summarized (${found.why}). Further misses are not logged.`)
         }, delay))
       }
       attempt(0, opts.delayMs ?? 2000)
@@ -556,15 +500,52 @@ export function turnSummarizer(opts: {
 
 // ---------- refreshing cards an older summarizer wrote ----------
 
-type Card = { pane?: string; transcript?: string; worktreeId?: string; summarizer?: number; updatedAt?: number }
+type Card = { pane?: string; transcript?: string; transcriptSource?: TranscriptSource; orcaSession?: string; providerSession?: { provider: string; id: string }; worktreeId?: string; summarizer?: number; updatedAt?: number }
+
+/** An unbound legacy Claude card can stay visible; a Codex card needs a verified binding. */
+export function summaryMatches(card: Card, identity: TranscriptIdentity): boolean {
+  if (identity.orcaSession && card.orcaSession && card.orcaSession !== identity.orcaSession) return false
+  if (identity.provider && card.providerSession && card.providerSession.provider !== identity.provider) return false
+  if (identity.sessionId && card.providerSession?.id !== identity.sessionId) return false
+  if (identity.provider === 'codex' && (!card.providerSession || (identity.orcaSession && card.orcaSession !== identity.orcaSession))) return false
+  return true
+}
+
+/** Resolve current sources even for absent cards. Never refresh a cached path from another session. */
+export function currentSummaryJobs(cards: Record<string, Card>, agents: { pane: string; state: string; identity: TranscriptIdentity; worktreeId?: string }[], find = (pane: string, identity: TranscriptIdentity) => findTranscript(pane, undefined, identity)): Job[] {
+  const jobs: Job[] = [], seen = new Set<string>()
+  for (const agent of agents) {
+    if (!agent.pane || seen.has(agent.pane) || !['done', 'waiting'].includes(agent.state)) continue
+    seen.add(agent.pane)
+    const found = find(agent.pane, agent.identity)
+    if (!found.path) continue
+    const card = cards[fileKey(agent.pane)]
+    let end = lastTurnEnd(found.path, undefined, found.source)
+    if (end === null) {
+      try {
+        const d = digest(readTranscript(found.path, found.source))
+        if (d?.lastMessage && d.turnAt) end = Date.parse(d.turnAt)
+      } catch { continue }
+    }
+    // Empty/new sessions and turns still flushing are retried by the next refresh.
+    if (end === null || !Number.isFinite(end)) continue
+    const changed = !card || !summaryMatches(card, agent.identity) || card.transcript !== found.path
+      || (found.source?.providerSession && card.providerSession?.id !== found.source.providerSession.id)
+      || (found.source?.epoch && card.transcriptSource?.epoch !== found.source.epoch)
+    if (!changed && (card.summarizer ?? 0) >= SUMMARIZER_VERSION && (card.updatedAt ?? 0) >= end) continue
+    jobs.push({ pane: agent.pane, transcript: found.path, ...(found.source ? { transcriptSource: found.source } : {}), worktreeId: agent.worktreeId, force: changed || (card?.summarizer ?? 0) < SUMMARIZER_VERSION, refresh: true })
+  }
+  return jobs
+}
 
 /**
  * When the transcript's last turn ended (its last `turn_duration` line), in ms, or null. Reads only
  * the last `tail` bytes: a turn end further back than that is not looked for.
  */
-export function lastTurnEnd(transcript: string, tail = 256 * 1024): number | null {
+export function lastTurnEnd(transcript: string, tail = 256 * 1024, source?: TranscriptSource): number | null {
   let text: string
   try {
+    if (source?.kind === 'journal') return lastEndIn(readTranscript(transcript, source))
     const size = statSync(transcript).size
     const start = Math.max(0, size - tail)
     const bytes = new Uint8Array(size - start)
@@ -578,16 +559,17 @@ export function lastTurnEnd(transcript: string, tail = 256 * 1024): number | nul
   } catch {
     return null
   }
-  const lines = text.split('\n')
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (!lines[i].includes('"turn_duration"')) continue
-    try {
-      const r = JSON.parse(lines[i])
-      const at = r.type === 'system' && r.subtype === 'turn_duration' ? Date.parse(r.timestamp) : NaN
-      if (Number.isFinite(at)) return at
-    } catch {}
+  return lastEndIn(text.split('\n'))
+}
+
+function lastEndIn(lines: string[]): number | null {
+  let end: number | null = null
+  for (const r of normalizedRecords(lines)) {
+    if (r.type !== 'system' || r.subtype !== 'turn_duration') continue
+    const at = Date.parse(r.timestamp)
+    if (Number.isFinite(at)) end = Math.max(end ?? 0, at)
   }
-  return null
+  return end
 }
 
 /**

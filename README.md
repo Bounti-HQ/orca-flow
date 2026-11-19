@@ -17,7 +17,8 @@ macOS only for now.
   chats you started yourself. Click a coordinator to open its session; right-click anything for
   actions.
 - **End-of-turn summaries:** when an agent finishes a turn, Claude Haiku turns it into a short
-  title, a one-line "about" and the ask, so you can switch back in seconds.
+  title, a one-line "about" and the ask, so you can switch back in seconds. If Haiku is
+  unavailable, the writer uses GPT-6 Luna (`gpt-6-luna`) through the Codex CLI.
   When a coordinator's or lead's message ends in a valid [message frame](#message-format), its
   status, Ask and Reply are read as written: Up next labels the ask with the message's own status
   line ("Needs 2 files from you") and shows the Reply under it. An ask the agent needs only later
@@ -39,7 +40,10 @@ macOS only for now.
 ## Requirements
 
 - Orca 1.4.254 or newer, with Claude Code agents.
-- The `claude` CLI, logged in. Summaries use Claude Haiku through the same login Orca's agents use.
+- The `claude` CLI, logged in. Summaries prefer Claude Haiku through the same login Orca's agents use.
+- For writer fallback, a logged-in `codex` CLI supporting `exec --ephemeral --output-schema`
+  (isolation verified with 0.170.0) and access to `gpt-6-luna`. It uses an explicit `CODEX_HOME` when set,
+  otherwise Orca's selected host Codex account (or the system login when selected).
 - Node 22.18 or newer on your PATH, for the `orca-flow` script agents run.
 
 ## Install
@@ -184,14 +188,48 @@ Change the margin and the minimum headroom in `~/.orca-flow/config.json`:
 
 ## Privacy
 
-Summaries run on your machine with your own Claude login. After each turn the plugin sends Claude
-Haiku an excerpt of that agent's conversation: its first request, the latest turn's prompts and
-messages, and the commands and file paths its tools used. The result is written to
-`~/.orca-flow/agents/`; nothing is sent anywhere else. Each summary costs a fraction of a cent.
+The sidebar and `summarize-run` read Claude transcripts, Codex terminal rollouts, and local Orca
+structured-chat journals. Terminal discovery uses Orca's exact pane binding and verifies the
+Codex rollout's native session ID. A terminal card claiming an Orca session also requires the
+independent `agent-hooks/agent-identities.db` provider link to match that exact Orca ID, in the
+local host/provider/native-ID namespace. The link is checked again before publication; missing
+or contradictory identity metadata preserves the existing card rather than relabeling an old
+transcript after pane reuse. Legacy Claude files remain readable without claiming an Orca ID.
+Chat discovery uses the live inventory's Orca session ID and
+its separate native provider handle, then reads only visible root items in the current journal
+epoch. Sessions, transcripts, queued drafts and account settings are never modified. Injected
+instructions, orchestration wake notices, reasoning and tool results are excluded from the digest.
+
+The writer invokes local CLIs using your existing logins. After each turn it sends Claude Haiku
+an excerpt of that agent's conversation: its first request, the latest turn's prompts and
+messages, and the commands and file paths its tools used. On an availability failure, that same
+excerpt is sent to OpenAI's [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)
+through Codex instead. Provider usage limits and billing apply to the selected accounts.
+
+Both providers run separate requests without resuming or changing the source session. Codex runs
+in a temporary directory with a read-only sandbox, no session persistence, and shell, MCP, apps,
+web search, plugins and hooks disabled for that invocation. The writer pins the OpenAI
+provider and ignores user `config.toml` for this request: empty MCP tables merge with configured
+servers, so an empty-table override does not isolate a writer. `CODEX_HOME` still supplies account
+authentication; custom providers, endpoint overrides and user tool settings are not inherited.
+The original credentials and configuration are not rewritten by the plugin.
+Only a validated card replaces `~/.orca-flow/agents/<pane>.json`; total failure keeps the existing
+title and summary. Temporary schema/output files are removed after the request.
+
+Calls are bounded to 30 seconds each. Quota, rate-limit, authentication and unavailable-provider
+failures skip that provider for five minutes in the worker; timeout/transient failures skip it for
+30 seconds. A later request probes Haiku again, restoring it as primary after recovery. The worker
+logs sanitized, throttled diagnostics. Invalid output and unexpected integration errors preserve
+the card without triggering a broad provider fallback. `summarize-run` uses the same writer;
+its cooldown lasts for that command's process.
+Missing or stale cards for idle sessions are retried in the background, at most once per session
+every five minutes. While the worker is active, a one-minute inventory refresh also catches chat
+turns on hosts whose plugin status events cover terminals only. Session identity is checked again
+before publication; an old session's card is not shown as a new Codex conversation's summary.
 
 ## Where things live
 
-- `~/.orca-flow/agents/`: one summary per agent session.
+- `~/.orca-flow/agents/`: cards keyed by pane, with separate Orca/native session bindings.
 - `~/.orca-flow/cards/`: a card per worktree (priority, goal), written by coordinators.
 - `~/.orca-flow/config.json`: your settings, if you change any.
 - `~/.orca-flow/format-misses.jsonl`: one line per message that missed the message frame.
@@ -224,7 +262,18 @@ in its `settings.json`, `~/.orca-flow`, and `~/orca/coordinators` (your coordina
 - The panel reads `orca worktree ps --json`, Orca's CLI output, because the plugin API has no call
   for every agent's status. A change to that output in an Orca update can break the panel until
   the plugin is updated.
-- Summaries need Claude Code agents.
+- Conversation ingestion currently requires local Claude/Codex files or Orca's local structured
+  journal schema (`agent-session-domain.db`, verified on Orca 1.4.261). Remote/WSL journals,
+  unavailable metadata and unknown schemas fail closed. The public plugin API has no conversation
+  reader; a host schema change can require an adapter update. Codex structured-chat coverage uses
+  synthetic fixtures; live Codex terminal ingestion and writer publication were validated locally.
+- This fallback covers Orca Flow sidebar titles and summaries. Native Orca chat/tab name
+  generation belongs to the host. `orca chat rename` and `orca terminal rename` perform deliberate
+  manual renames; the public plugin API has no conditional auto-title setter or title-origin
+  metadata. The plugin therefore leaves native chat tabs, terminal tabs, native sidebar names and
+  Session History names alone. A host follow-up must expose an expected-session/expected-name
+  auto-title update that refuses user-named conversations, or apply the writer fallback inside
+  the host's own conversation-name generator.
 - Free memory refreshes every 15 seconds, and what each project's dev servers cost every 5 minutes.
 
 ## Develop
@@ -233,6 +282,13 @@ in its `settings.json`, `~/.orca-flow`, and `~/orca/coordinators` (your coordina
 scripts/dev.sh check   # types, tsc, plugin tests and orca-flow tests
 scripts/dev.sh load    # load this folder into Orca as local.flow and (re)start its worker
 scripts/dev.sh shot    # screenshot the panel to /tmp/orca-sidebar-shots
+```
+
+To verify the installed Codex CLI's configuration merging, tool isolation, provider routing and
+model rejection behavior against a local synthetic server (no real model/MCP calls):
+
+```sh
+ORCA_FLOW_CODEX_VERIFY=1 node --test test/writer-cli.test.mjs
 ```
 
 Uninstall `cyucelen.flow` first so two copies don't run. `src/worker.ts` is the plugin's worker;
