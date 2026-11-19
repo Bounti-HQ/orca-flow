@@ -16,11 +16,11 @@ import { join } from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { costsOf, decide, DEFAULT_CONFIG, diskFreeOf, envSamples, FALLBACK, readEnvMemory, typicalEnv, writeEnvMemory, type Pressure } from './capacity.ts'
 import { closeSessions, loadCockpit, removeWorktree } from './cockpit.ts'
-import { assignCoordinators, coordinatorSession, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, loadLineage, orcaRunner, readCoordinators, readLinearMemory, readOwners, rememberOwners, scaffoldCoordinator, validateName, writeLinearMemory, writeLinearTeams, writeLook, writeOwners, writeCoordinatorSessions, type CoordinatorInfo, type Lineage } from './coordinators.ts'
+import { assignCoordinators, coordinatorSession, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, loadLineage, orcaRunner, readCoordinators, readLinearMemory, readOwners, rememberOwners, scaffoldCoordinator, validateName, updateCoordinatorSessions, writeLinearMemory, writeLinearTeams, writeLook, writeOwners, writeCoordinatorSessions, type CoordinatorInfo, type Lineage } from './coordinators.ts'
 import { encodeLinear, linkedIssueOf, linkRows, loadLinear, pruneSent, sendIssue, teamsOf } from './linear.ts'
-import { associateSession, chooseSession, currentRecipient, deliverCurrent, deliveryBlock, DeliveryUncertainError, memberAgent, memberFrom, readMemberHistory, reconcileSessions, resumeExactMember, selectCurrent, verifyConversation } from './coordinator-sessions.ts'
+import { associateSession, chooseSession, deliverCurrent, deliveryBlock, DeliveryUncertainError, exclusive, memberAgent, memberFrom, readMemberHistory, reconcileSessions, resumeExactMember, selectCurrent, sessionChoices, verifyConversation, wakeCoordinator, bindLaunched, launchedAgent, launchedTerminal, launchOnce, settlePending, terminalPane, resumeIdFor, withResumeId, type Launch, type ListedAgent, type ResumeIo, type TerminalRecord } from './coordinator-sessions.ts'
 import { askingRows, CHAT_KEYS, chatTargets, FOLDED_KEY, finishedAgents, freeLooks, showable, type ChatTarget } from './view.ts'
-import type { AgentInfo, AgentState, AgentSummary, Capacity, Coordinator, LinearData, Priority, Snapshot, WorkspaceRow, WorkstreamCard } from './protocol.ts'
+import type { AgentInfo, AgentState, AgentSummary, Capacity, Coordinator, LinearData, Priority, Snapshot, WakeOutcome, WorkspaceRow, WorkstreamCard, CoordinatorSessions } from './protocol.ts'
 import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
 import { createWriter } from './writer.ts'
 import { currentSummaryJobs, findTranscript, refreshStale, summaryMatches, summarizePane, summaryProviders, turnSummarizer } from './summarize.ts'
@@ -505,18 +505,21 @@ export async function snapshot(
       const c = onDisk[i]
       const folder = all.filter((r) => r.path === c.dir)
       let saved = c.sessions
+      let migrated: CoordinatorSessions | undefined
       if (!saved && lineageAt > 0 && folder.length === 1) {
         const a = sessionIn(folder[0])
         // Record once from established unambiguous membership, never elect a replacement.
         if (a?.orcaSession && a.terminal && a.live && lineagePanes.has(a.paneKey)) {
           const member = memberFrom(folder[0], a)
-          saved = { version: 1, current: member.id, members: [member] }
+          saved = migrated = { version: 1, current: member.id, members: [member] }
         }
       }
       if (saved) {
         saved = reconcileSessions(saved, all)
         if (JSON.stringify(saved) !== JSON.stringify(c.sessions)) {
-          try { writeCoordinatorSessions(c.dir, saved, { sessions: c.sessions }) } catch (e) {
+          // Refreshes overlap, and c.sessions was read before this one awaited ps: reconcile what is
+          // on disk now, so a refresh or selection that wrote meanwhile is kept, not a swap failure.
+          try { saved = updateCoordinatorSessions(c.dir, (disk) => { const base = disk ?? migrated; return base && reconcileSessions(base, all) }) } catch (e) {
             orca.log(`saving coordinator membership failed: ${(e as Error).message}`)
             saved = readCoordinators().find((other) => other.key === c.key)?.sessions
             coordinators[i].sessionNotice = 'Membership could not be saved or changed during refresh. The saved selection is preserved.'
@@ -716,6 +719,8 @@ export default function activate(orca: OrcaWorkerApi): void {
     if (latest.source === 'cli') refreshOldSummaries(latest)
     orca.panels.post('sidebar.changed', shared(latest))
     void orca.host.call('statusBar.update', statusOf(latest)).catch((e: Error) => orca.log(`statusBar.update failed: ${e.message}`))
+    // Members bound without a resume id (a migrated one, a picked one) get it from their exact terminal.
+    if (latest.source === 'cli') void captureResumeIds()
     return shared(latest)
   }
   const refreshSoon = () => {
@@ -800,38 +805,84 @@ export default function activate(orca: OrcaWorkerApi): void {
     return id
   }
 
-  /** Fresh means a new explicitly associated member; it never closes an older member. */
-  async function freshSession(c: CoordinatorInfo, agent: string): Promise<{ ok: boolean; error?: string }> {
+  // Launched conversations whose binding is not verified yet, per coordinator: adopted, never relaunched.
+  const launches = new Map<string, Launch>()
+  const terminalsNow = async (): Promise<TerminalRecord[]> => (await run(['terminal', 'list']))?.terminals ?? []
+
+  /**
+   * Fresh means a new explicitly associated member; it never closes an older member. agent.launch
+   * starts it in the background, with no tab: it is shown, then bound by that exact terminal's pane
+   * once Orca lists its agent. Until then it stays pending and a later start adopts it.
+   */
+  async function freshSession(c: CoordinatorInfo, agent: string): Promise<{ ok: boolean; error?: string; bound?: boolean }> {
     const workspaceId = await workspaceFor(c.dir)
     if (!workspaceId) return { ok: false, error: 'Orca did not add the folder' }
-    const launched = await orca.host.call('agent.launch', { workspaceId, agent, prompt: 'Start your coordinator session.' })
-    // Correlate the launch's returned terminal id, never the first/newest pane in the folder.
-    for (let i = 0; i < 8; i++) {
-      const listed = await run(['terminal', 'list'])
-      const t = (listed?.terminals ?? []).find((t: any) => t.ptyId === launched.terminalId || t.handle === launched.terminalId)
+    settlePending(launches, c.key, await terminalsNow(), readCoordinators().find((x) => x.key === c.key)?.sessions)
+    const { launch } = await launchOnce(launches, c.key, workspaceId, agent, () => orca.host.call('agent.launch', { workspaceId, agent, prompt: 'Start your coordinator session.' }))
+    await orca.host.call('terminal.focus', { terminalId: launch.terminalId }).catch((e: Error) => orca.log(`showing the launched terminal failed: ${e.message}`))
+    // Agents take seconds to start and report a conversation id; wait for it, not for the newest pane.
+    const deadline = Date.now() + 15_000
+    for (;;) {
+      const terminals = await terminalsNow()
       await refresh()
       const row = allRows.find((r) => r.id === workspaceId)
-      const a = t && row?.agents.find((a) => a.paneKey === `${t.tabId}:${t.leafId}`)
-      if (row && a?.orcaSession) {
-        a.terminal = t.handle
-        const disk = readCoordinators().find((x) => x.key === c.key)!
-        let sessions = associateSession(disk.sessions ?? { version: 1, current: null, members: [] }, row, a)
-        const member = sessions.members.find((m) => memberAgent(m, [row]) === a)!
-        await captureResumeId(member, launched.terminalId)
-        sessions = selectCurrent(sessions, member.id)
-        writeCoordinatorSessions(c.dir, sessions, { sessions: disk.sessions })
+      const a = launchedAgent(launch, terminals, row)
+      if (row && a) {
+        const resumeSessionId = await resumeIdOf(workspaceId, launch.terminalId, a.agentType)
+        updateCoordinatorSessions(c.dir, (disk) => bindLaunched(disk ?? { version: 1, current: null, members: [] }, row, a, resumeSessionId))
+        launches.delete(c.key)
         refreshSoon()
         return { ok: true }
       }
-      await new Promise((r) => setTimeout(r, 300))
+      if (Date.now() > deadline) break
+      await new Promise((r) => setTimeout(r, 1000))
     }
-    return { ok: false, error: 'The new session started, but its exact binding is not available yet. Associate it in Sessions when it appears; do not launch again.' }
+    return { ok: true, bound: false, error: 'The new conversation is running and shown; it becomes the main conversation once Orca lists it. Clicking the coordinator again adopts it; nothing is launched again.' }
+  }
+
+  // Lookups per member and terminal: done once found, given up after a few misses (an agent still
+  // starting has no id yet; a provider without resume ids never will), unless it was just bound.
+  const resumeChecked = new Map<string, number>()
+  let capturing: Promise<void> | null = null
+
+  /**
+   * Records the provider resume id of each live member that lacks one, read from agents.list for the
+   * exact terminal it is bound to, so a coordinator that sleeps resumes that same conversation.
+   * `just`: a member just bound or resumed, whose id is read again and may replace the old one.
+   */
+  function captureResumeIds(just?: { key: string; member: string }): Promise<void> {
+    const job = (capturing ?? Promise.resolve()).then(async () => {
+      let terminals: TerminalRecord[] | null = null
+      const listed = new Map<string, ListedAgent[]>()
+      for (const c of readCoordinators()) {
+        if (just && c.key !== just.key) continue
+        for (const m of c.sessions?.members ?? []) {
+          const forced = just?.member === m.id
+          if (m.resumeSessionId && !forced) continue
+          const a = memberAgent(m, allRows)
+          if (!a?.terminal || a.live !== true) continue
+          const tag = JSON.stringify([m.id, a.terminal])
+          if ((resumeChecked.get(tag) ?? 0) >= 5 && !forced) continue
+          terminals ??= await terminalsNow()
+          if (!listed.has(m.workspaceId)) listed.set(m.workspaceId, (await orca.host.call('agents.list', { workspaceId: m.workspaceId }).catch(() => null))?.agents ?? [])
+          const id = resumeIdFor(m, a.terminal, terminals, listed.get(m.workspaceId)!)
+          resumeChecked.set(tag, id ? Infinity : (resumeChecked.get(tag) ?? 0) + 1)
+          if (id) updateCoordinatorSessions(c.dir, (disk) => withResumeId(disk, m.id, a.terminal!, id, forced))
+        }
+      }
+    }).catch((e: Error) => orca.log(`recording a resume id failed: ${e.message}`))
+    capturing = job
+    return job
+  }
+
+  async function resumeIdOf(workspaceId: string, terminalId: string, agentType: string | null): Promise<string | undefined> {
+    const listed = await orca.host.call('agents.list', { workspaceId }).catch(() => null)
+    return listed?.agents.find((a) => a.terminalId === terminalId && a.agent === agentType)?.sessionId ?? undefined
   }
 
   async function captureResumeId(member: import('./protocol.ts').CoordinatorMember, terminalId: string): Promise<void> {
-    const listed = await orca.host.call('agents.list', { workspaceId: member.workspaceId }).catch(() => null)
-    const agent = listed?.agents.find((a) => a.terminalId === terminalId && a.agent === member.agentType)
-    if (agent?.sessionId) member.resumeSessionId = agent.sessionId
+    const id = await resumeIdOf(member.workspaceId, terminalId, member.agentType)
+    if (id) member.resumeSessionId = id
   }
 
   orca.panels.handle('sidebar.createCoordinator', async ({ name, look }) => {
@@ -843,16 +894,59 @@ export default function activate(orca: OrcaWorkerApi): void {
     return freshSession(c, 'claude').catch((e: Error) => ({ ok: false, error: e.message }))
   })
 
-  const openCoordinator = async (key: string): Promise<{ ok: boolean; error?: string }> => {
-    try {
-      await refresh()
-      const c = readCoordinators().find((x) => x.key === key)
-      if (!c) return { ok: false, error: `No coordinator ${key}` }
-      const { recipient } = currentRecipient(c, allRows)
-      const opened = await openChat({ workspaceId: recipient.workspaceId, terminal: recipient.terminal })
-      return opened.opened ? { ok: true } : { ok: false, error: 'The exact session could not be opened.' }
-    } catch (e) { return { ok: false, error: (e as Error).message } }
+  /** Resumes by provider id and finds the exact terminal the resume returned. */
+  const resumeIo: ResumeIo = {
+    resume: (input) => {
+      type ResumeAgent = Parameters<typeof orca.host.call<'agent.resume'>>[1]['agent']
+      return orca.host.call('agent.resume', { ...input, agent: input.agent as ResumeAgent })
+    },
+    // agent.resume also starts in the background: show it, then wait for that exact terminal's pane.
+    binding: async (terminalId) => {
+      await orca.host.call('terminal.focus', { terminalId }).catch(() => null)
+      const deadline = Date.now() + 15_000
+      for (;;) {
+        const t = launchedTerminal(await terminalsNow(), terminalId)
+        const pane = terminalPane(t)
+        await refresh()
+        const row = pane ? allRows.find((r) => r.agents.some((a) => a.paneKey === pane)) : undefined
+        const a = row?.agents.find((a) => a.paneKey === pane)
+        if (t && row && a?.orcaSession) return { workspaceId: row.id, agent: { ...a, terminal: t.handle } }
+        if (Date.now() > deadline) return null
+        await new Promise((r) => setTimeout(r, 1000))
+      }
+    }
   }
+
+  // Coordinators with a start, resume or session change in flight: open, fresh and resume share it.
+  const changing = new Set<string>()
+  const busy = (): WakeOutcome => ({ ok: false, kind: 'busy', error: 'A session change is already in progress.' })
+
+  /** Opening is not delivery: a sleeping coordinator resumes its exact conversation or starts one (wakePlan). */
+  const openCoordinator = (key: string): Promise<WakeOutcome> => exclusive(changing, key, async () => {
+    try {
+      const snap = await refresh()
+      const c = readCoordinators().find((x) => x.key === key)
+      if (!c) return { ok: false, kind: 'failed', error: `No coordinator ${key}` }
+      const view = snap.coordinators.find((x) => x.key === key)
+      settlePending(launches, key, await terminalsNow(), c.sessions)
+      return await wakeCoordinator(c, allRows, view ? sessionChoices(view, snap.rows).length : 0, {
+        ...resumeIo,
+        open: async (workspaceId, terminal) => (await openChat({ workspaceId, terminal })).opened,
+        // The resume refreshed while binding, which may have saved other members: put the resumed
+        // member into what is on disk now, only while it is still the current one.
+        save: (next) => {
+          const resumed = next.members.find((m) => m.id === next.current)!
+          updateCoordinatorSessions(c.dir, (disk) => {
+            if (disk?.current !== resumed.id || !disk.members.some((m) => m.id === resumed.id)) throw new Error('the main conversation changed while it was resuming')
+            return { ...disk, members: disk.members.map((m) => m.id === resumed.id ? resumed : m) }
+          })
+          void captureResumeIds({ key, member: resumed.id })
+          refreshSoon()
+        },
+        fresh: (agent) => freshSession(c, agent)
+      }, launches.has(key))
+    } catch (e) { return { ok: false, kind: 'failed', error: (e as Error).message } }
+  }, busy)
   orca.panels.handle('sidebar.openCoordinator', ({ key }) => openCoordinator(key))
 
   orca.panels.handle('sidebar.coordinatorHistory', async ({ key, member: id, terminal, orcaSession }) => {
@@ -868,10 +962,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     return readMemberHistory(member, run)
   })
 
-  const changing = new Set<string>()
-  orca.panels.handle('sidebar.coordinatorSessions', async ({ key, action, member: id, workspaceId, paneKey, orcaSession, agent }) => {
-    if (changing.has(key)) return { ok: false, error: 'A session change is already in progress.' }
-    changing.add(key)
+  orca.panels.handle('sidebar.coordinatorSessions', ({ key, action, member: id, workspaceId, paneKey, orcaSession, agent }) => exclusive(changing, key, async () => {
     try {
       await refresh()
       const c = readCoordinators().find((c) => c.key === key)
@@ -900,29 +991,13 @@ export default function activate(orca: OrcaWorkerApi): void {
           if (shown?.terminal?.ptyId) await captureResumeId(member, shown.terminal.ptyId)
         }
       } else if (action === 'current') sessions = selectCurrent(sessions, id ?? '')
-      else if (action === 'resume') {
-        sessions = await resumeExactMember(sessions, id ?? '', {
-          resume: (input) => {
-            type ResumeAgent = Parameters<typeof orca.host.call<'agent.resume'>>[1]['agent']
-            return orca.host.call('agent.resume', { ...input, agent: input.agent as ResumeAgent })
-          },
-          binding: async (terminalId) => {
-            const listed = await run(['terminal', 'list'])
-            const t = (listed?.terminals ?? []).find((t: any) => t.ptyId === terminalId || t.handle === terminalId)
-            if (!t) return null
-            await refresh()
-            const row = allRows.find((r) => r.agents.some((a) => a.paneKey === `${t.tabId}:${t.leafId}`))
-            const a = row?.agents.find((a) => a.paneKey === `${t.tabId}:${t.leafId}`)
-            return row && a ? { workspaceId: row.id, agent: { ...a, terminal: t.handle } } : null
-          }
-        })
-      }
+      else if (action === 'resume') sessions = await resumeExactMember(sessions, id ?? '', resumeIo)
       writeCoordinatorSessions(c.dir, sessions, { sessions: c.sessions })
+      if ((action === 'select' || action === 'resume') && sessions.current) void captureResumeIds({ key, member: sessions.current })
       refreshSoon()
       return { ok: true }
     } catch (e) { return { ok: false, error: (e as Error).message } }
-    finally { changing.delete(key) }
-  })
+  }, busy))
 
   // ---------- context menu actions ----------
   orca.panels.handle('sidebar.setPriority', async ({ workspaceId, priority }) => {
@@ -956,7 +1031,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       } else if (action === 'end') {
         await closeSessions(run, panes)
       } else if (action === 'restart') {
-        return await freshSession(c, current?.agentType || 'claude')
+        return await exclusive(changing, key, () => freshSession(c, current?.agentType || 'claude'), busy)
       } else if (action === 'delete') {
         await closeSessions(run, panes)
         // Close every terminal it still has (Orca refuses to remove a project with open ones), then

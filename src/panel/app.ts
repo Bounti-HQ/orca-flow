@@ -1,8 +1,8 @@
 // Wires the panel: asks the worker for snapshots, redraws with src/view.ts, handles clicks.
 // All UI state (what is open or folded) lives here; the worker only sends data, and reads the folds
 // from storage for Option+1..9.
-import type { AgentInfo, CockpitStats, Coordinator, LinearData, LinearIssue, LinearWire, Look, Priority, Snapshot, WorkspaceRow } from '../protocol.ts'
-import { busy, character, chatDigit, chatTargets, coordinatorCharacter, coordinatorOrder, crew, emptyUi, esc, faceOf, FOLDED_KEY, finishedAgents, freeLooks, projectDot, render, updateButton } from '../view.ts'
+import type { AgentInfo, CockpitStats, Coordinator, LinearData, LinearIssue, LinearWire, Look, Priority, Snapshot, WakeOutcome, WorkspaceRow } from '../protocol.ts'
+import { busy, character, chatDigit, chatTargets, coordinatorCharacter, coordinatorOrder, crew, emptyUi, esc, faceOf, FOLDED_KEY, finishedAgents, freeLooks, projectDot, render, updateButton, wakeView, type WakeMenu } from '../view.ts'
 import { decodeLinear, DEFAULT_DISPLAY, FILTERS, GROUP_NAME, GROUPS, HIDEABLE, LINEAR_MARK, LINEAR_UI_KEY, linearUiOf, sendTargets, SORT_NAME, SORTS, STATE_NAME, toggleProject, viewOf, type Display, type LinearFilter } from '../linear.ts'
 import { pressGate } from './press.ts'
 import { openerToggle } from './opener.ts'
@@ -156,7 +156,7 @@ document.addEventListener('click', (event) => {
   const el = (event.target as Element).closest<HTMLElement>('[data-open],[data-sessions],[data-history],[data-brief],[data-fold],[data-unfold],[data-act],[data-yes],[data-no],[data-coordinator],[data-new-coordinator],[data-cockpit]')
   if (!el) return
   const d = el.dataset
-  if (d.sessions) { if (opener.shouldOpen(`sessions:${d.sessions}`)) showSessionPicker(d.sessions, el); return }
+  if (d.sessions) { if (opener.shouldOpen(`sessions:${d.sessions}`)) showSessionPicker(d.sessions); return }
   if (d.history && d.member) { void showHistory(d.history, d.member, d.historyTerminal, d.historySession); return }
   // One action at a time; opening, folding and briefs still work while one runs.
   const action = d.act ?? d.yes
@@ -434,8 +434,8 @@ const ctx = $('ctx')
 type Action = { label: string; icon?: string; iconHtml?: string; right?: string; accent?: boolean; checked?: boolean; stay?: boolean; run?: () => void | Promise<void>; danger?: boolean }
 /** A row of toggles inside the menu (Priority): no submenu, so nothing overlaps in a narrow sidebar. `wrap` lets many chips wrap. */
 type Chips = { chips: string; icon?: string; iconHtml?: string; stay?: boolean; wrap?: boolean; options: { label: string; active: boolean; run: () => void | Promise<void> }[] }
-/** A line of text heading the menu; `header` is HTML, escaped by whoever builds it. */
-type Header = { header: string }
+/** A line of text heading the menu; `header` is HTML, escaped by whoever builds it; `tip` is its tooltip (text). */
+type Header = { header: string; tip?: string }
 type MenuItem = Action | Chips | Header | 'separator'
 
 // Icons in Orca's menu style (16px outline).
@@ -447,6 +447,7 @@ const MI: Record<string, string> = {
   trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   shuffle: '<path d="M3 7h3c4 0 5 10 9 10h6m-3-3 3 3-3 3M3 17h3c1.5 0 2.5-1.3 3.4-3M14.6 10C15.5 8.3 16.5 7 18 7h3m-3-3 3 3-3 3"/>',
   restart: '<path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4h4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
   download: '<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V5a1 1 0 0 1 1-1h11"/>',
   group: '<path d="M4 6h16M4 12h11M4 18h7"/>',
@@ -492,10 +493,24 @@ async function confirmAction(kind: string, title: string, text: string, okLabel:
   })
 }
 
-/** Opens a coordinator, showing "Waking…" on its row while Orca starts or resumes its session. */
-function wake(key: string): Promise<void> {
-  const c = snap?.coordinators.find((x) => x.key === key)
-  return inline(`coordinator:${key}`, 'Opening…', 'Open', () => orca.plugin.request('sidebar.openCoordinator', { key }, { timeoutMs: 90_000 }))
+/**
+ * Opens a coordinator: its live session, its resumed previous conversation, or a new one. When it
+ * needs the person (a conversation to pick, one that could not be restored), its row stays
+ * "Sleeping" and the Sessions menu opens with the reason and the ways on (wakeView).
+ */
+async function wake(key: string): Promise<void> {
+  const target = `coordinator:${key}`
+  ui.status.set(target, { text: 'Opening…', tone: 'pending' })
+  draw()
+  let r: WakeOutcome
+  try { r = await orca.plugin.request('sidebar.openCoordinator', { key }, { timeoutMs: 90_000 }) }
+  catch (e) { r = { ok: false, kind: 'failed', error: (e as Error).message } }
+  const { row, menu } = wakeView(r)
+  if (row) ui.status.set(target, row)
+  else ui.status.delete(target)
+  draw()
+  if (menu) showSessionPicker(key, menu)
+  if (r.ok) setTimeout(() => { if (ui.status.get(target)?.tone === 'ok') { ui.status.delete(target); draw() } }, 1800)
 }
 
 /**
@@ -587,7 +602,7 @@ function coordinatorMenu(key: string): MenuItem[] {
   const items: MenuItem[] = [
     { label: 'New look', icon: 'shuffle', run: () => run('look', 'New look') },
     'separator',
-    { label: 'Start fresh session', icon: 'restart', danger: true, run: async () => {
+    { label: 'Start new conversation', icon: 'restart', danger: true, run: async () => {
       if (await confirmAction('restart-coordinator', `Start ${c.name} fresh?`, 'A separate member starts and becomes current. Previous conversations and their pending asks remain available as read-only history.', 'Start fresh', 'restart', 'warn')) await run('restart', 'Fresh session')
     } }
   ]
@@ -640,7 +655,7 @@ export function tidy(items: MenuItem[]): MenuItem[] {
 function menuHtml(items: MenuItem[]): string {
   return items.map((it, i) =>
     it === 'separator' ? '<div class="sep" role="separator"></div>'
-      : 'header' in it ? `<div class="mh">${it.header}</div>`
+      : 'header' in it ? `<div class="mh"${it.tip ? ` data-tip="${esc(it.tip)}"` : ''}>${it.header}</div>`
       : 'chips' in it
         ? `<div class="mchips" role="group" aria-label="${esc(it.chips)}">${iconOf(it)}<span class="ml">${esc(it.chips)}</span></div><div class="chips${it.wrap ? ' wrap' : ''}">${it.options.map((o, j) => `<button class="mi chip${o.active ? ' on' : ''}" role="menuitemradio" aria-checked="${o.active}" data-i="${i}" data-j="${j}">${esc(o.label)}</button>`).join('')}</div>`
         : `<button class="mi${it.danger ? ' danger' : ''}" role="${it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}"${it.checked === undefined ? '' : ` aria-checked="${it.checked}"`} data-i="${i}">${iconOf(it)}<span class="ml">${esc(it.label)}</span>${it.right ? `<span class="mr${it.accent ? ' sug' : ''}">${esc(it.right)}</span>` : ''}${it.checked === undefined ? '' : `<span class="check">${it.checked ? '✓' : ''}</span>`}</button>`
@@ -845,23 +860,36 @@ async function showHistory(key: string, member: string, terminal?: string, sourc
   } catch (e) { if (!sessionsDialog.open || version !== sessionDialogVersion) return; sessionDialog('History unavailable', `<p>${esc((e as Error).message)}</p>`) }
 }
 
-/** One choice is one explicit switch; opening the dropdown has no side effects. */
-function showSessionPicker(key: string, source?: HTMLElement): void {
+/**
+ * One choice is one explicit switch; opening the dropdown has no side effects. A coordinator click
+ * that needs the person opens it with `need`: the reason as its header, then the conversations to
+ * pick (or Retry), then Start new conversation.
+ */
+function showSessionPicker(key: string, need?: WakeMenu): void {
   const c = snap?.coordinators.find((c) => c.key === key)
   if (!c || !snap) return
-  const anchor = document.querySelector<HTMLElement>(`.session-trigger[data-sessions="${CSS.escape(key)}"]`) ?? source
-  const choices = sessionChoices(c, snap.rows)
-  const items: MenuItem[] = choices.length ? choices.map((choice) => ({
+  const anchor = document.querySelector<HTMLElement>(`.session-trigger[data-sessions="${CSS.escape(key)}"]`)
+    ?? document.querySelector<HTMLElement>(`[data-menu="coordinator:${CSS.escape(key)}"] .coord-name`)
+  const target = `coordinator:${key}`
+  const choices = !need || need.sessions ? sessionChoices(c, snap.rows) : []
+  const picks: MenuItem[] = choices.map((choice) => ({
     label: `${choice.agentType ? choice.agentType.charAt(0).toUpperCase() + choice.agentType.slice(1) : 'Session'} · ${choice.title}`,
     iconHtml: providerBadge(choice.agent, true),
     checked: choice.current,
-    run: () => inline(`coordinator:${key}`, 'Switching…', '', async () => {
-      const result = await orca.plugin.request('sidebar.coordinatorSessions', { key, action: 'select', workspaceId: choice.workspaceId, paneKey: choice.paneKey, orcaSession: choice.orcaSession, agent: choice.agentType ?? undefined })
-      if (result.ok) ui.status.delete(`coordinator:${key}`)
+    run: () => inline(target, 'Switching…', '', async () => {
+      const result = await orca.plugin.request('sidebar.coordinatorSessions', { key, action: 'select', workspaceId: choice.workspaceId, paneKey: choice.paneKey, orcaSession: choice.orcaSession, ...(choice.agentType ? { agent: choice.agentType } : {}) })
+      if (result.ok) ui.status.delete(target)
       return result
     })
-  })) : [{ header: 'No open conversations' }]
-  if (menuTarget === `sessions:${key}`) { closeMenu(); return }
+  }))
+  const items: MenuItem[] = need ? [
+    { header: esc(need.header), ...(need.tip ? { tip: need.tip } : {}) },
+    ...(need.retry ? [{ label: 'Retry', icon: 'restart', run: () => wake(key) }] : []),
+    // A separator only parts picks from Start new; Retry sits directly above it.
+    ...(picks.length ? [...picks, 'separator' as const] : []),
+    { label: 'Start new conversation', icon: 'plus', run: () => inline(target, 'Starting…', 'Started', () => orca.plugin.request('sidebar.coordinatorSessions', { key, action: 'fresh', ...(need.agent ? { agent: need.agent } : {}) }, { timeoutMs: 90_000 })) }
+  ] : picks.length ? picks : [{ header: 'No open conversations' }]
+  if (!need && menuTarget === `sessions:${key}`) { closeMenu(); return }
   openMenu(items, 12, 12, `sessions:${key}`, anchor?.getBoundingClientRect(), 'session-menu')
 }
 

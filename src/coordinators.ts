@@ -10,7 +10,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Coordinator, CoordinatorSessions, LinearSent, Look, WorkspaceRow } from './protocol.ts'
 
-import { memberAgent, unambiguousSession, validSessions } from './coordinator-sessions.ts'
+import { memberAgent, terminalPane, unambiguousSession, validSessions } from './coordinator-sessions.ts'
 
 export const COORDINATOR_HOME = join(homedir(), 'orca', 'coordinators')
 export const COORDINATOR_FILE = 'coordinator.json'
@@ -280,7 +280,8 @@ export function dirOfTerminalRecord(t: { worktreePath?: string; worktreeId?: str
 export async function loadLineage(run: Run, now = Date.now(), force = false): Promise<Lineage> {
   const [terminals, runs] = await Promise.all([run(['terminal', 'list']), run(['orchestration', 'run-list', '--limit', '30', '--full'])])
   const paneOf = new Map<string, string>()
-  for (const t of terminals.terminals ?? []) if (t.tabId && t.leafId) paneOf.set(t.handle, `${t.tabId}:${t.leafId}`)
+  // A background-launched terminal has no tab yet; its recorded pane still names its agent.
+  for (const t of terminals.terminals ?? []) { const pane = terminalPane(t); if (pane) paneOf.set(t.handle, pane) }
 
   const dispatcherOf = new Map<string, string>()
   const dispatchOf = new Map<string, 'open' | 'settled'>()
@@ -344,6 +345,22 @@ export function deleteFolder(dir: string, root = COORDINATOR_HOME): void {
   rmSync(dir, { recursive: true, force: true })
 }
 
+
+/**
+ * Reads, changes and compare-and-swaps a coordinator's sessions in one synchronous step, so
+ * overlapping refreshes in this worker cannot interleave between the read and the write. Returns
+ * what is on disk afterwards; unreadable files and invalid sessions are never overwritten.
+ */
+export function updateCoordinatorSessions(dir: string, change: (onDisk: CoordinatorSessions | undefined) => CoordinatorSessions | undefined): CoordinatorSessions | undefined {
+  const data = readJson<Record<string, unknown>>(join(dir, COORDINATOR_FILE))
+  if (!data) throw new Error('Coordinator configuration could not be read; it was not overwritten.')
+  const onDisk = data.sessions === undefined ? undefined : validSessions(data.sessions)
+  if (data.sessions !== undefined && !onDisk) throw new Error('Invalid session configuration; it was not overwritten.')
+  const next = change(onDisk)
+  if (!next || JSON.stringify(next) === JSON.stringify(onDisk)) return onDisk
+  writeCoordinatorSessions(dir, next, { sessions: onDisk })
+  return next
+}
 
 /** Persist explicit membership atomically without changing scope, appearance or other config. */
 export function writeCoordinatorSessions(dir: string, sessions: CoordinatorSessions, expected?: { sessions: CoordinatorSessions | undefined }): void {
