@@ -4,6 +4,7 @@ import { assignCoordinators, coordinatorSession, readCoordinators, scaffoldCoord
 import { foldCoordinatorFolders, fromPs, livePanes, openAgent, openNthChat, summaryAgents } from './worker.ts'
 import { askingRows, emptyUi, render, wakeView } from './view.ts'
 import type { Coordinator, CoordinatorSessions } from './protocol.ts'
+import { coordinatorHandover } from './handover-providers.ts'
 import { firstProvider } from './coordinator-providers.ts'
 
 function fixture(provider = 'codex') {
@@ -474,21 +475,22 @@ test('stale dropdown choices cannot select a replacement pane, workspace, provid
   assert.equal(JSON.stringify(sessions), before)
 })
 
-test('coordinator header puts the main-session dropdown beside its name without management onboarding', () => {
+test('coordinator header puts the handover dropdown beside its name without management onboarding', () => {
   const { rows, lineage, c } = fixture()
   const all = assignCoordinators(rows, [c], lineage)
   const coordinators: Coordinator[] = [{ ...c, sessionNotice: 'No verified unambiguous membership', routing: 'Run routing unverified.' }]
   const visible = foldCoordinatorFolders(all, coordinators, [c.dir])
-  const html = render({ rows: visible, coordinators, source: 'cli', capacity: null }, emptyUi()).main
+  const html = render({ rows: visible, coordinators, source: 'cli', capacity: null, handoverProviders: ['claude', 'codex'] }, emptyUi()).main
   assert.match(html, /class="coord-open"[^]*<\/button><button class="session-trigger"[^]*<\/button><button class="coord-name"[^]*class="coord-label"/)
-  assert.match(html, /aria-label="Main session for home" aria-haspopup="menu"/)
+  assert.match(html, /data-handover="home" aria-controls="ctx" aria-label="Handover for home" aria-haspopup="menu"/)
+  assert.ok(!html.includes('data-sessions="home"'))
   assert.ok(!html.includes('sessions⌄'))
   assert.ok(!html.includes('unambiguous membership'))
   assert.ok(!html.includes('Run routing'))
   assert.ok(!html.includes('Associate'))
 })
 
-test('dropdown appears only for two eligible conversations, not for genuine folder leads or offline history', () => {
+test('existing conversations alone never enable the handover badge', () => {
   for (const count of [0, 1, 2]) {
     const { rows, lineage, c } = fixture()
     // Keep current for one; keep genuine leads/workers in every case.
@@ -500,10 +502,52 @@ test('dropdown appears only for two eligible conversations, not for genuine fold
     const visible = foldCoordinatorFolders(all, coordinators, [c.dir])
     assert.equal(sessionChoices(coordinators[0], visible).length, count)
     const html = render({ rows: visible, coordinators, source: 'cli', capacity: null }, emptyUi()).main
-    assert.equal(html.includes('class="session-trigger"'), count > 1)
+    assert.equal(html.includes('class="session-trigger"'), false)
     assert.match(html, /data-coordinator="home"/, 'header remains available without a switcher')
     assert.equal(JSON.stringify(c.sessions), before, 'visibility never changes membership/current')
     if (count > 0) assert.equal(currentRecipient(c, all).recipient.orcaSession, 'new-session')
+  }
+})
+
+test('a Claude and Codex conversation yield only the other provider as a handover action', () => {
+  const { c, sessions } = fixture()
+  for (const [index, label] of ['Handover to Codex', 'Handover to Claude'].entries()) {
+    sessions.current = sessions.members[index].id
+    assert.deepEqual(coordinatorHandover(c, ['claude', 'codex'], false).choices.map(choice => choice.label), [label])
+    const source = sessions.members[index].agentType!
+    assert.deepEqual(coordinatorHandover(c, [source], false).choices, [])
+    assert.deepEqual(coordinatorHandover(c, null, false).choices, [])
+  }
+})
+
+test('one selected conversation exposes the badge menu for eligible handover and recorded retry', () => {
+  for (const source of ['claude', 'codex'] as const) {
+    const { rows, sessions, c, lineage } = fixture(source)
+    sessions.members = sessions.members.slice(1)
+    rows[0].agents = rows[0].agents.filter(a => a.paneKey === 'new:1')
+    const all = assignCoordinators(rows, [c], lineage)
+    const coordinator: Coordinator = { ...c }
+    const visible = foldCoordinatorFolders(all, [coordinator], [c.dir])
+    const other = source === 'claude' ? 'codex' : 'claude'
+    const name = other === 'codex' ? 'Codex' : 'Claude'
+    const badge = (available: ('claude' | 'codex')[]) => render({
+      rows: visible, coordinators: [coordinator], source: 'cli', capacity: null, handoverProviders: available
+    }, emptyUi()).main.includes('class="session-trigger"')
+    assert.equal(sessionChoices(coordinator, visible).length, 1)
+    assert.equal(badge([source]), false)
+    assert.equal(badge([other]), true)
+    assert.deepEqual(coordinatorHandover(coordinator, [source, other], false).choices, [
+      { provider: other, retry: false, label: `Handover to ${name}` }
+    ])
+    coordinator.handover = { phase: 'launching', provider: other }
+    assert.deepEqual(coordinatorHandover(coordinator, [source, other], true), { choices: [], note: 'Handing over…' })
+    assert.deepEqual(coordinatorHandover(coordinator, [source, other], false).choices, [
+      { provider: other, retry: true, label: `Retry handover to ${name}` }
+    ])
+    assert.equal(badge([source]), true)
+    assert.deepEqual(coordinatorHandover(coordinator, [source], false).choices, [])
+    coordinator.handover = { phase: 'invalid' }
+    assert.deepEqual(coordinatorHandover(coordinator, [other], false).choices, [])
   }
 })
 
@@ -527,11 +571,11 @@ test('multiple same-provider conversations use one logo trigger between avatar a
   const all = assignCoordinators(rows, [c], lineage)
   const coordinators: Coordinator[] = [{ ...c }]
   const visible = foldCoordinatorFolders(all, coordinators, [c.dir])
-  const html = render({ rows: visible, coordinators, source: 'cli', capacity: null }, emptyUi()).main
+  const html = render({ rows: visible, coordinators, source: 'cli', capacity: null, handoverProviders: ['claude', 'codex'] }, emptyUi()).main
   const trigger = /<button class="session-trigger"[^]*?<\/button>/.exec(html)![0]
-  assert.match(trigger, /aria-label="Main session for home"/)
+  assert.match(trigger, /aria-label="Handover for home"/)
   assert.match(trigger, /aria-expanded="false"/)
-  assert.match(trigger, /data-tip="Switch coordinator session · Replacement coordinator"/)
+  assert.match(trigger, /data-tip="Handover for home"/)
   assert.match(trigger, /<span class="provider" aria-hidden="true"><svg/)
   assert.match(trigger, /fill="#D97757"/, 'current Claude mark remains visible even without mixed providers')
   assert.ok(!trigger.includes('>Claude') && !trigger.includes('>Choose session'))
@@ -540,17 +584,14 @@ test('multiple same-provider conversations use one logo trigger between avatar a
   assert.deepEqual(sessionChoices(coordinators[0], visible).map((x) => x.title), ['Original coordinator', 'Replacement coordinator'])
 })
 
-test('unselected alternatives use a neutral logo trigger; a single session keeps normal provider visibility', () => {
+test('unselected alternatives have no handover trigger; a single session keeps normal provider visibility', () => {
   const { rows, lineage, c } = fixture()
   c.sessions.current = null
   const all = assignCoordinators(rows, [c], lineage)
   const coordinators: Coordinator[] = [{ ...c }]
   const visible = foldCoordinatorFolders(all, coordinators, [c.dir])
-  const html = render({ rows: visible, coordinators, source: 'cli', capacity: null }, emptyUi()).main
-  const trigger = /<button class="session-trigger"[^]*?<\/button>/.exec(html)![0]
-  assert.match(trigger, /aria-label="Main session for home"/)
-  assert.match(trigger, /Switch coordinator session/)
-  assert.match(trigger, /<rect x="3" y="3"/)
+  const html = render({ rows: visible, coordinators, source: 'cli', capacity: null, handoverProviders: ['claude', 'codex'] }, emptyUi()).main
+  assert.ok(!html.includes('data-handover='))
   assert.equal(c.sessions.current, null)
 
   c.sessions.current = c.sessions.members[1].id

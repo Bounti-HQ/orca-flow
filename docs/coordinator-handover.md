@@ -12,13 +12,17 @@ answered, deleted or readdressed by the plugin.
   accessible names, inline progress and errors. Host `agent installed` discovery filters to enabled
   Claude/Codex alternatives; current providers, unrelated providers and existing sessions are excluded.
   No available target (or failed discovery) displays an unavailable state instead of a launch button.
-  The avatar/provider-logo/name order and one-step session dropdown remain intact.
+  The provider badge beside the coordinator name opens the labeled handover actions. Wake and
+  recovery use their own conversation picker.
 - A Claude ↔ Codex terminal handover in the same workspace when no member owns a run. It verifies
   `agent launch` receipt, `prompt.outcome` (`journaled` or `handed-to-terminal`), exact provider,
   workspace, session identity and absence of dispatch/parent provenance before changing current.
 - Stored transcript recovery through `agent read --limit 100`. The source is never resumed,
-  prompted or asked to summarize. Read failure prevents launch. Orca's bounded history reports
-  truncation; its `limited` flag is kept with the snapshot. Original transcripts are never modified.
+  prompted or asked to summarize. When the host specifically reports a missing transcript, the
+  plugin can use the selected terminal’s output after checking its exact conversation binding
+  before and after reading. This snapshot is labeled partial terminal output and can include CLI
+  chrome. Empty or unverifiable output stops the handover before launch. Other read errors also
+  stop launch. Transcript snapshots retain the host’s `limited` flag.
 - Context files contain scope, goals/cards, workstreams, pending decisions and source history.
   The prompt labels transcript/tool/summary content untrusted reference, points to authoritative
   coordinator and host state, and explicitly loads the coordinator role and skill.

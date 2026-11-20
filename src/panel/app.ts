@@ -11,7 +11,7 @@ import { canRemove } from '../rank.ts'
 import { sessionChoices } from '../coordinator-sessions.ts'
 import { providerBadge, providerOf } from '../providers.ts'
 import { PROVIDER_LOGOS } from '../provider-logos.ts'
-import { handoverTargets } from '../handover-providers.ts'
+import { coordinatorHandover } from '../handover-providers.ts'
 import type { HandoverProvider } from '../handover.ts'
 
 const ui = emptyUi()
@@ -156,9 +156,18 @@ document.addEventListener('click', (event) => {
     void orca.shell?.openExternal(url)
     return
   }
-  const el = (event.target as Element).closest<HTMLElement>('[data-open],[data-sessions],[data-history],[data-brief],[data-fold],[data-unfold],[data-act],[data-yes],[data-no],[data-coordinator],[data-new-coordinator],[data-cockpit]')
+  const el = (event.target as Element).closest<HTMLElement>('[data-open],[data-handover],[data-sessions],[data-history],[data-brief],[data-fold],[data-unfold],[data-act],[data-yes],[data-no],[data-coordinator],[data-new-coordinator],[data-cockpit]')
   if (!el) return
   const d = el.dataset
+  if (d.handover) {
+    const target = `handover:${d.handover}`
+    if (menuTarget === target) closeMenu()
+    else if (opener.shouldOpen(target)) {
+      const c = snap?.coordinators.find(c => c.key === d.handover)
+      if (c) openMenu(handoverItems(c, false), 12, 12, target, el.getBoundingClientRect(), 'session-menu')
+    }
+    return
+  }
   if (d.sessions) { if (opener.shouldOpen(`sessions:${d.sessions}`)) showSessionPicker(d.sessions); return }
   if (d.history && d.member) { void showHistory(d.history, d.member, d.historyTerminal, d.historySession); return }
   // One action at a time; opening, folding and briefs still work while one runs.
@@ -605,39 +614,35 @@ async function removeWorktree(row: WorkspaceRow, target: string): Promise<void> 
     await inline(target, 'Removing…', 'Removed', () => remove(true))
 }
 
+function handoverItems(c: Coordinator, compact: boolean): MenuItem[] {
+  const key = c.key
+  const status = ui.status.get(`coordinator:${key}`)
+  const { choices, note, tip } = coordinatorHandover(c, snap?.handoverProviders, status?.tone === 'pending' && status.text === 'Handing over…')
+  const actions = choices.map(({ provider, label, retry }) => ({
+    provider, label, run: () => inline(`coordinator:${key}`, 'Handing over…', 'Handed over',
+      () => orca.plugin.request('sidebar.handover', { key, provider, retry }, { timeoutMs: 150_000 }))
+  }))
+  const items: MenuItem[] = compact && actions.length ? [{ handover: actions, note }]
+    : actions.length ? actions.map(a => ({ ...a, iconHtml: `<span class="provider" aria-hidden="true">${PROVIDER_LOGOS[a.provider]}</span>` }))
+    : [{ header: note === 'Unavailable' ? 'Handover unavailable' : 'Handing over…', tip }]
+  if (compact && c.handover?.error) items.push({ header: 'Handover incomplete', tip: c.handover.error })
+  return items
+}
+
 function coordinatorMenu(key: string): MenuItem[] {
   const c = snap?.coordinators.find((x) => x.key === key)
   if (!c) return []
   const VERBS = { look: ['Shuffling…', 'New look'], restart: ['Restarting…', 'Fresh session'], end: ['Sleeping…', 'Asleep'], delete: ['Deleting…', 'Deleted'] } as const
   const run = (action: 'look' | 'restart' | 'end' | 'delete', _label: string) =>
     inline(`coordinator:${key}`, VERBS[action][0], VERBS[action][1], () => orca.plugin.request('sidebar.coordinatorAction', { key, action }, { timeoutMs: 90_000 }))
-  const handover = (provider: 'claude' | 'codex', retry = false) =>
-    inline(`coordinator:${key}`, 'Handing over…', 'Handed over', () => orca.plugin.request('sidebar.handover', { key, provider, retry }, { timeoutMs: 150_000 }))
-  const currentProvider = c.session?.agentType ?? c.sessions?.members.find((m) => m.id === c.sessions?.current)?.agentType
-  const pending = ui.status.get(`coordinator:${key}`)
-  let handoverItem: MenuItem
-  if (pending?.tone === 'pending' && pending.text === 'Handing over…') handoverItem = { label: 'Handing over…' }
-  else if (c.handover?.phase === 'invalid') handoverItem = { label: 'Handover unavailable' }
-  else if (c.handover?.provider && c.handover.phase !== 'complete') {
-    const provider = c.handover.provider
-    const name = provider === 'codex' ? 'Codex' : 'Claude'
-    handoverItem = snap?.handoverProviders?.includes(provider)
-      ? { handover: [{ provider, label: `Retry handover to ${name}`, run: () => handover(provider, true) }], note: 'Retry' }
-      : { handover: [], note: 'Unavailable', tip: `Retry handover to ${name} when that provider is available. The original attempt is preserved.` }
-  } else {
-    const targets = handoverTargets(snap?.handoverProviders, currentProvider)
-    handoverItem = { handover: targets.map((provider) => ({ provider, label: `Handover to ${provider === 'codex' ? 'Codex' : 'Claude'}`, run: () => handover(provider) })),
-      ...(!targets.length ? { note: 'Unavailable', tip: snap?.handoverProviders ? 'No other supported provider is available. Enable Claude or Codex in Orca Settings → Agents.' : 'Agent availability could not be verified. Reopen the menu after refreshing.' } : {}) }
-  }
   const items: MenuItem[] = [
     { label: 'New look', icon: 'shuffle', run: () => run('look', 'New look') },
-    handoverItem,
+    ...handoverItems(c, true),
     'separator',
     { label: 'Start new conversation', icon: 'restart', danger: true, run: async () => {
       if (await confirmAction('restart-coordinator', `Start ${c.name} fresh?`, 'A separate member starts and becomes current. Previous conversations and their pending asks remain available as read-only history.', 'Start fresh', 'restart', 'warn')) await run('restart', 'Fresh session')
     } }
   ]
-  if (c.handover?.error) items.splice(2, 0, { header: 'Handover incomplete', tip: c.handover.error })
   if (c.members?.length) items.splice(1, 0, { label: 'Conversation history', icon: 'clock', run: () => showHistoryList(key) })
   if (c.session) items.splice(1, 0, { label: 'Sleep', icon: 'moon', run: () => run('end', 'Sleep') })
   // The Linear teams it owns: a send of their issues suggests it. One chip per connected team.
@@ -665,7 +670,7 @@ function markTarget(): void {
   document.querySelectorAll('.menu-open').forEach((el) => el.classList.remove('menu-open'))
   if (menuTarget) document.querySelector(`[data-menu="${CSS.escape(menuTarget)}"]`)?.classList.add('menu-open')
   document.querySelectorAll<HTMLElement>('.session-trigger').forEach((el) => {
-    el.setAttribute('aria-expanded', String(menuTarget === `sessions:${el.dataset.sessions}`))
+    el.setAttribute('aria-expanded', String(menuTarget === `handover:${el.dataset.handover}`))
   })
 }
 
@@ -767,8 +772,9 @@ document.addEventListener('contextmenu', (e) => {
 })
 /** The menu a button opens with a click (its key, as `menuTarget`), or null for anything else. */
 function openerOf(target: EventTarget | null): string | null {
-  const el = target instanceof Element ? target.closest<HTMLElement>('[data-ldisplay],[data-lsend],[data-sessions]') : null
+  const el = target instanceof Element ? target.closest<HTMLElement>('[data-ldisplay],[data-lsend],[data-handover],[data-sessions]') : null
   if (!el) return null
+  if (el.dataset.handover) return `handover:${el.dataset.handover}`
   if (el.dataset.sessions) return `sessions:${el.dataset.sessions}`
   return 'ldisplay' in el.dataset ? 'display' : `linear:${el.dataset.lsend}`
 }
@@ -920,8 +926,7 @@ function showFirstProviderPicker(key: string, providers: CoordinatorProvider[], 
 function showSessionPicker(key: string, need?: WakeMenu): void {
   const c = snap?.coordinators.find((c) => c.key === key)
   if (!c || !snap) return
-  const anchor = document.querySelector<HTMLElement>(`.session-trigger[data-sessions="${CSS.escape(key)}"]`)
-    ?? document.querySelector<HTMLElement>(`[data-menu="coordinator:${CSS.escape(key)}"] .coord-name`)
+  const anchor = document.querySelector<HTMLElement>(`[data-menu="coordinator:${CSS.escape(key)}"] .coord-name`)
   const target = `coordinator:${key}`
   const choices = !need || need.sessions ? sessionChoices(c, snap.rows) : []
   const picks: MenuItem[] = choices.map((choice) => ({
