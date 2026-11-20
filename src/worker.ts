@@ -26,6 +26,10 @@ import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
 import { createWriter } from './writer.ts'
 import { currentSummaryJobs, findTranscript, refreshStale, summaryMatches, summarizePane, summaryProviders, turnSummarizer } from './summarize.ts'
 import { ensureOwnLinks, ensureOwnStopHook, ensureSeeds, linksFor, pluginDir, seedsFor, stopHookFor } from './install.ts'
+import { bootstrapCoordinator, coordinatorPrompt } from './coordinator-bootstrap.ts'
+import { completeSelection, continueHandover, handoverPrompt, handoverStatus, readHandover, readHandoverContext, requireCoordinatorNavigation, requireTransferableOwnership, runRoutes, saveHandover, type Handover } from './handover.ts'
+import { readHandoverProviders } from './handover-providers.ts'
+import { coordinatorProviders, firstProvider, readInstalledProviders } from './coordinator-providers.ts'
 import { latestRelease, newerVersion, startUpdate, updateItem, updater, type UpdateState } from './update.ts'
 import { readFootprint, readProcs, startedGroups } from './started.ts'
 import { backgroundReader } from './background.ts'
@@ -485,7 +489,7 @@ export async function snapshot(
   onLineage: () => void = () => {}
 ): Promise<Snapshot> {
   const onDisk = readCoordinators()
-  const coordinators: Coordinator[] = onDisk.map(({ key, name, repos, look, linearTeams, sessions, sessionNotice }) => ({ key, name, repos, look, linearTeams, sessions, sessionNotice, members: sessions?.members.map((m) => ({ ...m, agent: null })), workspaceId: null as string | null, session: null as AgentInfo | null, active: false }))
+  const coordinators: Coordinator[] = onDisk.map(({ key, name, repos, look, linearTeams, sessions, sessionNotice, dir }) => ({ key, name, repos, look, linearTeams, sessions, sessionNotice, handover: handoverStatus(dir), members: sessions?.members.map((m) => ({ ...m, agent: null })), workspaceId: null as string | null, session: null as AgentInfo | null, active: false }))
   try {
     refreshLineage(orca, onLineage, allRows.flatMap((r) => r.agents.map((a) => a.paneKey)))
     refreshMemory(allRows, onLineage)
@@ -698,7 +702,10 @@ export default function activate(orca: OrcaWorkerApi): void {
   if (!dir) orca.log(`plugin folder not found from ${import.meta.url}; skill and coordinator CLAUDE.md not set up`)
   else {
     linkSkill(false)
-    for (const line of ensureSeeds(seedsFor(dir))) orca.log(line)
+    if (installed) {
+      for (const line of ensureSeeds(seedsFor(dir))) orca.log(line)
+      for (const c of readCoordinators()) for (const line of bootstrapCoordinator(c.dir)) orca.log(line)
+    }
   }
 
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -709,12 +716,16 @@ export default function activate(orca: OrcaWorkerApi): void {
   let updateState: UpdateState = { kind: 'none' }
   // The panes in front in every workspace; only the focused workspace's agents among them wear the current border.
   let focus: string[] | null = null
-  const shared = (snap: Snapshot): Snapshot => ({ ...snap, update: updateState, focusedPanes: focus })
+  let handoverProviders: Snapshot['handoverProviders'] = null
+  let firstProviders: Snapshot['coordinatorProviders'] = null
+  const shared = (snap: Snapshot): Snapshot => ({ ...snap, update: updateState, focusedPanes: focus, handoverProviders, coordinatorProviders: firstProviders })
   const run = orcaRunner(ORCA_BIN)
   // Full snapshots also catch missing/stale summaries, with bounded retries below.
   const refresh = async (): Promise<Snapshot> => {
     // When the coordinator lineage finishes loading, draw again with it.
-    const [snap, front] = await Promise.all([snapshot(orca, runPs, () => void refresh()), readFocus(run)])
+    const [snap, front, installed] = await Promise.all([snapshot(orca, runPs, () => void refresh()), readFocus(run), readInstalledProviders(run)])
+    handoverProviders = installed ? installed.filter((a) => a.id === 'claude' || a.id === 'codex').map((a) => a.id as 'claude' | 'codex') : null
+    firstProviders = coordinatorProviders(installed)
     latest = snap
     focus = front
     if (latest.source === 'cli') refreshOldSummaries(latest)
@@ -815,15 +826,30 @@ export default function activate(orca: OrcaWorkerApi): void {
    * starts it in the background, with no tab: it is shown, then bound by that exact terminal's pane
    * once Orca lists its agent. Until then it stays pending and a later start adopts it.
    */
-  async function freshSession(c: CoordinatorInfo, agent: string): Promise<{ ok: boolean; error?: string; bound?: boolean }> {
+  async function freshSession(c: CoordinatorInfo, agent?: string): Promise<{ ok: boolean; error?: string; bound?: boolean }> {
+    settlePending(launches, c.key, await terminalsNow(), readCoordinators().find((x) => x.key === c.key)?.sessions)
+    // Shared guard for normal clicks, explicit fresh/restart and any shortcut. An unbound launch
+    // is always adopted, even if that harness has since been disabled in Settings.
+    const view = latest?.coordinators.find((x) => x.key === c.key)
+    if (!c.sessions?.members.length && !launches.has(c.key) && !(view && sessionChoices(view, allRows).length)) {
+      const verified = await refresh()
+      const choice = firstProvider(verified.coordinatorProviders ?? null, agent)
+      if (choice.kind !== 'start') return { ok: false, error: choice.error }
+      const latestView = verified.coordinators.find((x) => x.key === c.key)
+      const disk = readCoordinators().find((x) => x.key === c.key)
+      if (!disk || disk.sessions?.members.length || (latestView && sessionChoices(latestView, allRows).length)) return { ok: false, error: 'The coordinator changed while choosing a provider. Open it again to select its conversation.' }
+      agent = choice.agent
+    }
+    agent ??= 'claude'
+    const skill = join(dir!, 'skills/orca-flow')
+    bootstrapCoordinator(c.dir)
     const workspaceId = await workspaceFor(c.dir)
     if (!workspaceId) return { ok: false, error: 'Orca did not add the folder' }
-    settlePending(launches, c.key, await terminalsNow(), readCoordinators().find((x) => x.key === c.key)?.sessions)
     const { launch } = await launchOnce(launches, c.key, workspaceId, agent, async () => {
       if (agent === 'antigravity') {
         return launchAntigravityCoordinator(workspaceId, c.dir, dir, run, (input) => orca.host.call('agent.launch', input))
       }
-      return orca.host.call('agent.launch', { workspaceId, agent, prompt: 'Start your coordinator session.' })
+      return orca.host.call('agent.launch', { workspaceId, agent, prompt: coordinatorPrompt(skill) })
     })
     await orca.host.call('terminal.focus', { terminalId: launch.terminalId }).catch((e: Error) => orca.log(`showing the launched terminal failed: ${e.message}`))
     // Agents take seconds to start and report a conversation id; wait for it, not for the newest pane.
@@ -907,9 +933,8 @@ export default function activate(orca: OrcaWorkerApi): void {
     const invalid = validateName(name.trim(), readCoordinators().map((c) => c.name))
     if (invalid) return { ok: false, error: invalid }
     scaffoldCoordinator(COORDINATOR_HOME, { name: name.trim(), look })
-    const c = readCoordinators().find((c) => c.name === name.trim())!
-    writeCoordinatorSessions(c.dir, { version: 1, current: null, members: [] })
-    return freshSession(c, 'claude').catch((e: Error) => ({ ok: false, error: e.message }))
+    refreshSoon()
+    return { ok: true }
   })
 
   /**
@@ -1012,8 +1037,82 @@ export default function activate(orca: OrcaWorkerApi): void {
   const changing = new Set<string>()
   const busy = (): WakeOutcome => ({ ok: false, kind: 'busy', error: 'A session change is already in progress.' })
 
+  orca.panels.handle('sidebar.handover', ({ key, provider, retry }) => exclusive(changing, key, async (): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      if (!['claude', 'codex'].includes(provider) || !dir) throw new Error('Unsupported handover provider or missing coordinator skill.')
+      await refresh()
+      const c = readCoordinators().find((c) => c.key === key)
+      if (!c?.sessions?.current) throw new Error('Select a main conversation before handover.')
+      const previous = readHandover(c.dir)
+      let attempt = previous
+      if (previous?.phase === 'complete') {
+        // A repeated UI request after completion is idempotent. A deliberate next handover
+        // must target a different provider (same-provider fresh starts have their own action).
+        if (previous.provider === provider && c.sessions.current === previous.target?.id) return { ok: true }
+        attempt = null
+      }
+      if (attempt && (!retry || attempt.provider !== provider)) throw new Error(`A handover to ${attempt.provider === 'codex' ? 'Codex' : 'Claude'} is already recorded. Use Retry for that attempt.`)
+      if (!attempt) {
+        const source = c.sessions.members.find((m) => m.id === c.sessions!.current)!
+        if (source.agentType === provider) throw new Error('Choose the other provider for handover, or Start new conversation for a fresh start.')
+        const available = await readHandoverProviders(run)
+        if (!available?.includes(provider)) throw new Error(`${provider === 'codex' ? 'Codex' : 'Claude'} is not currently available for handover. Check the agent installation and Orca Settings → Agents.`)
+        const workspaceId = await workspaceFor(c.dir)
+        if (!workspaceId) throw new Error('The coordinator workspace is unavailable.')
+        requireTransferableOwnership(await runRoutes(run), c.sessions)
+        const history = await readHandoverContext(source, run)
+        const skill = join(dir, 'skills/orca-flow')
+        bootstrapCoordinator(c.dir)
+        const context = { capturedAt: new Date().toISOString(), scope: { name: c.name, repos: c.repos, about: c.about, linearTeams: c.linearTeams }, source, workstreams: allRows.filter((r) => r.agents.some((a) => a.coordinator === key)), history }
+        const contextPath = join(c.dir, `.orca-flow-handover-context-${Date.now()}.json`)
+        writeFileSync(contextPath, JSON.stringify(context, null, 2) + '\n', { mode: 0o600 })
+        attempt = { version: 1, source: source.id, provider, workspaceId, dir: c.dir, phase: 'prepared', runs: [], prompt: handoverPrompt(skill, contextPath, context), bootstrap: { context: contextPath, deadline: Date.now() + 120_000 } }
+        saveHandover(attempt)
+      }
+      await continueHandover(attempt, {
+        run, save: (s) => { saveHandover(s); refreshSoon() },
+        current: () => readCoordinators().find((x) => x.key === key)?.sessions ?? { version: 1, current: null, members: [] },
+        register: (target) => { updateCoordinatorSessions(c.dir, (disk) => {
+          if (!disk) throw new Error('Coordinator sessions disappeared during handover.')
+          return disk.members.some((m) => m.id === target.id) ? disk : { ...disk, members: [...disk.members, target] }
+        }) },
+        canComplete: requireCoordinatorNavigation,
+        reveal: async (target) => {
+          if (!(await openAgent(orca, run, { workspaceId: target.workspaceId, terminal: target.terminals.at(-1) })).opened) throw new Error('The target could not be opened. The original remains current; Retry reuses this same target.')
+        },
+        bind: async (s: Handover) => {
+          const deadline = Date.now() + 15_000
+          for (;;) {
+            await refresh()
+            const row = allRows.find((r) => r.id === s.workspaceId && r.path === s.dir)
+            let a: AgentInfo | null = null
+            if (row && s.launch?.kind === 'terminal') a = launchedAgent({ workspaceId: s.workspaceId, terminalId: s.launch.handle, agent: s.provider }, await terminalsNow(), row)
+            if (row && s.launch?.kind === 'structured') {
+              const id = s.launch.handle.replace(/^orca_session_id:/, '')
+              const matches = row.agents.filter((a) => a.orcaSession === id)
+              if (matches.length === 1) a = { ...matches[0], terminal: s.launch.handle }
+            }
+            if (row && a) {
+              const provenance = await loadLineage(run, Date.now(), true)
+              if (provenance.dispatchOf?.has(a.paneKey) || provenance.dispatcherOf.has(a.paneKey)) throw new Error('The launched session has worker provenance; it cannot become coordinator.')
+              return { row, agent: a }
+            }
+            if (Date.now() > deadline) throw new Error('The target is starting but its identity is not verified yet. Retry adopts this same launch.')
+            await new Promise((r) => setTimeout(r, 1000))
+          }
+        },
+        commit: (source, target) => {
+          updateCoordinatorSessions(c.dir, (disk) => completeSelection(disk ?? { version: 1, current: null, members: [] }, source, target))
+        }
+      })
+      void captureResumeIds({ key, member: attempt.target!.id })
+      refreshSoon()
+      return { ok: true }
+    } catch (e) { refreshSoon(); return { ok: false, error: (e as Error).message } }
+  }, busy))
+
   /** Opening is not delivery: a sleeping coordinator resumes its exact conversation or starts one (wakePlan). */
-  const openCoordinator = (key: string): Promise<WakeOutcome> => exclusive(changing, key, async () => {
+  const openCoordinator = (key: string, provider?: string): Promise<WakeOutcome> => exclusive(changing, key, async () => {
     try {
       const snap = await refresh()
       const c = readCoordinators().find((x) => x.key === key)
@@ -1022,6 +1121,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       settlePending(launches, key, await terminalsNow(), c.sessions)
       return await wakeCoordinator(c, allRows, view ? sessionChoices(view, snap.rows).length : 0, {
         ...resumeIo,
+        first: async () => firstProvider(coordinatorProviders(await readInstalledProviders(run)), provider),
         open: async (workspaceId, terminal) => (await openChat({ workspaceId, terminal })).opened,
         // The resume refreshed while binding, which may have saved other members: put the resumed
         // member into what is on disk now, only while it is still the current one.
@@ -1039,7 +1139,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       }, launches.get(key) ?? false)
     } catch (e) { return { ok: false, kind: 'failed', error: (e as Error).message } }
   }, busy)
-  orca.panels.handle('sidebar.openCoordinator', ({ key }) => openCoordinator(key))
+  orca.panels.handle('sidebar.openCoordinator', ({ key, provider }) => openCoordinator(key, provider))
 
   orca.panels.handle('sidebar.coordinatorHistory', async ({ key, member: id, terminal, orcaSession }) => {
     const c = readCoordinators().find((c) => c.key === key)
@@ -1059,7 +1159,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       await refresh()
       const c = readCoordinators().find((c) => c.key === key)
       if (!c) throw new Error('Coordinator no longer exists.')
-      if (action === 'fresh') return await freshSession(c, agent || 'claude')
+      if (action === 'fresh') return await freshSession(c, agent)
       let sessions = c.sessions ?? { version: 1 as const, current: null, members: [] }
       if (action === 'select') {
         const row = allRows.find((r) => r.id === workspaceId && r.path === c.dir)
@@ -1126,7 +1226,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       } else if (action === 'end') {
         await closeSessions(run, panes)
       } else if (action === 'restart') {
-        return await exclusive(changing, key, () => freshSession(c, current?.agentType || 'claude'), busy)
+        return await exclusive(changing, key, () => freshSession(c, current?.agentType ?? undefined), busy)
       } else if (action === 'delete') {
         await closeSessions(run, panes)
         // Close every terminal it still has (Orca refuses to remove a project with open ones), then

@@ -1,7 +1,7 @@
 // Wires the panel: asks the worker for snapshots, redraws with src/view.ts, handles clicks.
 // All UI state (what is open or folded) lives here; the worker only sends data, and reads the folds
 // from storage for Option+1..9.
-import type { AgentInfo, CockpitStats, Coordinator, LinearData, LinearIssue, LinearWire, Look, Priority, Snapshot, WakeOutcome, WorkspaceRow } from '../protocol.ts'
+import type { AgentInfo, CockpitStats, Coordinator, CoordinatorProvider, LinearData, LinearIssue, LinearWire, Look, Priority, Snapshot, WakeOutcome, WorkspaceRow } from '../protocol.ts'
 import { busy, character, chatDigit, chatTargets, coordinatorCharacter, coordinatorOrder, crew, emptyUi, esc, faceOf, FOLDED_KEY, finishedAgents, freeLooks, projectDot, render, updateButton, wakeView, type WakeMenu } from '../view.ts'
 import { decodeLinear, DEFAULT_DISPLAY, FILTERS, GROUP_NAME, GROUPS, HIDEABLE, LINEAR_MARK, LINEAR_UI_KEY, linearUiOf, sendTargets, SORT_NAME, SORTS, STATE_NAME, toggleProject, viewOf, type Display, type LinearFilter } from '../linear.ts'
 import { pressGate } from './press.ts'
@@ -9,7 +9,10 @@ import { openerToggle } from './opener.ts'
 import { externalLink } from './links.ts'
 import { canRemove } from '../rank.ts'
 import { sessionChoices } from '../coordinator-sessions.ts'
-import { providerBadge } from '../providers.ts'
+import { providerBadge, providerOf } from '../providers.ts'
+import { PROVIDER_LOGOS } from '../provider-logos.ts'
+import { handoverTargets } from '../handover-providers.ts'
+import type { HandoverProvider } from '../handover.ts'
 
 const ui = emptyUi()
 let snap: Snapshot | null = null
@@ -436,7 +439,9 @@ type Action = { label: string; icon?: string; iconHtml?: string; right?: string;
 type Chips = { chips: string; icon?: string; iconHtml?: string; stay?: boolean; wrap?: boolean; options: { label: string; active: boolean; run: () => void | Promise<void> }[] }
 /** A line of text heading the menu; `header` is HTML, escaped by whoever builds it; `tip` is its tooltip (text). */
 type Header = { header: string; tip?: string }
-type MenuItem = Action | Chips | Header | 'separator'
+type HandoverChoices = { handover: { provider: HandoverProvider; label: string; run: () => void | Promise<void> }[]; note?: string; tip?: string }
+type ProviderChoices = { providers: (CoordinatorProvider & { run: () => void | Promise<void> })[] }
+type MenuItem = Action | Chips | Header | HandoverChoices | ProviderChoices | 'separator'
 
 // Icons in Orca's menu style (16px outline).
 const MI: Record<string, string> = {
@@ -498,13 +503,19 @@ async function confirmAction(kind: string, title: string, text: string, okLabel:
  * needs the person (a conversation to pick, one that could not be restored), its row stays
  * "Sleeping" and the Sessions menu opens with the reason and the ways on (wakeView).
  */
-async function wake(key: string): Promise<void> {
+async function wake(key: string, provider?: string): Promise<void> {
   const target = `coordinator:${key}`
   ui.status.set(target, { text: 'Opening…', tone: 'pending' })
   draw()
   let r: WakeOutcome
-  try { r = await orca.plugin.request('sidebar.openCoordinator', { key }, { timeoutMs: 90_000 }) }
+  try { r = await orca.plugin.request('sidebar.openCoordinator', { key, ...(provider ? { provider } : {}) }, { timeoutMs: 90_000 }) }
   catch (e) { r = { ok: false, kind: 'failed', error: (e as Error).message } }
+  if (r.kind === 'provider') {
+    ui.status.delete(target)
+    draw()
+    showFirstProviderPicker(key, r.providers ?? [], r.error)
+    return
+  }
   const { row, menu } = wakeView(r)
   if (row) ui.status.set(target, row)
   else ui.status.delete(target)
@@ -600,13 +611,33 @@ function coordinatorMenu(key: string): MenuItem[] {
   const VERBS = { look: ['Shuffling…', 'New look'], restart: ['Restarting…', 'Fresh session'], end: ['Sleeping…', 'Asleep'], delete: ['Deleting…', 'Deleted'] } as const
   const run = (action: 'look' | 'restart' | 'end' | 'delete', _label: string) =>
     inline(`coordinator:${key}`, VERBS[action][0], VERBS[action][1], () => orca.plugin.request('sidebar.coordinatorAction', { key, action }, { timeoutMs: 90_000 }))
+  const handover = (provider: 'claude' | 'codex', retry = false) =>
+    inline(`coordinator:${key}`, 'Handing over…', 'Handed over', () => orca.plugin.request('sidebar.handover', { key, provider, retry }, { timeoutMs: 150_000 }))
+  const currentProvider = c.session?.agentType ?? c.sessions?.members.find((m) => m.id === c.sessions?.current)?.agentType
+  const pending = ui.status.get(`coordinator:${key}`)
+  let handoverItem: MenuItem
+  if (pending?.tone === 'pending' && pending.text === 'Handing over…') handoverItem = { label: 'Handing over…' }
+  else if (c.handover?.phase === 'invalid') handoverItem = { label: 'Handover unavailable' }
+  else if (c.handover?.provider && c.handover.phase !== 'complete') {
+    const provider = c.handover.provider
+    const name = provider === 'codex' ? 'Codex' : 'Claude'
+    handoverItem = snap?.handoverProviders?.includes(provider)
+      ? { handover: [{ provider, label: `Retry handover to ${name}`, run: () => handover(provider, true) }], note: 'Retry' }
+      : { handover: [], note: 'Unavailable', tip: `Retry handover to ${name} when that provider is available. The original attempt is preserved.` }
+  } else {
+    const targets = handoverTargets(snap?.handoverProviders, currentProvider)
+    handoverItem = { handover: targets.map((provider) => ({ provider, label: `Handover to ${provider === 'codex' ? 'Codex' : 'Claude'}`, run: () => handover(provider) })),
+      ...(!targets.length ? { note: 'Unavailable', tip: snap?.handoverProviders ? 'No other supported provider is available. Enable Claude or Codex in Orca Settings → Agents.' : 'Agent availability could not be verified. Reopen the menu after refreshing.' } : {}) }
+  }
   const items: MenuItem[] = [
     { label: 'New look', icon: 'shuffle', run: () => run('look', 'New look') },
+    handoverItem,
     'separator',
     { label: 'Start new conversation', icon: 'restart', danger: true, run: async () => {
       if (await confirmAction('restart-coordinator', `Start ${c.name} fresh?`, 'A separate member starts and becomes current. Previous conversations and their pending asks remain available as read-only history.', 'Start fresh', 'restart', 'warn')) await run('restart', 'Fresh session')
     } }
   ]
+  if (c.handover?.error) items.splice(2, 0, { header: 'Handover incomplete', tip: c.handover.error })
   if (c.members?.length) items.splice(1, 0, { label: 'Conversation history', icon: 'clock', run: () => showHistoryList(key) })
   if (c.session) items.splice(1, 0, { label: 'Sleep', icon: 'moon', run: () => run('end', 'Sleep') })
   // The Linear teams it owns: a send of their issues suggests it. One chip per connected team.
@@ -657,6 +688,14 @@ function menuHtml(items: MenuItem[]): string {
   return items.map((it, i) =>
     it === 'separator' ? '<div class="sep" role="separator"></div>'
       : 'header' in it ? `<div class="mh"${it.tip ? ` data-tip="${esc(it.tip)}"` : ''}>${it.header}</div>`
+      : 'providers' in it
+        ? `<div class="first-providers">${it.providers.map((p, j) => {
+          const mark = providerOf(p.id)
+          const label = `Start coordinator with ${p.name}`
+          return `<button class="mi first-provider" role="menuitem" aria-label="${esc(label)}" title="${esc(label)}" data-tip="${esc(label)}" data-i="${i}" data-j="${j}">${mark ? `<span class="provider" aria-hidden="true">${PROVIDER_LOGOS[mark]}</span>` : esc(p.name)}</button>`
+        }).join('')}</div>`
+      : 'handover' in it
+        ? `<div class="mchips handover-row"${it.tip ? ` data-tip="${esc(it.tip)}"` : ''}>${iconOf({ icon: 'shuffle' })}<span class="ml">Handover</span>${it.note ? `<span class="mr">${esc(it.note)}</span>` : ''}${it.handover.map((o, j) => `<button class="mi handover-target" role="menuitem" aria-label="${esc(o.label)}" data-tip="${esc(o.label)}" title="${esc(o.label)}" data-i="${i}" data-j="${j}"><span class="provider" aria-hidden="true">${PROVIDER_LOGOS[o.provider]}</span></button>`).join('')}</div>`
       : 'chips' in it
         ? `<div class="mchips" role="group" aria-label="${esc(it.chips)}">${iconOf(it)}<span class="ml">${esc(it.chips)}</span></div><div class="chips${it.wrap ? ' wrap' : ''}">${it.options.map((o, j) => `<button class="mi chip${o.active ? ' on' : ''}" role="menuitemradio" aria-checked="${o.active}" data-i="${i}" data-j="${j}">${esc(o.label)}</button>`).join('')}</div>`
         : `<button class="mi${it.danger ? ' danger' : ''}" role="${it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}"${it.checked === undefined ? '' : ` aria-checked="${it.checked}"`} data-i="${i}">${iconOf(it)}<span class="ml">${esc(it.label)}</span>${it.right ? `<span class="mr${it.accent ? ' sug' : ''}">${esc(it.right)}</span>` : ''}${it.checked === undefined ? '' : `<span class="check">${it.checked ? '✓' : ''}</span>`}</button>`
@@ -674,9 +713,11 @@ function runFrom(items: MenuItem[], e: MouseEvent, build?: () => MenuItem[]): vo
   if (!b) return
   const item = items[Number(b.dataset.i)]
   if (!item || item === 'separator' || 'header' in item) return
-  const stay = Boolean(item.stay && build)
+  const stay = Boolean('stay' in item && item.stay && build)
   if (!stay) closeMenu()
-  if ('chips' in item) void item.options[Number(b.dataset.j)]?.run()
+  if ('providers' in item) void item.providers[Number(b.dataset.j)]?.run()
+  else if ('handover' in item) void item.handover[Number(b.dataset.j)]?.run()
+  else if ('chips' in item) void item.options[Number(b.dataset.j)]?.run()
   else void item.run?.()
   if (stay) showItems(tidy(build!()), build)
 }
@@ -867,6 +908,15 @@ async function showHistory(key: string, member: string, terminal?: string, sourc
  * when it may help, Show terminal when the attempt left one, the conversations to pick, then Start
  * new conversation.
  */
+function showFirstProviderPicker(key: string, providers: CoordinatorProvider[], reason?: string): void {
+  const anchor = document.querySelector<HTMLElement>(`[data-menu="coordinator:${CSS.escape(key)}"] .coord-name`)
+  const detail = reason && reason !== 'Choose a provider for the first conversation.' ? reason : ''
+  const items: MenuItem[] = [{ header: `Choose provider${detail ? `<div class="mh-reason">${esc(detail)}</div>` : ''}` }]
+  if (providers.length) items.push({ providers: providers.map((p) => ({ ...p, run: () => wake(key, p.id) })) })
+  else items.push({ label: 'Retry availability', icon: 'restart', run: () => wake(key) })
+  openMenu(items, 12, 12, `providers:${key}`, anchor?.getBoundingClientRect(), 'first-provider-menu')
+}
+
 function showSessionPicker(key: string, need?: WakeMenu): void {
   const c = snap?.coordinators.find((c) => c.key === key)
   if (!c || !snap) return

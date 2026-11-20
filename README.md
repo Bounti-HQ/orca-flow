@@ -62,22 +62,30 @@ Orca lists the access the plugin asks for: running its own worker process, readi
 workspaces, getting agent status changes, and starting agents (to open coordinator sessions).
 Approve it, then open **Orca Flow** from the right sidebar (the layers icon).
 
-On its first start the plugin sets up three things outside its own folder:
+The installed copy sets up these files outside its own folder:
 
 | Path | What it is |
 | --- | --- |
 | `<Claude profile>/skills/orca-flow` | A link to the plugin's skill, so every Orca agent can load it. It follows the plugin across updates. |
+| `~/.agents/skills/orca-flow` | The Codex USER skill link, shared across Orca Codex accounts. Account selection changes `CODEX_HOME`, not this user skill directory. |
 | `~/orca/coordinators/CLAUDE.md` | Instructions every coordinator inherits, copied once. From then on it is yours: coordinators keep your project notes in it, and updates never change it. |
+| `~/orca/coordinators/<name>/AGENTS.md` and `CLAUDE.md` | Missing local instructions are seeded for new and existing coordinator folders. Launch prompts also explicitly supply the coordinator role and skill path. |
 | `<Claude profile>/settings.json` | One Stop hook that checks a coordinator's or lead's last message against the [message format](#message-format), and one UserPromptSubmit hook that passes its quiet reminders to the agent. Both run only in Orca's agent panes and do nothing until you opt in. Your other settings and hooks stay as they are. |
 
-A real file already at the skill or `CLAUDE.md` path is left alone, and a `settings.json` that is not
-valid JSON is not changed. The Claude profile is the one Orca's agents use
-(Orca's selected profile, else `~/.claude`).
+A real file or another source's symlink is left alone, including a dangling link whose ownership
+cannot be verified. Only our installed release links are repointed. A `settings.json` that is not
+valid JSON is not changed. The Claude profile is Orca's selected host profile, then an explicit
+`CLAUDE_CONFIG_DIR`, else `~/.claude`. Development copies leave installed links, hooks and existing
+coordinator folders alone at startup. Codex receives instructions, not a port of Claude's Stop hooks;
+this does not claim identical enforcement between providers.
 
 ## Getting started
 
 1. **Create a coordinator.** In the panel, click **New coordinator**, pick a name and a look. Orca
-   opens its session in a folder under `~/orca/coordinators/`.
+   creates its folder under `~/orca/coordinators/` without launching. Click its row to start: if
+   several supported harnesses are enabled, pick a logo (or provider name) in the anchored menu.
+   One usable harness starts directly; unavailable agents give feedback and a Retry action.
+   See [first-session provider support](docs/coordinator-first-session.md) for the host capability boundary.
 2. **Tell it what it is for**, for example "you own the `web` and `api` repos". It records that in
    its own `coordinator.json`. A coordinator with no scope takes any project.
 3. **Ask for work.** "Add guest checkout" makes the coordinator check there is room, create a
@@ -87,6 +95,23 @@ valid JSON is not changed. The Claude profile is the one Orca's agents use
 5. **Answer what is asked.** Anything waiting on you shows in **Up next** and gets a `?` badge.
 6. **Sleep what you are not using.** Right-click a coordinator or session and choose **Sleep** to
    free its memory. Clicking a sleeping coordinator wakes it in the same conversation.
+
+The coordinator menu also has a compact **Handover** row with target-provider logos. It offers
+available Claude/Codex alternatives, excluding the current provider; tooltips name each target. It reads the
+stored source transcript, including when the source has exhausted its quota, and launches the target
+in the same workspace with scope, workstreams and pending decisions. Original conversations stay
+in history. The provider-logo session dropdown keeps its one-step selection; **Start new
+conversation** remains a fresh start.
+
+**Current host limitation:** menu handover refuses coordinators with owned runs before launching:
+Orca exposes no atomic ownership transfer that preserves report routes and pending asks. A target
+launched as a structured chat is retained as a coordinator member, but cannot become current until
+the host exposes supported chat focus/navigation for this control. Terminal targets with no owned
+runs can complete after verified launch, prompt delivery and identity binding. A failed/unknown
+launch keeps the source current; Retry reuses the recorded operation instead of creating another
+coordinator. See [handover behavior, host gaps and evidence](docs/coordinator-handover.md).
+The receiving agent waits passively for cutover in its first turn, then continues its briefing
+without another prompt. If the two-minute bootstrap window expires, automatic cutover is blocked.
 
 You can also ask a coordinator "what's next?" at any time; it names one agent that waits on you
 and offers to open its chat.

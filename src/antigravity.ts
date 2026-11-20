@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { coordinatorPrompt } from './coordinator-bootstrap.ts'
 
 // The installed-agent inventory is execution-host specific. Installation alone says nothing about login.
 export async function requireAntigravity(dir: string, run: (args: string[]) => Promise<any>): Promise<void> {
@@ -16,7 +17,7 @@ export async function launchAntigravityCoordinator(
   await requireAntigravity(workspacePath, run)
   if (!plugin) throw new Error('The Orca Flow coordinator skill could not be located.')
   const skill = join(plugin, 'skills', 'orca-flow')
-  const prompt = `Your role: coordinator. Read ${join(skill, 'SKILL.md')} and ${join(skill, 'roles/coordinator.md')}. Read coordinator.json and CLAUDE.md here, and ../CLAUDE.md for shared project notes. Follow your coordinator role.`
+  const prompt = coordinatorPrompt(skill)
   return launch({ workspaceId, agent: 'antigravity', prompt })
 }
 
