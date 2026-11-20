@@ -21,16 +21,18 @@ import { assignCoordinators, coordinatorSession, COORDINATOR_HOME, deleteFolder,
 import { encodeLinear, linkedIssueOf, linkRows, loadLinear, pruneSent, sendIssue, teamsOf } from './linear.ts'
 import { associateSession, chooseSession, deliverCurrent, deliveryBlock, DeliveryUncertainError, exclusive, memberAgent, memberFrom, readMemberHistory, reconcileSessions, resumeExactMember, selectCurrent, sessionChoices, verifyConversation, wakeCoordinator, bindLaunched, launchedAgent, launchedTerminal, launchOnce, settlePending, terminalPane, resumeIdFor, withResumeId, conversationSaved, parseProcs, programRuns, providerMessage, ResumeRunningError, type Launch, type ListedAgent, type ResumeIo, type TerminalRecord } from './coordinator-sessions.ts'
 import { askingRows, CHAT_KEYS, chatTargets, FOLDED_KEY, finishedAgents, freeLooks, showable, type ChatTarget } from './view.ts'
-import type { AgentInfo, AgentState, AgentSummary, Capacity, Coordinator, LinearData, Priority, Snapshot, WakeOutcome, WorkspaceRow, WorkstreamCard, CoordinatorSessions } from './protocol.ts'
+import type { AgentInfo, AgentState, AgentSummary, Capacity, Coordinator, LinearData, Priority, SettingsState, Snapshot, WakeOutcome, WorkspaceRow, WorkstreamCard, CoordinatorSessions } from './protocol.ts'
 import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
 import { createWriter } from './writer.ts'
+import { configFile, configuredWriters, readSettings, writeSettings } from './config.ts'
+import { normalizeSettings, WRITER_PROVIDERS, type WriterStatus } from './settings.ts'
 import { currentSummaryJobs, findTranscript, refreshStale, summaryMatches, summarizePane, summaryProviders, turnSummarizer } from './summarize.ts'
 import { ensureOwnLinks, ensureOwnStopHook, ensureSeeds, linksFor, pluginDir, seedsFor, stopHookFor } from './install.ts'
 import { bootstrapCoordinator, coordinatorPrompt } from './coordinator-bootstrap.ts'
 import { completeSelection, continueHandover, handoverPrompt, handoverStatus, readHandover, readHandoverContext, requireCoordinatorNavigation, requireTransferableOwnership, runRoutes, saveHandover, type Handover } from './handover.ts'
 import { readHandoverProviders } from './handover-providers.ts'
 import { coordinatorProviders, firstProvider, readInstalledProviders } from './coordinator-providers.ts'
-import { latestRelease, newerVersion, startUpdate, updateItem, updater, type UpdateState } from './update.ts'
+import { checkForUpdates, readReleases, startUpdate, updateItem, updater, type InstalledPlugin, type UpdateCheck, type UpdateState } from './update.ts'
 import { readFootprint, readProcs, startedGroups } from './started.ts'
 import { backgroundReader } from './background.ts'
 
@@ -646,7 +648,7 @@ const UPDATE_CHECK_MS = 15 * 60_000
  * Both start `orca plugin update` outside this worker through one path (updater in update.ts).
  * When the new version starts, it finds the result left behind and says how it went.
  */
-function updates(orca: OrcaWorkerApi, dir: string | null, changed: (state: UpdateState) => void, onCheck: () => void = () => {}): void {
+function updates(orca: OrcaWorkerApi, dir: string | null, changed: (state: UpdateState) => void, onCheck: () => void = () => {}): { check: () => Promise<UpdateCheck>; last: () => UpdateCheck | null } {
   const key = installedKey(dir)
   let current = ''
   try {
@@ -670,19 +672,45 @@ function updates(orca: OrcaWorkerApi, dir: string | null, changed: (state: Updat
 
   orca.commands.register('flow.update', () => update.click())
   orca.panels.handle('sidebar.update', async () => update.now())
-  if (!key || !current) return void orca.log(`update checks off: ${key ? 'no version in the manifest' : `not an installed copy (${dir})`}`)
+
+  // One check for the timer and Settings' Check for Updates. Where Orca installed this copy from
+  // (`orca plugin list`) decides whether it can update to a release at all (cannotUpdate).
+  const run = orcaRunner(ORCA_BIN)
+  let plugin: InstalledPlugin | undefined
+  const installed = async (): Promise<InstalledPlugin> => {
+    if (plugin !== undefined) return plugin
+    const list = await run(['plugin', 'list']).catch(() => null)
+    const found = (list?.plugins as { pluginKey?: string }[] | undefined)?.find((p) => p.pluginKey === key) as InstalledPlugin | undefined
+    if (found) plugin = found
+    return found ?? null
+  }
+  let last: UpdateCheck | null = null
+  let checking: Promise<UpdateCheck> | null = null
+  const check = (): Promise<UpdateCheck> => (checking ??= checkForUpdates({ key, current, releases: () => readReleases(), plugin: installed })
+    .then((result) => {
+      last = result
+      // The status bar item and the panel's update button follow the same answer.
+      update.found(result.kind === 'available' ? result.version : null)
+      if (result.kind === 'failed') orca.log(`update check failed: ${result.reason}`)
+      return result
+    })
+    .finally(() => { checking = null }))
+  orca.panels.handle('sidebar.checkUpdates', () => check())
+  const api = { check, last: () => last }
+  if (!key || !current) {
+    orca.log(`update checks off: ${key ? 'no version in the manifest' : `not an installed copy (${dir})`}`)
+    void check()
+    return api
+  }
   update.settle()
 
-  let warned = false
-  const check = () => {
+  const periodic = () => {
     onCheck()
-    latestRelease()
-      .then((versions) => update.found(newerVersion(current, versions)))
-      // Offline or no git: one line, never a nag.
-      .catch((e: Error) => { if (!warned) orca.log(`update check failed: ${e.message}`); warned = true })
-      .finally(() => void timers.push(setTimeout(check, UPDATE_CHECK_MS)))
+    // Offline or no git: logged once per check, never a nag.
+    void check().finally(() => void timers.push(setTimeout(periodic, UPDATE_CHECK_MS)))
   }
-  timers.push(setTimeout(check, 10_000))
+  timers.push(setTimeout(periodic, 10_000))
+  return api
 }
 
 /** Things that keep the process alive; deactivate ends them so Orca (and tests) can stop it. */
@@ -717,6 +745,8 @@ export default function activate(orca: OrcaWorkerApi): void {
   // The panes in front in every workspace; only the focused workspace's agents among them wear the current border.
   let focus: string[] | null = null
   let handoverProviders: Snapshot['handoverProviders'] = null
+  /** Agent ids `orca agent installed` listed at the last refresh; the Settings dialog shows a never-used writer's CLI by it. */
+  let installedAgents: string[] | null = null
   let firstProviders: Snapshot['coordinatorProviders'] = null
   const shared = (snap: Snapshot): Snapshot => ({ ...snap, update: updateState, focusedPanes: focus, handoverProviders, coordinatorProviders: firstProviders })
   const run = orcaRunner(ORCA_BIN)
@@ -725,6 +755,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     // When the coordinator lineage finishes loading, draw again with it.
     const [snap, front, installed] = await Promise.all([snapshot(orca, runPs, () => void refresh()), readFocus(run), readInstalledProviders(run)])
     handoverProviders = installed ? installed.filter((a) => a.id === 'claude' || a.id === 'codex').map((a) => a.id as 'claude' | 'codex') : null
+    installedAgents = installed ? installed.map((a) => a.id) : null
     firstProviders = coordinatorProviders(installed)
     latest = snap
     focus = front
@@ -760,7 +791,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
   // The status bar item keeps this worker running, so it can fill the item in right away.
   void refresh()
-  updates(orca, dir, (state) => {
+  const upd = updates(orca, dir, (state) => {
     updateState = state
     if (latest) orca.panels.post('sidebar.changed', shared(latest))
   }, () => linkSkill(true))
@@ -1366,7 +1397,36 @@ export default function activate(orca: OrcaWorkerApi): void {
     const a = currentAgent(pane)
     return { orcaSession: a?.orcaSession, provider: a?.agentType }
   }
-  const writer = createWriter({ ...summaryProviders(), log: (message) => orca.log(message) })
+  // The writers and their order come from config.json, read again for every card, so Save applies at once.
+  const writer = createWriter({ ...summaryProviders(), writers: () => configuredWriters(DATA_DIR), log: (message) => orca.log(message) })
+
+  // ---------- Settings dialog ----------
+  let version: string | null = null
+  try { version = JSON.parse(readFileSync(join(dir ?? '', 'orca-plugin.json'), 'utf8')).version ?? null } catch {}
+  const settingsState = async (): Promise<SettingsState> => {
+    const read = readSettings(DATA_DIR)
+    if (!installedAgents) installedAgents = (await readInstalledProviders(run))?.map((a) => a.id) ?? null
+    const health = writer.health()
+    const writers: WriterStatus[] = WRITER_PROVIDERS.map((provider) => {
+      const h = health.find((x) => x.provider === provider)
+      return { provider, lastSuccessAt: h?.lastSuccessAt ?? null, failure: h?.failure ?? null, installed: installedAgents ? installedAgents.includes(provider) : null }
+    })
+    return { settings: read.settings, error: read.error, version, writers, update: updateState, updateCheck: upd.last() }
+  }
+  orca.panels.handle('sidebar.settings', () => settingsState())
+  orca.panels.handle('sidebar.saveSettings', async ({ settings }) => {
+    try {
+      writeSettings(normalizeSettings(settings), DATA_DIR)
+    } catch (e) {
+      return { ok: false, error: (e as Error).message, state: await settingsState() }
+    }
+    refreshSoon()
+    return { ok: true, state: await settingsState() }
+  })
+  orca.panels.handle('sidebar.revealSettings', () => new Promise((resolve) => {
+    const file = configFile(DATA_DIR)
+    execFile('/usr/bin/open', existsSync(file) ? ['-R', file] : [DATA_DIR], { timeout: 5000 }, (error) => resolve({ ok: !error }))
+  }))
   const summarizer = turnSummarizer({
     findTranscript: (pane, identity) => currentAgent(pane)
       ? findTranscript(pane, undefined, { ...identityFor(pane), ...identity })

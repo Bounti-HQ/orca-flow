@@ -325,7 +325,7 @@ html.light .pr-merged { color: rgb(147 51 234 / .7); }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } .fold svg { transition: none; } }
 
 /* tooltips (cockpit gauges, character status): drawn by app.ts in Orca's popover colors, never the OS tooltip */
-.tip { position: fixed; z-index: 10; max-width: 240px; padding: 6px 8px; border-radius: 6px; pointer-events: none; white-space: pre-line; overflow-wrap: anywhere;
+.tip { position: fixed; z-index: 50; max-width: 240px; padding: 6px 8px; border-radius: 6px; pointer-events: none; white-space: pre-line; overflow-wrap: anywhere;
   background: var(--orca-popover, #232328); color: var(--orca-popover-foreground, var(--ink)); border: 1px solid var(--line);
   box-shadow: 0 6px 18px -8px rgba(0, 0, 0, .55); font-size: 12px; line-height: 1.4; opacity: 0; transform: translateY(2px);
   transition: opacity .12s, transform .12s; }
@@ -563,3 +563,131 @@ button.item.coord { padding: 5px 6px; }
 .tree-rail{position:absolute;pointer-events:none;width:var(--lw);background:var(--lane-c);transform:translateX(-50%);z-index:0}
 .tree-rail.trunk{width:var(--tw);background:var(--trunk-c)}
 .session-routing{display:block;font-size:10px;color:var(--muted);background:transparent;border:0;text-align:left;padding:0 10px 7px 40px;cursor:pointer}
+
+/* Settings dialog (src/panel/settings.ts), laid out like macOS System Settings: a sidebar with tinted
+   icon tiles, a page title, rows in rounded groups (label left, control right, hairline dividers).
+   Its own s- names, so no panel rule (.dialog, .btn, .tag...) reaches inside. Under 520 px the
+   sidebar becomes a row of icon tabs above the page. */
+#settings {
+  --s-window: var(--orca-popover, #1e1e21);
+  --s-side: color-mix(in srgb, var(--ink) 4%, var(--s-window));
+  --s-card: color-mix(in srgb, var(--ink) 5.5%, var(--s-window));
+  --s-hair: color-mix(in srgb, var(--ink) 10%, transparent);
+  --s-fill: color-mix(in srgb, var(--ink) 9%, transparent);
+  --s-on: #0a84ff;
+}
+html.light #settings {
+  --s-side: color-mix(in srgb, var(--ink) 5%, var(--s-window));
+  --s-card: var(--s-window);
+  --s-page: color-mix(in srgb, var(--ink) 3.5%, var(--s-window));
+  --s-on: #007aff;
+}
+.s-scrim { position: fixed; inset: 0; z-index: 40; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 12px; background: color-mix(in srgb, #000 45%, transparent); }
+.s-dialog { position: relative; width: min(720px, 100%); height: min(560px, 100%); min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden;
+  background: var(--s-page, var(--s-window)); color: var(--orca-popover-foreground, var(--ink)); border: 1px solid var(--s-hair); border-radius: 12px; box-shadow: 0 22px 56px -12px rgba(0, 0, 0, .55); }
+#settings .s-dialog:focus, #settings .s-dialog:focus-visible { outline: none; }
+#settings input, #settings select { font: inherit; color: inherit; user-select: text; -webkit-user-select: text; }
+#settings :focus-visible { outline: 2px solid color-mix(in srgb, var(--s-on) 70%, transparent); outline-offset: 1px; border-radius: 6px; }
+.s-head { position: relative; display: flex; align-items: center; justify-content: center; height: 38px; border-bottom: 1px solid var(--s-hair); background: var(--s-side); }
+.s-head h2 { margin: 0; font-size: 13px; font-weight: 600; cursor: default; }
+.s-x { position: absolute; left: 10px; top: 9px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); background: var(--s-fill); cursor: pointer; }
+.s-x:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 16%, transparent); }
+.s-x svg { width: 10px; height: 10px; }
+
+.s-body { display: grid; grid-template-columns: 196px minmax(0, 1fr); min-height: 0; }
+#s-nav { background: var(--s-side); border-right: 1px solid var(--s-hair); padding: 8px; display: grid; align-content: start; gap: 1px; overflow-y: auto; }
+.s-nav-btn { cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 5px; border-radius: 6px; font-size: 13px; color: var(--ink); white-space: nowrap; }
+.s-nav-btn:hover { background: var(--s-fill); }
+.s-nav-btn[aria-current="page"] { background: color-mix(in srgb, var(--ink) 13%, transparent); font-weight: 500; }
+.s-tile { width: 20px; height: 20px; flex: none; border-radius: 5px; display: grid; place-items: center; color: #fff; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .15); }
+.s-tile svg { width: 13px; height: 13px; }
+.s-nav-label { overflow: hidden; text-overflow: ellipsis; }
+
+.s-page { padding: 14px 18px 18px; display: grid; align-content: start; gap: 14px; min-width: 0; overflow-y: auto; }
+.s-ptitle { margin: 0 0 -2px; font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.s-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-ptitle .s-label, .s-gh .s-label { flex: none; }
+.s-loading { margin: 0; color: var(--muted); }
+.s-group { display: grid; gap: 5px; }
+.s-gh { margin: 0; padding: 0 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.s-card { background: var(--s-card); border: 1px solid var(--s-hair); border-radius: 9px; overflow: hidden; }
+.s-row { position: relative; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px 10px 5px 12px; }
+.s-row + .s-row::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: 1px; background: var(--s-hair); }
+.s-ctl { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
+.s-value { color: var(--muted); white-space: nowrap; }
+.s-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+
+/* writer rows */
+.s-wrow { padding-left: 4px; gap: 8px; }
+.s-wrow.dim > :not(.s-ctl), .s-wrow.dim .s-value { opacity: .45; }
+.s-wrow.dragging { background: color-mix(in srgb, var(--s-on) 12%, var(--s-card)); z-index: 1; }
+.s-handle { width: 18px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 4px; color: var(--faint); cursor: grab; touch-action: none; }
+.s-handle:hover { color: var(--muted); background: var(--s-fill); }
+.s-handle[disabled] { cursor: default; opacity: .4; background: none; }
+.dragging .s-handle { cursor: grabbing; }
+.s-handle svg { width: 12px; height: 12px; }
+.s-logo { width: 20px; height: 20px; flex: none; display: grid; place-items: center; color: var(--ink); }
+.s-logo svg, .s-logo img { width: 16px; height: 16px; object-fit: contain; }
+.s-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
+.s-dot.ok { background: #30d158; } html.light .s-dot.ok { background: #28a745; }
+.s-dot.warn { background: var(--warn); }
+.s-dot.bad { background: var(--danger); }
+.s-dot:focus-visible { outline-offset: 3px; border-radius: 50%; }
+
+/* controls: pop-up menu, switch, stepper, round +/- and push buttons */
+select.s-pop { appearance: none; -webkit-appearance: none; cursor: pointer; border: 0; border-radius: 6px; padding: 3px 22px 3px 8px; max-width: 150px; color: var(--ink);
+  background: var(--s-fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%23999' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.5 4.5L4 2l2.5 2.5M1.5 7.5L4 10l2.5-2.5'/%3E%3C/svg%3E") no-repeat right 7px center; }
+select.s-pop:hover { background-color: color-mix(in srgb, var(--ink) 14%, transparent); }
+select.s-pop option { background: var(--s-window); color: var(--ink); }
+select.s-pop[disabled] { cursor: default; opacity: .5; }
+.s-switch { position: relative; width: 32px; height: 19px; flex: none; }
+.s-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.s-switch input[disabled] { cursor: default; }
+.s-switch span { position: absolute; inset: 0; border-radius: 999px; background: color-mix(in srgb, var(--ink) 20%, transparent); transition: background .15s; pointer-events: none; }
+.s-switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .15s; }
+.s-switch input:checked + span { background: var(--s-on); }
+.s-switch input:checked + span::after { transform: translateX(13px); }
+.s-switch input[disabled] + span { opacity: .45; }
+.s-switch input:focus-visible + span { outline: 2px solid color-mix(in srgb, var(--s-on) 70%, transparent); outline-offset: 2px; }
+.s-seg { display: inline-flex; border-radius: 6px; background: var(--s-fill); overflow: hidden; }
+.s-seg button { width: 24px; height: 22px; display: grid; place-items: center; color: var(--ink); cursor: pointer; }
+.s-seg button + button { box-shadow: inset 1px 0 var(--s-hair); }
+.s-seg button:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.s-seg button[disabled] { opacity: .35; cursor: default; background: none; }
+.s-seg svg, .s-round svg { width: 11px; height: 11px; }
+.s-round { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--ink); background: var(--s-fill); cursor: pointer; }
+.s-round:hover { background: color-mix(in srgb, var(--ink) 16%, transparent); }
+.s-round[disabled] { opacity: .4; cursor: default; }
+.s-input { flex: 1; min-width: 0; border: 0; background: none; padding: 2px 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; outline: none; }
+.s-input::placeholder { color: var(--faint); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; font-size: 13px; }
+.s-push { padding: 3px 10px; border-radius: 6px; font-size: 12.5px; white-space: nowrap; cursor: pointer; color: var(--ink); background: var(--s-fill); box-shadow: inset 0 0 0 .5px var(--s-hair); }
+.s-push:hover { background: color-mix(in srgb, var(--ink) 14%, transparent); }
+.s-push.primary { background: var(--s-on); color: #fff; box-shadow: none; }
+.s-push.primary:hover { background: color-mix(in srgb, var(--s-on) 88%, #fff); }
+.s-push[disabled] { opacity: .45; cursor: default; background: var(--s-fill); }
+.s-tipwrap { display: inline-flex; }
+/* About's Updates row: the label keeps its width, a long status gives way first. */
+.s-about .s-label { flex: none; }
+.s-about .s-ctl { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+.s-about .s-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.s-about .s-ctl > :not(.s-value) { flex: none; }
+/* The panel's confirm (an update, say) can open from Settings: it goes above the dialog. */
+#confirm.modal { z-index: 45; }
+.s-foot { display: flex; justify-content: flex-end; }
+.s-err { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; font-size: 12px; color: var(--danger); cursor: default; }
+.s-err svg { width: 13px; height: 13px; flex: none; }
+.s-err span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 520px) {
+  .s-scrim { padding: 6px; }
+  .s-dialog { height: 100%; }
+  .s-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  #s-nav { display: flex; justify-content: center; gap: 6px; padding: 7px; border-right: 0; border-bottom: 1px solid var(--s-hair); overflow: visible; }
+  .s-nav-btn { padding: 5px; }
+  .s-nav-label { display: none; }
+  .s-tile { width: 24px; height: 24px; border-radius: 6px; }
+  .s-tile svg { width: 15px; height: 15px; }
+  .s-page { padding: 12px; }
+  select.s-pop { max-width: 110px; }
+}
+@media (prefers-reduced-motion: reduce) { #settings * { transition: none !important; } }
