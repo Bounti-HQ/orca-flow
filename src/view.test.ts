@@ -3,7 +3,7 @@ import { askKey } from './coordinator-sessions.ts'
 import { assert, test } from 'orca/testing'
 import { readFileSync } from 'node:fs'
 import type { AgentInfo, AgentSummary, LinearData, LinearIssue, Snapshot, WorkspaceRow } from './protocol.ts'
-import { type UiState, coordinatorOrder, LINEAR_ROWS, askingRows, askKindOf, BRANCH_COLORS, nodeOf, branchColor, character, laneColor, chatDigit, chatTargets, colorSlots, esc, emptyUi, faceOf, fitLabel, textWidth, finishedAgents, freeLooks, gaugesOf, prBadge, render, updateButton } from './view.ts'
+import { type UiState, explainError, failedStatus, ownershipRefusal, wakeDisplay, coordinatorOrder, LINEAR_ROWS, askingRows, askKindOf, BRANCH_COLORS, nodeOf, branchColor, character, laneColor, chatDigit, chatTargets, colorSlots, esc, emptyUi, faceOf, fitLabel, textWidth, finishedAgents, freeLooks, gaugesOf, prBadge, render, updateButton } from './view.ts'
 import type { CockpitStats } from './protocol.ts'
 import { pressGate } from './panel/press.ts'
 import { openerToggle } from './panel/opener.ts'
@@ -84,7 +84,7 @@ test('closing the first and opening another follows the person', () => {
 test('coordinators: a single-project coordinator is its project; multi-repo groups label projects softly', () => {
   const { main } = render(snap, emptyUi())
   const tree = main.slice(main.indexOf('class="tree"'))
-  const first = tree.indexOf('<section class="coordinator">')
+  const first = tree.lastIndexOf('<section class="coordinator">', tree.indexOf('data-menu="coordinator:alpha"'))
   const alpha = tree.slice(first, tree.indexOf('<section class="coordinator">', first + 1))
   assert.match(alpha, /alpha/)
   assert.match(alpha, /class="item indent"/, 'the worker nests under its coordinator')
@@ -398,11 +398,71 @@ test('sleeping every finished session is offered only when memory is tight, and 
   assert.match(render(at('full'), ui).copen, /data-act="closeall" data-tip="Sleep 2 finished sessions"><svg[\s\S]*?<\/svg>Sleep all</, 'memory not known yet')
 })
 
-test('the full coordinator error is available on hover and keyboard focus in a narrow panel', () => {
+test('a coordinator error is a compact icon whose full text is its tooltip, accessible name and menu', () => {
   const ui = emptyUi()
-  ui.status.set('coordinator:alpha', { tone: 'bad', text: 'Missing <source> transcript. Handover stopped before launch.' })
+  ui.status.set('coordinator:alpha', failedStatus('Missing <source> transcript. Handover stopped before launch.', 'Handover failed'))
   const { main } = render(snap, ui)
-  assert.match(main, /class="rstatus bad" tabindex="0" data-tone="danger" data-tip="Missing &lt;source&gt; transcript\. Handover stopped before launch\."/)
+  const icon = main.match(/<button class="rstatus bad status-icon"[^>]*>[\s\S]*?<\/button>/)?.[0] ?? ''
+  assert.ok(icon, 'an icon button, not a clipped sentence')
+  assert.match(icon, /data-status="coordinator:alpha" aria-haspopup="menu"/, 'a click opens the reason with its actions')
+  assert.match(icon, /aria-label="Handover failed: Missing &lt;source&gt; transcript\. Handover stopped before launch\."/)
+  assert.match(icon, /data-tone="danger" data-tip="Handover failed\nMissing &lt;source&gt; transcript\. Handover stopped before launch\."/)
+  noMatch(icon.replace(/<button[^>]*>/, ''), /Missing|Handover failed/, 'no text on the row itself')
+})
+
+test('raw host and provider errors read as plain words with a recovery; unknown ones keep their full text', () => {
+  const surface = explainError('terminal_surface_ownership_unavailable')
+  assert.deepEqual([surface.short, surface.tone], ['Still starting', 'warn'], 'the agent usually started: not a red failure')
+  assert.match(surface.detail, /opening the coordinator adopts a conversation that already started/)
+  assert.match(surface.detail, /\(Orca: terminal_surface_ownership_unavailable\)/, 'the host code stays findable')
+
+  const codex = 'Codex said: “ERROR: failed to initialize sqlite local db at /Users/someone/.codex/state_5.sqlite: failed to initialize state runtime at /Users/someone/.codex: failed to migrate state DB at /Users/someone/.codex/state_5.sqlite: while executing migration 63: error returned from database: (code: 5) database is locked”'
+  const locked = explainError(codex, "Couldn't open")
+  assert.deepEqual([locked.short, locked.tone], ['Codex database locked', 'bad'])
+  assert.match(locked.detail, /^Codex could not open its local database \(~\/\.codex\/state_5\.sqlite, migration 63\): another Codex process is using it\./)
+  assert.match(locked.detail, /Close or restart the other Codex session .*then Retry\./)
+
+  const blocked = explainError(ownershipRefusal(3))
+  assert.deepEqual([blocked.short, blocked.tone], ['Handover blocked', 'warn'])
+  assert.equal(blocked.detail, ownershipRefusal(3))
+  const legacy = explainError('Handover is unavailable while this coordinator owns 2 runs. This Orca host has no atomic coordinator transfer; report routing and pending asks were preserved. A host update is required.')
+  assert.equal(legacy.detail, ownershipRefusal(2), 'the older wording is replaced by the one with a recovery')
+
+  const old = 'Exact resume started, but its new binding could not be verified. No fallback was selected; inspect Sessions before retrying.'
+  assert.deepEqual(explainError(old, "Couldn't open"), { short: "Couldn't open", tone: 'bad', detail: old }, 'unknown and long: a short label, the full text')
+  assert.deepEqual(explainError('PR not merged'), { short: 'PR not merged', tone: 'bad', detail: 'PR not merged' }, 'short enough to read on the row')
+})
+
+test('an expired handover record reads as expired with how to clear it, not as a raw guard message', () => {
+  const raw = explainError('The handover bootstrap window expired. The target may have ended its turn; automatic cutover is blocked and the saved selection is preserved.')
+  assert.deepEqual([raw.short, raw.tone], ['Handover expired', 'warn'])
+  assert.match(raw.detail, /Retry handover to clear it/)
+  assert.equal(explainError('This pending handover predates the first-turn bootstrap barrier and cannot complete automatically. Its target and original selection were preserved.').short, 'Handover expired')
+  const aside = 'The handover to Codex ran out of time before it finished, so it can never complete. It was set aside as .orca-flow-handover-expired-1.json. Nothing was transferred and the original conversation stays current. Choose Handover again to start a new attempt.'
+  assert.deepEqual(explainError(aside), { short: 'Handover set aside', tone: 'warn', detail: aside })
+  assert.equal(explainError('The handover to Codex ran out of time before it finished, so it can never complete. Its new conversation (terminal t) is still open but never became the coordinator; nothing was transferred. Close that terminal, then Retry handover to set this attempt aside.').short, 'Handover expired')
+})
+
+test('a coordinator click that Orca could not confirm yet shows Still starting with Retry, never a red failure', () => {
+  const failed = wakeDisplay({ ok: false, kind: 'failed', error: 'terminal_surface_ownership_unavailable' })
+  assert.deepEqual(failed.row && [failed.row.text, failed.row.tone], ['Still starting', 'warn'])
+  assert.equal(failed.menu?.header, 'Still starting')
+  assert.equal(failed.menu?.retry, true, 'Retry opens the coordinator again, which adopts the started terminal')
+  const codex = wakeDisplay({ ok: false, kind: 'restore-failed', retryable: true, agent: 'codex', error: 'The previous conversation could not be restored: Codex said: “database is locked” at ~/.codex/state_5.sqlite' })
+  assert.equal(codex.row, null, 'a restore that failed stays a neutral Sleeping row')
+  assert.equal(codex.menu?.header, "Couldn't restore the last conversation")
+  assert.match(codex.menu?.reason ?? '', /Close or restart the other Codex session/)
+  assert.equal(codex.menu?.retry, true)
+  const plain = wakeDisplay({ ok: false, kind: 'failed', retryable: true, error: 'The exact session could not be opened.' })
+  assert.deepEqual(plain.row, { text: "Couldn't open", tone: 'bad', detail: 'The exact session could not be opened.' })
+  assert.equal(plain.menu?.reason, 'The exact session could not be opened.')
+})
+
+test('a long error inside a row button stays a short label; the reason joins the button name and the tooltip', () => {
+  const ui = emptyUi()
+  ui.status.set('agent:p-dup', failedStatus('Orca refused to remove the worktree because a terminal is still attached.', "Couldn't remove"))
+  const { main } = render(snap, ui)
+  assert.match(main, /<span class="rstatus bad" data-tone="danger" data-tip="Couldn&#39;t remove\nOrca refused[^"]*">Couldn&#39;t remove<span class="sr-only">: Orca refused/)
 })
 
 test('coordinators show no team characters on the right', () => {
@@ -527,7 +587,7 @@ test('actions show their progress inline on the row, not in a toast', () => {
   assert.match(main, /data-menu="agent:p-dup"[^>]*>[\s\S]*?class="rstatus pending"><span class="refreshing"><\/span>Sleeping…/)
   assert.match(main, /data-menu="coordinator:alpha"[\s\S]*?class="rstatus pending"><span class="refreshing"><\/span>Waking…/)
   ui.status.set('agent:p-dup', { text: 'PR not merged', tone: 'bad' })
-  assert.match(render(snap, ui).main, /class="rstatus bad">PR not merged/)
+  assert.match(render(snap, ui).main, /class="rstatus bad" data-tone="danger" data-tip="PR not merged">PR not merged</)
 })
 
 test('a coordinator shows its own state: available while only its workers work', () => {
@@ -1065,8 +1125,11 @@ test('update button: hidden with nothing to update, then what the update needs o
 /** The tree's chat rows (coordinators and agents), top to bottom, by the data-menu key chatTargets uses. */
 const treeChats = (main: string) => [...main.slice(main.indexOf('class="tree"')).matchAll(/data-menu="((?:coordinator|agent):[^"]+)"/g)].map((m) => m[1])
 
+/** The fixture with alpha and main awake: each has a live session of its own. */
+const awakeSnap: Snapshot = { ...snap, coordinators: snap.coordinators.map((c) => ({ ...c, session: agent(`p-own-${c.key}`, c.key, 'done') })) }
+
 test('chat numbers follow the tree: each coordinator, its leads with their workers, your chats, then sleeping coordinators', () => {
-  const sleepy = { ...snap, coordinators: [...snap.coordinators, { key: 'zzz', name: 'zzz', repos: [], workspaceId: 'ws-z' }] }
+  const sleepy = { ...awakeSnap, coordinators: [...awakeSnap.coordinators, { key: 'zzz', name: 'zzz', repos: [], workspaceId: 'ws-z' }] }
   const targets = chatTargets(sleepy)
   assert.deepEqual(targets.map((t) => t.key), [
     'coordinator:alpha', 'agent:p-coord', 'agent:p-dup', // alpha, its lead and the worker nested under it
@@ -1085,7 +1148,7 @@ test('chat numbers follow the tree: each coordinator, its leads with their worke
 })
 
 test("a folded group's team gives its numbers to the rows below; a terminal goes along", () => {
-  const withTerm = { ...snap, rows: snap.rows.map((r) => (r.id === 'pricing' ? { ...r, agents: [{ ...r.agents[0], terminal: 'term-p' }] } : r)) }
+  const withTerm = { ...awakeSnap, rows: snap.rows.map((r) => (r.id === 'pricing' ? { ...r, agents: [{ ...r.agents[0], terminal: 'term-p' }] } : r)) }
   const ui = emptyUi()
   ui.folded.add('alpha')
   const targets = chatTargets(withTerm, ui.folded)
@@ -1233,8 +1296,29 @@ test("the tree shows a worktree's Linear issue on the right of its lead's row, b
 })
 
 test('coordinators in tree order: awake ones first, then sleeping', () => {
-  const s: Snapshot = { ...snap, coordinators: [{ key: 'zz', name: 'zz', repos: [], workspaceId: null }, ...snap.coordinators] }
+  const s: Snapshot = { ...awakeSnap, coordinators: [{ key: 'zz', name: 'zz', repos: [], workspaceId: null }, ...awakeSnap.coordinators] }
   assert.deepEqual(coordinatorOrder(s).map((c) => c.key), ['alpha', 'main', 'zz'])
+})
+
+test('a coordinator sorts by its own row status: a Sleeping one with a live team goes below You, its team with it', () => {
+  // alpha shows Sleeping (no session of its own) while its lead and worker run; main is awake.
+  const s: Snapshot = { ...snap, coordinators: [snap.coordinators[0], { ...snap.coordinators[1], session: agent('p-own-main', 'main', 'done') }, { key: 'new', name: 'new', repos: [], workspaceId: null, sessions: { version: 1, current: null, members: [] } }] }
+  assert.deepEqual(coordinatorOrder(s).map((c) => c.key), ['main', 'alpha', 'new'], 'awake, then Sleeping and Not started in their saved order')
+  assert.deepEqual(chatTargets(s).map((t) => t.key), [
+    'coordinator:main', 'agent:p-hook',
+    'agent:p-cleanup', 'agent:p-pricing', // You
+    'coordinator:alpha', 'agent:p-coord', 'agent:p-dup', // asleep, below You, with its whole team and parentage
+    'coordinator:new'
+  ])
+  const { main } = render(s, emptyUi())
+  const at = (k: string) => main.indexOf(`data-menu="coordinator:${k}"`)
+  assert.ok(at('main') < main.indexOf('chats you started') && main.indexOf('chats you started') < at('alpha') && at('alpha') < at('new'))
+  assert.match(main.slice(at('alpha'), at('new')), /data-menu="agent:p-coord"[^>]*data-depth="0"[\s\S]*data-menu="agent:p-dup"[^>]*data-depth="1"/, 'lead and worker keep their depth')
+  assert.match(main.slice(at('alpha'), at('new')), /Sleeping/)
+  // A refresh with the same states keeps the same order; waking alpha moves it up, nothing else.
+  assert.deepEqual(coordinatorOrder({ ...s, rows: [...s.rows].reverse() }).map((c) => c.key), ['main', 'alpha', 'new'])
+  const woke = { ...s, coordinators: s.coordinators.map((c) => c.key === 'alpha' ? { ...c, session: agent('p-own-alpha', 'alpha', 'working') } : c) }
+  assert.deepEqual(coordinatorOrder(woke).map((c) => c.key), ['alpha', 'main', 'new'], 'each group keeps the saved order')
 })
 
 test('a worktree created without --linear-issue is linked by its branch: the section shows its lead, the tree its ID', () => {
@@ -1396,4 +1480,35 @@ test('Up next and search show no Linear label, so they have nothing to open', ()
   assert.match(attention, /Up next · 1/)
   noMatch(attention, /idchip/)
   noMatch(render(s, { ...emptyUi(), query: 'day view' }, linear).main, /idchip/)
+})
+
+test('a coordinator Orca lists twice (stale pane beside its live pane) sorts with the awake ones', async () => {
+  const { fromPs, foldCoordinatorFolders } = await import('./worker.ts')
+  const { assignCoordinators } = await import('./coordinators.ts')
+  const DIR = '/fixture/coordinators/flow', WS = 'ws::flow', MAIN = 'main-conversation'
+  const rows = fromPs([
+    { worktreeId: WS, path: DIR, displayName: 'flow', repo: 'flow', liveTerminalCount: 1, agents: [
+      { paneKey: 'stale:pane', orcaSessionId: MAIN, agentType: 'codex', state: 'done', conversationName: 'Old pane' },
+      { paneKey: 'live:pane', orcaSessionId: MAIN, agentType: 'codex', state: 'working', hasLivePty: true, conversationName: 'Flow' }
+    ] },
+    { worktreeId: 'wt::mine', path: '/fixture/mine', displayName: 'mine', repo: 'shop', liveTerminalCount: 1, agents: [
+      { paneKey: 'mine:1', orcaSessionId: 'mine', agentType: 'claude', state: 'working', hasLivePty: true, conversationName: 'My chat' }
+    ] }
+  ], { cards: {}, summaries: {} }, new Map([[DIR, WS]]))
+  const id = JSON.stringify([WS, 'session', MAIN])
+  const sessions = { version: 1 as const, current: id, members: [{ id, workspaceId: WS, workspacePath: DIR, orcaSession: MAIN, agentType: 'codex', title: 'Flow', paneKey: 'live:pane',
+    bindings: [{ terminal: 'term_stale', paneKey: 'stale:pane', orcaSession: MAIN }, { terminal: 'term_live', paneKey: 'live:pane', orcaSession: MAIN }], terminals: ['term_stale', 'term_live'] }] }
+  const asleep = { key: 'asleep', name: 'asleep', repos: [], workspaceId: null, dir: '/fixture/coordinators/asleep', about: '', sessions: { version: 1 as const, current: null, members: [] } }
+  const flow = { key: 'flow', name: 'flow', repos: [], workspaceId: null, dir: DIR, about: '', sessions }
+  const lineage = { paneOf: new Map([['term_live', 'live:pane']]), dispatcherOf: new Map<string, string>(), dispatchOf: new Map<string, 'open' | 'settled'>() }
+  const all = assignCoordinators(rows, [asleep, flow], lineage)
+  const coordinators = [{ ...asleep }, { ...flow }] as Snapshot['coordinators']
+  const visible = foldCoordinatorFolders(all, coordinators, [asleep.dir, DIR])
+  assert.equal(coordinators[1].session?.paneKey, 'live:pane', 'reconciled to the live pane')
+  const s: Snapshot = { rows: visible, coordinators, source: 'cli', capacity: null }
+  assert.deepEqual(coordinatorOrder(s).map((c) => c.key), ['flow', 'asleep'], 'listed after a sleeping one, shown above it')
+  const { main } = render(s, emptyUi())
+  const flowRow = main.slice(main.indexOf('data-menu="coordinator:flow"'), main.indexOf('</section>', main.indexOf('data-menu="coordinator:flow"')))
+  assert.ok(main.indexOf('data-menu="coordinator:flow"') < main.indexOf('data-menu="coordinator:asleep"'), 'shown above the sleeping one')
+  noMatch(flowRow, /Sleeping|Not started/, 'its row shows its live status')
 })

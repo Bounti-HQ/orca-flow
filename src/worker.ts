@@ -19,7 +19,7 @@ import { costsOf, decide, DEFAULT_CONFIG, diskFreeOf, envSamples, FALLBACK, read
 import { closeSessions, loadCockpit, removeWorktree } from './cockpit.ts'
 import { assignCoordinators, coordinatorSession, COORDINATOR_HOME, deleteFolder, isCoordinatorHome, loadLineage, orcaRunner, readCoordinators, readLinearMemory, readOwners, rememberOwners, scaffoldCoordinator, validateName, updateCoordinatorSessions, writeLinearMemory, writeLinearTeams, writeLook, writeOwners, writeCoordinatorSessions, type CoordinatorInfo, type Lineage } from './coordinators.ts'
 import { encodeLinear, linkedIssueOf, linkRows, loadLinear, pruneSent, sendIssue, teamsOf } from './linear.ts'
-import { associateSession, chooseSession, deliverCurrent, deliveryBlock, DeliveryUncertainError, exclusive, memberAgent, memberFrom, readMemberHistory, reconcileSessions, resumeExactMember, selectCurrent, sessionChoices, verifyConversation, wakeCoordinator, bindLaunched, launchedAgent, launchedTerminal, launchOnce, settlePending, terminalPane, resumeIdFor, withResumeId, conversationSaved, parseProcs, programRuns, providerMessage, ResumeRunningError, type Launch, type ListedAgent, type ResumeIo, type TerminalRecord } from './coordinator-sessions.ts'
+import { associateSession, chooseSession, conversationRows, deliverCurrent, deliveryBlock, DeliveryUncertainError, exclusive, memberAgent, memberFrom, memberOf, memberRows, readMemberHistory, reconcileSessions, resumeExactMember, selectCurrent, sessionChoices, verifyConversation, wakeCoordinator, bindLaunched, launchedAgent, launchedTerminal, launchOnce, settlePending, terminalPane, resumeIdFor, withResumeId, conversationSaved, parseProcs, programRuns, providerMessage, ResumeRunningError, type Launch, type ListedAgent, type ResumeIo, type TerminalRecord } from './coordinator-sessions.ts'
 import { askingRows, CHAT_KEYS, chatTargets, FOLDED_KEY, finishedAgents, freeLooks, showable, type ChatTarget } from './view.ts'
 import type { AgentInfo, AgentState, AgentSummary, Capacity, Coordinator, LinearData, Priority, SettingsState, Snapshot, WakeOutcome, WorkspaceRow, WorkstreamCard, CoordinatorSessions } from './protocol.ts'
 import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
@@ -46,7 +46,7 @@ const DATA_DIR = join(homedir(), '.orca-flow')
 /** Most urgent first: what needs the person outranks what is running. */
 const URGENCY: AgentState[] = ['blocked', 'waiting', 'working', 'done']
 
-type PsAgent = {
+export type PsAgent = {
   paneKey?: string
   /** The pane that started this agent (a lead's or coordinator's), when Orca knows it. */
   parentPaneKey?: string | null
@@ -213,6 +213,45 @@ export function fromPs(worktrees: PsWorktree[], store: Store = { cards: {}, summ
         linearIssue: linkedIssueOf(w.linkedLinearIssue)
       }
     })
+}
+
+/** Orca's code while a terminal it just started is still attaching to its surface: transient, not a failure. */
+export const TERMINAL_ATTACHING = 'terminal_surface_ownership_unavailable'
+const attaching = (e: unknown) => (e as { code?: unknown } | null)?.code === TERMINAL_ATTACHING || new RegExp(TERMINAL_ATTACHING).test(String((e as Error | null)?.message ?? ''))
+
+/**
+ * `orca terminal list`. While a launched terminal is still attaching, Orca refuses the whole list
+ * with TERMINAL_ATTACHING; that one code is retried for about `budgetMs` with backoff (250 ms,
+ * doubling, at most 1 s), then thrown as before. Any other error is thrown at once. It only reads.
+ */
+export async function listTerminals(run: (args: string[]) => Promise<any>, wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)), budgetMs = 5_000): Promise<TerminalRecord[]> {
+  for (let waited = 0, delay = 250; ; delay = Math.min(delay * 2, 1_000)) {
+    try { return (await run(['terminal', 'list']))?.terminals ?? [] }
+    catch (e) {
+      if (!attaching(e) || waited >= budgetMs) throw e
+      const step = Math.min(delay, budgetMs - waited)
+      await wait(step)
+      waited += step
+    }
+  }
+}
+
+/**
+ * Waits for the agent of the exact launched terminal (launchedAgent) for up to `timeoutMs`: never the
+ * newest pane, never a second launch. Null when Orca has not listed it yet.
+ */
+export async function awaitLaunched(launch: Launch, io: { terminals: () => Promise<TerminalRecord[]>; row: () => Promise<WorkspaceRow | undefined>; wait?: (ms: number) => Promise<void>; now?: () => number }, timeoutMs = 15_000): Promise<{ row: WorkspaceRow; agent: AgentInfo } | null> {
+  const now = io.now ?? Date.now
+  const wait = io.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const deadline = now() + timeoutMs
+  for (;;) {
+    const terminals = await io.terminals()
+    const row = await io.row()
+    const agent = launchedAgent(launch, terminals, row)
+    if (row && agent) return { row, agent }
+    if (now() > deadline) return null
+    await wait(1000)
+  }
 }
 
 /**
@@ -402,7 +441,8 @@ export function foldCoordinatorFolders(all: WorkspaceRow[], coordinators: Coordi
     c.active = row.active
     // Its session counts only while a terminal is open with an agent in it.
     c.session = row.liveTerminals > 0 ? session : null
-    const memberPanes = new Set(c.sessions ? c.sessions.members.flatMap((m) => { const a = memberAgent(m, [row]); return a ? [a.paneKey] : [] }) : session ? [session.paneKey] : [])
+    // Every row of a member's conversation, so a pane left from before a restart is no duplicate row.
+    const memberPanes = new Set((c.sessions ? c.sessions.members.flatMap((m) => memberRows(m, [row])) : session ? conversationRows(row.agents, session) : []).map((a) => a.paneKey))
     return folderRows({ ...row, agents: row.agents.filter((a) => !memberPanes.has(a.paneKey)) }, null, c.key)
   })
 }
@@ -850,7 +890,8 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   // Launched conversations whose binding is not verified yet, per coordinator: adopted, never relaunched.
   const launches = new Map<string, Launch>()
-  const terminalsNow = async (): Promise<TerminalRecord[]> => (await run(['terminal', 'list']))?.terminals ?? []
+  // A terminal still attaching makes Orca refuse the list for a moment: retried briefly (listTerminals).
+  const terminalsNow = (): Promise<TerminalRecord[]> => listTerminals(run)
 
   /**
    * Fresh means a new explicitly associated member; it never closes an older member. agent.launch
@@ -884,31 +925,26 @@ export default function activate(orca: OrcaWorkerApi): void {
     })
     await orca.host.call('terminal.focus', { terminalId: launch.terminalId }).catch((e: Error) => orca.log(`showing the launched terminal failed: ${e.message}`))
     // Agents take seconds to start and report a conversation id; wait for it, not for the newest pane.
-    const deadline = Date.now() + 15_000
-    for (;;) {
-      const terminals = await terminalsNow()
-      await refresh()
-      const row = allRows.find((r) => r.id === workspaceId)
-      const a = launchedAgent(launch, terminals, row)
-      if (row && a) {
-        const resumeSessionId = await resumeIdOf(workspaceId, [launch.terminalId, a.terminal ?? undefined], a.agentType)
-        if (launch.agent === 'antigravity') {
-          const history = await orca.host.call('agent.listSessions', { workspaceId, limit: 200 }).catch(() => null)
-          if (!a.live || resumeSessionId === a.orcaSession || !antigravityTurnRecorded(history?.sessions ?? [], workspaceId, resumeSessionId)) {
-            return { ok: false, bound: false, error: 'Antigravity opened. Check its terminal for sign-in or workspace trust. After its first response, select the conversation in Sessions.' }
-          }
-          await verifyConversation(memberFrom(row, a), run)
+    // A list refused while the terminal attaches is retried; if it still fails, the launch stays
+    // pending and the next click adopts it.
+    const found = await awaitLaunched(launch, { terminals: terminalsNow, row: async () => { await refresh(); return allRows.find((r) => r.id === workspaceId) } })
+    if (found) {
+      const { row, agent: a } = found
+      const resumeSessionId = await resumeIdOf(workspaceId, [launch.terminalId, a.terminal ?? undefined], a.agentType)
+      if (launch.agent === 'antigravity') {
+        const history = await orca.host.call('agent.listSessions', { workspaceId, limit: 200 }).catch(() => null)
+        if (!a.live || resumeSessionId === a.orcaSession || !antigravityTurnRecorded(history?.sessions ?? [], workspaceId, resumeSessionId)) {
+          return { ok: false, bound: false, error: 'Antigravity opened. Check its terminal for sign-in or workspace trust. After its first response, select the conversation in Sessions.' }
         }
-        updateCoordinatorSessions(c.dir, (disk) => {
-          if (launch.agent === 'antigravity' && (disk?.current ?? null) !== (c.sessions?.current ?? null)) throw new Error('The main conversation changed during Antigravity startup. Select the new conversation in Sessions.')
-          return bindLaunched(disk ?? { version: 1, current: null, members: [] }, row, a, resumeSessionId)
-        })
-        launches.delete(c.key)
-        refreshSoon()
-        return { ok: true }
+        await verifyConversation(memberFrom(row, a), run)
       }
-      if (Date.now() > deadline) break
-      await new Promise((r) => setTimeout(r, 1000))
+      updateCoordinatorSessions(c.dir, (disk) => {
+        if (launch.agent === 'antigravity' && (disk?.current ?? null) !== (c.sessions?.current ?? null)) throw new Error('The main conversation changed during Antigravity startup. Select the new conversation in Sessions.')
+        return bindLaunched(disk ?? { version: 1, current: null, members: [] }, row, a, resumeSessionId)
+      })
+      launches.delete(c.key)
+      refreshSoon()
+      return { ok: true }
     }
     return { ok: true, bound: false, error: 'The new conversation is running and shown; it becomes the main conversation once Orca lists it. Clicking the coordinator again adopts it; nothing is launched again.' }
   }
@@ -1207,7 +1243,7 @@ export default function activate(orca: OrcaWorkerApi): void {
         const verifiedLineage = await loadLineage(run, Date.now(), true)
         if (verifiedLineage.dispatchOf?.has(a.paneKey) || verifiedLineage.dispatcherOf.has(a.paneKey)) throw new Error('This exact agent has dispatch provenance and remains a workstream lead or worker.')
         sessions = associateSession(sessions, row, a)
-        const member = sessions.members.find((m) => memberAgent(m, [row]) === a)!
+        const member = memberOf(sessions, row, a)!
         if (a.terminal) {
           const shown = await run(['terminal', 'show', '--terminal', a.terminal])
           if (shown?.terminal?.worktreePath !== c.dir) throw new Error('The exact terminal no longer belongs to this coordinator workspace.')
