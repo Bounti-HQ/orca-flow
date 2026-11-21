@@ -136,6 +136,15 @@ square. The face and the badge at the bottom right show what Orca reports:
 amber when only another agent would fit (not a new worktree with its dev servers), and red when
 nothing fits. Disk turns amber under 25 GB and red under 10 GB.
 
+**Bots.** Between Up next and Linear, one line per Orca bot (`orca bot list`): its avatar, name,
+what it is for, and on the right whether it waits on you, works, is paused, or when it runs next.
+A click opens its Home chat's workspace. Bots sit under the coordinator whose `coordinator.json`
+lists them in `bots` (by name or folder name; ask the coordinator to adopt one), else under
+Personal. A bot chat shows in Up next only while Orca says it is stopped on you (a permission prompt or
+its question tool); an idle bot, waiting for its next message, never does. Bot workspaces never
+show as ordinary rows. Agents find a project's bots with `orca-flow bots --repo <repo>` and hand
+them work by mail.
+
 **PR number.** An open PR's number is colored by its CI checks: red when they failed, yellow while
 they run, green when they passed. A merged PR is purple; closed and draft PRs are grey.
 
@@ -162,6 +171,7 @@ orca-flow queue              # what is waiting on you, ranked
 orca-flow capacity [--repo]  # does another agent or a new worktree fit in memory?
 orca-flow set / get          # a worktree's card: priority, goal, what it unblocks
 orca-flow resume             # a woken coordinator takes back the runs it was coordinating
+orca-flow bots [--repo]      # a project's Orca bots, with the command that hands each one work
 ```
 
 (`orca-flow` here means `node <skill folder>/scripts/orca-flow.mjs`.)
@@ -385,7 +395,8 @@ in its `settings.json`, `~/.orca-flow`, and `~/orca/coordinators` (your coordina
 
 ```sh
 scripts/dev.sh check   # types, tsc, plugin tests and orca-flow tests
-scripts/dev.sh load    # load this folder into Orca as local.flow and (re)start its worker
+scripts/dev.sh load    # copy this folder to ~/.orca-flow/dev/flow and run it as local.flow (installed copy off; back on if it fails)
+scripts/dev.sh off     # unload local.flow and run the installed cyucelen.flow again
 scripts/dev.sh shot    # screenshot the panel to /tmp/orca-sidebar-shots
 node scripts/settings-preview.mjs                       # the Settings dialog in a browser, with fixture data
 node scripts/settings-preview.mjs --shots /tmp/orca-settings-shots-v2 --tips   # every page, dark and light, 360 px and wide, plus tooltips
@@ -401,7 +412,11 @@ model rejection behavior against a local synthetic server (no real model/MCP cal
 ORCA_FLOW_CODEX_VERIFY=1 node --test test/writer-cli.test.mjs
 ```
 
-Uninstall `cyucelen.flow` first so two copies don't run. `src/worker.ts` is the plugin's worker;
+Only one copy can run: both bind Alt+1..9, and Orca errors both when they run together. `load`
+and `off` swap between them, so `cyucelen.flow` stays installed and its skill links and hooks keep
+working. Orca ties a development plugin's approval to its exact files, so any edit drops it to pending:
+`load` therefore runs a copy, and edits here show in the sidebar only after the next `load`.
+`check` type-checks a temporary copy, so no `.orca/` is written here. `src/worker.ts` is the plugin's worker;
 `src/view.ts` renders the panel as HTML, which `src/panel/app.ts` draws and wires up. Orca
 transpiles TypeScript when it loads, so there is no build step. See Orca's
 [plugin authoring guide](https://github.com/stablyai/orca/blob/main/docs/reference/plugin-authoring.md).

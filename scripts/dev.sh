@@ -1,22 +1,53 @@
 #!/bin/sh
-# Development loop for the sidebar plugin, working around an Orca 1.4.254 hash bug:
-# approval hashes the folder without `.orca/`, the worker's start check hashes it with `.orca/`,
-# so any `.orca/` present at start fails "content hash mismatch" and Orca marks the plugin errored.
-# Keep `.orca/` out of the folder except while type-checking, and keep screenshots elsewhere.
+# Development loop for the sidebar plugin, working around an Orca hash bug (seen in 1.4.254 and
+# 1.4.268): approval hashes the folder without `.orca/`, the worker's start check hashes it with
+# `.orca/`, so any `.orca/` present when Orca hot-reloads the folder fails "content hash mismatch"
+# and Orca drops local.flow to pending (no sidebar). So `.orca/` never goes into this folder:
+# `check` type-checks and tests a copy in a temporary folder. Never run `orca plugin types .` here.
 #
-#   scripts/dev.sh check   types + tsc + tests, then remove .orca again
-#   scripts/dev.sh load    approve what Orca asks for and (re)start the worker
+# Orca (1.4.268) also ties a development plugin's approval to its exact files: any edit drops it to
+# pending until it is approved again. So Orca never loads this worktree: `load` copies it to
+# $DEV_DIR (default ~/.orca-flow/dev/flow) and approves that copy. Edits here change nothing in the
+# sidebar until the next `load`.
+#
+# Exactly one Orca Flow may run (both bind Alt+1..9; two running error each other). `load` swaps
+# to local.flow and goes back to the installed copy when local.flow fails; `off` goes back to it.
+#
+#   scripts/dev.sh check   types + tsc + tests, in a temporary copy of this folder
+#   scripts/dev.sh load    copy this folder to $DEV_DIR, disable the installed copy, approve and
+#                          (re)start local.flow from the copy, fall back on failure
+#   scripts/dev.sh off     unload local.flow and run the installed copy again
 #   scripts/dev.sh shot    screenshot the panel and status bar to $SHOTS (default /tmp/orca-sidebar-shots)
 set -eu
 cd "$(dirname "$0")/.."
 KEY=local.flow
+INSTALLED=cyucelen.flow
 SHOTS=${SHOTS:-/tmp/orca-sidebar-shots}
-status() { orca plugin list --json | python3 -c "import json,sys; print(next((p.get('status') for p in json.load(sys.stdin)['result']['plugins'] if p['pluginKey']=='$KEY'), 'absent'))"; }
+DEV_DIR=${DEV_DIR:-$HOME/.orca-flow/dev/flow}
+HERE=$(pwd)
+status() { orca plugin list --json | python3 -c "import json,sys; print(next((p.get('status') for p in json.load(sys.stdin)['result']['plugins'] if p['pluginKey']=='$1'), 'absent'))"; }
+# Enables a plugin; Orca can answer with an approval fingerprint (or a newer one), so retry with it.
+enable() {
+  try() { orca plugin enable "$1" ${2:+--approve "$2"} --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print('' if d['ok'] else d.get('error',{}).get('data',{}).get('approvalFingerprint','failed'))"; }
+  fp=${2:-}
+  for _ in 1 2 3; do again=$(try "$1" "$fp"); [ -z "$again" ] && return 0; [ "$again" = failed ] && return 1; fp=$again; done
+  return 1
+}
+restore_installed() {
+  [ "$(status $INSTALLED)" = absent ] && { echo "$INSTALLED is not installed: no Orca Flow runs"; return 1; }
+  [ "$(status $INSTALLED)" = running ] || enable $INSTALLED || { echo "$INSTALLED: enable failed"; return 1; }
+  echo "$INSTALLED: $(status $INSTALLED)"
+}
 
 case "${1:-}" in
   check)
+    # Left over from a hand-run `orca plugin types .`: remove it before Orca reloads with it.
+    rm -rf .orca
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/orca-flow-check.XXXXXX")
+    trap 'rm -rf "$tmp"' EXIT
+    rsync -a --exclude .git --exclude .orca --exclude node_modules ./ "$tmp/"
+    cd "$tmp"
     orca plugin types . --json >/dev/null
-    trap 'rm -rf .orca' EXIT
     npx -y -p typescript tsc -p . --noEmit
     # Show the summaries, but fail the script when any test fails.
     out=$(orca plugin test . 2>&1) || { echo "$out" | grep -E '✖|Error|expected|actual' | head -20; echo 'plugin tests FAILED'; exit 1; }
@@ -25,15 +56,32 @@ case "${1:-}" in
     echo "$out" | grep -E '(pass|fail) [0-9]'
     ;;
   load)
-    fp=$(orca plugin dev load . --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error',{}).get('data',{}).get('approvalFingerprint',''))")
-    rm -rf .orca
+    # Both copies bind Alt+1..9, and Orca errors both when they run at once: the installed copy
+    # goes off first, and comes back when local.flow does not reach running.
+    orca plugin dev unload "$HERE" --json >/dev/null 2>&1 || true
+    mkdir -p "$DEV_DIR"
+    rsync -a --delete --exclude .git --exclude .orca --exclude node_modules ./ "$DEV_DIR/"
+    fp=$(orca plugin dev load "$DEV_DIR" --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error',{}).get('data',{}).get('approvalFingerprint',''))")
+    # `dev load` writes .orca/ typings into the folder: remove them before the worker starts.
+    rm -rf "$DEV_DIR/.orca"
+    orca plugin disable "$INSTALLED" --json >/dev/null 2>&1 || true
     orca plugin disable "$KEY" --json >/dev/null 2>&1 || true
-    # Orca can answer the first enable with a newer fingerprint; retry once with what it reports.
-    enable() { orca plugin enable "$KEY" ${1:+--approve "$1"} --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print('' if d['ok'] else d.get('error',{}).get('data',{}).get('approvalFingerprint','failed'))"; }
-    again=$(enable "$fp")
-    if [ -n "$again" ]; then fp=$again; [ "$(enable "$fp")" = "" ] || { echo "$KEY: enable failed"; exit 1; }; fi
+    enable "$KEY" "$fp" || true
     sleep 6
-    echo "$KEY: $(status)${fp:+ (approved $fp)}"
+    if [ "$(status $KEY)" = running ]; then
+      echo "$KEY: running from $DEV_DIR at $(git rev-parse --short HEAD)$(git diff --quiet HEAD -- . || echo '+changes') ($INSTALLED disabled)"
+    else
+      echo "$KEY: $(status $KEY), not running; going back to $INSTALLED"
+      orca plugin disable "$KEY" --json >/dev/null 2>&1 || true
+      restore_installed
+      exit 1
+    fi
+    ;;
+  off)
+    orca plugin disable "$KEY" --json >/dev/null 2>&1 || true
+    orca plugin dev unload "$DEV_DIR" --json >/dev/null 2>&1 || true
+    orca plugin dev unload "$HERE" --json >/dev/null 2>&1 || true
+    restore_installed
     ;;
   shot)
     mkdir -p "$SHOTS"
@@ -42,5 +90,5 @@ case "${1:-}" in
     orca plugin shot "$KEY" --panel orca-flow --out "$SHOTS/panel.png" --json >/dev/null && echo "$SHOTS/panel.png"
     orca plugin shot "$KEY" --status-bar --out "$SHOTS/status.png" --json >/dev/null && echo "$SHOTS/status.png"
     ;;
-  *) sed -n 2,11p "$0"; exit 1 ;;
+  *) sed -n 2,21p "$0"; exit 1 ;;
 esac
