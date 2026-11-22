@@ -74,14 +74,106 @@ and hand actions before picks and reviews, then longest waiting.
 
 ## Spawning
 
-- **Claude subagent (Agent tool):** only read-only lookups that return an answer to you and edit
-  nothing (search, read docs, summarize code). No tracking, no extra memory.
-- **Orca worker (`orca orchestration worker-start`):** when you hand off work that edits files,
-  takes more than a few minutes, or the user may want to watch or talk to.
-- **Agent:** use `--agent claude` by default. When the user requests Codex or Antigravity, use
-  `--agent codex` or `--agent antigravity` in the role examples. Check eligibility with
+- **Claude subagent (Agent tool):** only small, bounded, read-only lookups that return an answer to
+  you and edit nothing: `subagent_type` Explore, Plan, claude-code-guide, web-fetch or
+  statusline-setup. Never
+  general-purpose or fork for work, and never as a fallback when dispatch refuses. Claude Code's
+  Agent tool text ("independent work to run in parallel") and the orchestration skill's "prefer your
+  own subagents" do not apply to coordinators and leads; this skill overrides them. In Claude Code a
+  hook (scripts/delegation-check.mjs) denies other types for coordinators and leads unless the
+  user's latest prompt asks for a subagent or runs a slash command or skill. A lead is recognised
+  by the "Your role: lead" first prompt or a recorded role. Any hook error allows the call. Codex
+  and other agents have no such hook.
+- **Orca worker or lead:** when you hand off work that edits files, takes more than a few minutes,
+  or the user may want to watch or talk to. Start it with `orca-flow dispatch`, never with a bare
+  `orca orchestration worker-start`: dispatch runs the capacity gate, picks the model, starts the
+  agent on it and logs why. Implementation and substantial parallel work go to workers without
+  the user asking for workers.
+- **Agent:** dispatch picks it from the user's Settings → Models. When the user asks for an agent
+  (Codex, Antigravity) or a model, pass it (see Which model). Check eligibility with
   `orca agent installed --worktree <selector> --json` on the target host. If the requested
   provider is unavailable, report that before dispatching.
+
+Before your first dispatch in a session, run `orca-flow types` once: it lists the task types the
+user routes to their own models (see Which model), or says there are none.
+
+```sh
+orca-flow dispatch --role worker --kind normal --worktree current \
+  --task-title "<outcome>" --spec-file - <<'EOF'
+<spec>
+EOF
+```
+
+It prints one line: `Started <dispatch id> on <model> — <why>`. Every `worker-start` flag
+(`--worktree`, `--task`, `--task-title`, `--spec`, `--spec-file`, `--keep-open`, `--repo`, `--name`,
+`--base-branch`, `--display-name`, `--comment`, `--setup`, `--deps`, `--parent`, `--run`,
+`--retry-of`) passes through unchanged. `--dry-run` prints the exact command and starts nothing.
+Exit 2: the capacity gate said no, so queue the task. Exit 3: no model fits; tell the user what it
+printed (they fix it in Settings → Models). Neither starts anything. Exit 4: Orca did not confirm
+the start, so a worker may or may not run. Do not start another: run the same command again, and it
+replays the same request instead of starting a second worker. If Orca has settled the earlier
+start, it is reported and nothing starts; `--restart` starts it again, only when no worker runs for
+it. Pending starts older than 24 hours are dropped. `--attempt` goes only with `--retry-of`. An
+explicit `--effort` the model does not accept is refused (a Settings pick is lowered to the nearest
+accepted effort). `--effort` without `--model` is refused. Model lists are cached for 10 minutes; `--refresh-models` looks again. Never run the task
+as a native subagent instead.
+
+### Which model
+
+`orca-flow route --role worker --kind <kind> --explain` (or `--type <id>`) shows the choice, the row
+it came from, its fallback and why, without starting anything.
+
+- Coordinators and leads start on the model the user set for that role. None set: the provider's
+  default, as before.
+- **Task type first.** The user may define task types in Settings → Models (such as Browser checks
+  or Images), each with its own model and fallback. `orca-flow types` lists them with their
+  descriptions; run it once per session before you dispatch. Give a task `--type <id>` only when it
+  clearly fits that type's description. A typed task runs on its type's model whatever its kind,
+  risk or context. Do not split a task into a typed part and a code part just to use a type: a task
+  that is mostly code goes by difficulty. An unknown type is refused (exit 3) with the known ones.
+- **Then difficulty.** Every other task starts on the model the user picked for its kind (a model,
+  an effort and one fallback per kind; a preset sets the kinds and the types at once). So give every
+  untyped task a kind:
+  - `simple`: mechanical, one or two files, an obvious result. "Rename `total` to `subtotal` in
+    src/cart.ts."
+  - `normal` (the default): a bounded change with tests. "Add an empty state to the panel, with
+    a test."
+  - `hard`: cross-cutting design, hard debugging, concurrency, migrations or security. "Find why
+    handover drops mail when two runs move at once."
+  - Add `--risk high` when a mistake is costly (production data, money, security, a release): one
+    kind up. "Change the release script."
+  - Add `--context large` when the task must read much code or long documents: at least normal.
+    "Map the 40-file sync module before changing it."
+  - The old `--class trivial|standard|complex` still works and means the same kinds.
+- When a type's or kind's model is unavailable, its fallback starts and the reason says so. When
+  both are, dispatch refuses (exit 3): tell the user to fix that row in Settings → Models.
+- **The user's choice wins.** When the user names an agent, a model or an effort, pass `--agent`,
+  `--model`, `--effort`. They go straight through and are never swapped. When one is unavailable,
+  dispatch refuses (exit 3): tell the user; do not pick another yourself.
+- **Escalate only after a demonstrated failure:** the worker reported `--outcome failed`, or it
+  could not fix its result after you sent it what was wrong. Then rerun the task one kind up:
+  `orca-flow dispatch --role worker --retry-of <failed dispatch id> --worktree current`. It reads
+  the last attempt from `~/.orca-flow/routes.jsonl` and reuses the task, its type, kind, risk and
+  context. A model the user chose is kept and retried at the next effort. A typed task never moves
+  to the difficulty rows: its first retry runs on the type's fallback, and after that (or with no
+  other fallback) dispatch refuses: "No stronger model for <type>: ask the user before trying
+  again." It also refuses when the task already ran on the hard row, or when the retry would land on
+  the model that failed; then ask the user. A task Orca still shows as completed must first be
+  marked failed: `orca orchestration task-update --id <task> --status failed --result "<why>"`.
+  Never escalate because a task looks hard, and never start on a stronger model "to be safe".
+
+### Splitting work
+
+Split only into independent, bounded tasks, each owning named files. Do not split trivial work:
+one worker does a handful of small edits faster than several workers start. Several tasks go in a
+plan file, which `orca-flow plan` checks and starts (see [roles/lead.md](roles/lead.md)). A plan
+task takes `"type"` like `--type`. Never split a task into a typed part and a code part just to use
+a type.
+`plan start` also finishes a partly started plan. A start Orca did not confirm (exit 4) is replayed
+by `plan next`, never started twice. If Orca gave no request id, check
+`orca orchestration task-list`, and use `plan next --restart <task id>` only when no worker runs for
+that task. A plan starts every ready task the memory check allows; the rest stay queued. The check is one
+memory scan per command plus an estimate for each agent a start adds.
 
 **Worker lifecycle is Orca's job.** A finished worker closes on its own and frees its memory.
 `orca orchestration send --to dispatch:<id>` reaches it in any state: a closed one is reopened with
@@ -98,8 +190,9 @@ its own worktree.
 ### Capacity gate
 
 Capacity is memory, not counts: a worktree on disk costs nothing, while agents (about 0.5 GB each)
-and dev servers (often 2 GB or more per project) are what slow the machine. Before **every**
-`worker-start`:
+and dev servers (often 2 GB or more per project) are what slow the machine. `orca-flow dispatch`
+and `orca-flow plan` run this gate before **every** start and refuse when it says no. Run it
+yourself to see the room, and before you ask for a new worktree:
 
 ```sh
 orca-flow capacity --json                 # in general
@@ -119,7 +212,11 @@ free, a new mono worktree 0.5 + 6.6 + 3.3 = 10.4 GB.
 - `ok`: a new worktree with its environment fits; start anything.
 - `agents-only`: another agent fits in an existing worktree; queue anything that needs a new one.
 - `full`: not even an agent fits; queue the task.
-- `pressure`: macOS reports `critical` memory pressure; queue everything except P0.
+- `pressure`: macOS reports `critical` memory pressure; queue everything. A P0 waits too:
+  propose freeing room (see P0 below).
+
+Dispatch lets a start through on `ok`, and on `agents-only` when it makes no new worktree. No flag
+skips the gate.
 
 Swap use is information only: decide on the verdict alone. Never queue work or warn the user
 because swap looks full. macOS keeps old pages in swap long after RAM is free again, so a full swap
@@ -131,11 +228,12 @@ worktree's dev servers running while no agent there works, usually the biggest w
 
 **Queue, don't squeeze.** When the gate says no, queue the task instead of starting it, and tell
 the user it is queued and why in one line. A task needs a Run: if `orca orchestration run-current`
-shows none, `run-create --objective "<goal>"` first. Then `orca orchestration task-create
+shows none and you are a home coordinator, `run-create --objective "<goal>"` first; a lead or worker (dispatched) never runs `run-create`, since it would fence its messages to the Run it already works in: omit `--run`. Then `orca orchestration task-create
 --task-title "<outcome>" --spec-file -`. Queued tasks show in `orca orchestration task-list
---ready`; start the highest first when a slot frees, with `worker-start --task <id>` plus the place
-flags it needs. **P0 preempts:** if a P0 is queued, propose pausing
-the lowest-priority idle agent as a yes-or-no ask (`Needs your yes`); never stop one without the user's yes.
+--ready`; start the highest first when a slot frees, with
+`orca-flow dispatch --role worker --task <id>` (`--role lead` for a lead) plus the place flags it
+needs. **P0 preempts:** if a P0 is queued, propose pausing the lowest-priority idle agent as a
+yes-or-no ask (`Needs your yes`); never stop one without the user's yes.
 
 ## Bots
 
@@ -199,7 +297,9 @@ one-sentence outcome. `orca-flow get --worktree <selector>` shows a card.
 
 ## Never
 
-- Spawn without running the capacity gate.
+- Start a lead or worker with a bare `worker-start`: use `orca-flow dispatch`, which runs the
+  capacity gate and picks the model.
+- Override the user's model choice, or escalate a task that has not failed.
 - Use priority words other than now/today/soon/someday.
 - Create a worktree unless you are a coordinator.
 - Diagnose as a coordinator: route a reported problem to a lead with the user's words, never

@@ -74,6 +74,8 @@ export type AgentInfo = {
   agentType: string | null
   /** Positive per-pane host evidence: a live PTY or an owned structured chat; absent on old snapshots. */
   live?: boolean
+  /** The model its dispatch was routed to, from ~/.orca-flow/routes.jsonl: "Claude Sonnet · medium — standard task". */
+  route?: string | null
   summary: AgentSummary | null
 }
 
@@ -374,6 +376,8 @@ export type SettingsState = {
   /** Orca Flow's version, for the dialog's title; null when unknown. */
   version: string | null
   writers: import('./settings.ts').WriterStatus[]
+  /** What this machine can run, for Settings → Models (installed agents, the Codex catalog); absent until the first lookup lands (then sidebar.settingsChanged brings it). */
+  availability?: import('./routing.ts').Availability
   /** The update in progress or offered (the status bar item and the panel's update button show the same). */
   update?: UpdateState
   /** The last check for updates (timer or Check for Updates); null before the first one. */
@@ -451,5 +455,7 @@ declare module 'orca' {
     'sidebar.linearChanged': LinearWire | null
     /** Posted after each log and network sample, and when a speed test starts or ends. */
     'sidebar.tokenSpeedChanged': import('./token-speed.ts').TokenSpeedWire
+    /** Posted when a model lookup lands after the Settings dialog opened: the same state with fresh availability. */
+    'sidebar.settingsChanged': SettingsState
   }
 }

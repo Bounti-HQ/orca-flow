@@ -1597,3 +1597,104 @@ test('the attaching retry is bounded and only for that code; anything else fails
   await assert.rejects(main.listTerminals(async () => { other++; throw Object.assign(new Error('boom'), { code: 'terminal_not_found' }) }, wait), /boom/)
   assert.equal(other, 1, 'no retry for any other error')
 })
+
+test('routes.jsonl labels reach the routed worker and lead rows, by dispatch id; a garbled or missing file shows nothing', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const lines = [
+    JSON.stringify({ at: 1, role: 'worker', taskId: 't1', dispatchId: 'ctx_w', workspace: '/w/env', choice: { agent: 'claude', model: 'haiku', effort: 'low' }, source: 'auto', reason: 'x', class: 'trivial', risk: 'low', attempt: 0 }),
+    '{ not json',
+    JSON.stringify({ dispatchId: 'ctx_w', choice: { agent: 'claude', model: 'sonnet', effort: 'medium' }, kind: 'normal', class: 'standard', attempt: 1 }),
+    JSON.stringify({ dispatchId: 'ctx_old', choice: { agent: 'claude', model: 'opus', effort: 'high' }, class: 'complex', risk: 'high', attempt: 0 }),
+    JSON.stringify({ role: 'lead', dispatchId: 'ctx_l', choice: { agent: 'claude', model: 'opus', effort: 'high' }, source: 'role' }),
+    JSON.stringify({ dispatchId: 'ctx_bad', choice: {} }),
+    JSON.stringify({ dispatchId: 'ctx_img', choice: { agent: 'codex', model: 'gpt-6-luna', effort: 'low' }, type: 'images', kind: 'simple', attempt: 1 }),
+    JSON.stringify({ dispatchId: 'ctx_why', choice: { agent: 'codex', model: 'gpt-6-luna', effort: 'low' }, type: 'browser-checks', source: 'type', reason: 'Browser checks task → Codex gpt-6-luna · low' }),
+    JSON.stringify({ dispatchId: 'ctx_long', choice: { agent: 'claude' }, reason: `fallback used\n${'x'.repeat(200)}` })
+  ].join('\n')
+  const labels = main.routeLabels(lines)
+  assert.deepEqual([...labels], [['ctx_w', 'Claude Sonnet · medium — normal task, escalated'], ['ctx_old', 'Claude Opus · high — hard task, high risk'], ['ctx_l', 'Claude Opus · high'], ['ctx_img', 'Codex gpt-6-luna · low — images task, retried'], ['ctx_why', 'Browser checks task → Codex gpt-6-luna · low'], ['ctx_long', `fallback used ${'x'.repeat(85)}…`]])
+  const rows = main.fromPs([{ identity: { key: 'env' }, displayName: 'env', repo: 'isola', path: '/w/env', liveTerminalCount: 2, agents: [
+    { paneKey: 'p-worker', parentPaneKey: 'p-lead', state: 'working' }, { paneKey: 'p-lead', state: 'done' }, { paneKey: 'p-other', state: 'done' }
+  ] }])
+  const routed = main.withRoutes(rows, new Map([['p-worker', 'ctx_w'], ['p-lead', 'ctx_l'], ['p-other', 'ctx_unknown']]), labels)
+  assert.deepEqual(routed[0].agents.map((a) => a.route ?? null), ['Claude Sonnet · medium — normal task, escalated', 'Claude Opus · high', null])
+  assert.equal(main.withRoutes(rows, undefined, labels), rows)
+  const dir = mkdtempSync(join(tmpdir(), 'orca-flow-routes-'))
+  assert.equal(main.readRoutes(dir).size, 0, 'no file yet')
+  writeFileSync(join(dir, 'routes.jsonl'), lines)
+  assert.equal(main.readRoutes(dir).get('ctx_l'), 'Claude Opus · high')
+  writeFileSync(join(dir, 'routes.jsonl'), '\u0000garbage')
+  assert.equal(main.readRoutes(dir).size, 0)
+})
+
+test('model discovery runs Orca and the Codex CLI with the selected Codex account’s home', async () => {
+  const calls: { cmd: string; args: string[]; env?: Record<string, string> }[] = []
+  const exec = async (cmd: string, args: string[], opts?: { env?: Record<string, string> }) => {
+    calls.push({ cmd, args, env: opts?.env })
+    return args[0] === 'agent' ? JSON.stringify({ ok: true, result: { agents: [{ id: 'claude' }, { id: 'codex' }] } }) : JSON.stringify({ models: [{ slug: 'gpt-6-luna', display_name: 'GPT-6 Luna', visibility: 'list', supported_reasoning_levels: [{ effort: 'low' }] }] })
+  }
+  const run = async (args: string[]) => { assert.deepEqual(args, ['account', 'list', '--agent', 'codex']); return { activeAccountId: null, accounts: [] } }
+  const avail = await main.discoverHere(run, exec)
+  assert.deepEqual(avail.agents, ['claude', 'codex'])
+  assert.deepEqual(avail.models.codex, [{ id: 'gpt-6-luna', label: 'GPT-6 Luna', efforts: ['low'] }])
+  assert.match(calls.find((c) => c.args[0] === 'debug')?.env?.CODEX_HOME ?? '', /\.codex$/)
+  // No account answer: the default Codex home (no CODEX_HOME override).
+  calls.length = 0
+  await main.discoverHere(async () => { throw new Error('offline') }, exec)
+  assert.equal(calls.find((c) => c.args[0] === 'debug')?.env, undefined)
+})
+
+test('discovery runs the CLI the login shell resolves, not the one in /opt/homebrew/bin', async () => {
+  const { cliResolver } = await import('./writer.ts')
+  const resolve = cliResolver(async (_f, args) => (args[1].endsWith('codex') ? '/Users/me/.nvm/bin/codex\n' : '/Users/me/.nvm/bin/claude\n'), '/bin/zsh', () => true)
+  const bins: string[] = []
+  const exec = async (cmd: string, args: string[]) => {
+    bins.push(cmd === 'sh' ? `sh:${args[args.length - 1]}` : cmd)
+    return args[0] === 'agent' ? JSON.stringify({ ok: true, result: { agents: [{ id: 'claude' }, { id: 'codex' }] } }) : JSON.stringify({ models: [] })
+  }
+  await main.discoverHere(async () => { throw new Error('offline') }, exec, resolve)
+  assert.ok(bins.includes('/Users/me/.nvm/bin/codex'), 'codex runs from the login shell PATH')
+  assert.ok(bins.includes('sh:/Users/me/.nvm/bin/claude'), 'so does claude')
+  assert.ok(!bins.some((b) => b.startsWith('/opt/homebrew')))
+})
+
+test('the availability cache never makes a reader wait: refresh runs in the background and reports when it lands', async () => {
+  let release: (a: import('./routing.ts').Availability) => void = () => {}
+  let lookups = 0
+  const fresh: unknown[] = []
+  let t = 0
+  const cache = main.availabilityCache(() => { lookups++; return new Promise((r) => { release = r }) }, (a) => fresh.push(a), () => t)
+  cache.refresh(60_000)
+  cache.refresh(60_000)
+  assert.equal(cache.cached(), undefined, 'nothing cached yet, and refresh returned at once')
+  assert.equal(lookups, 1, 'one lookup at a time')
+  const found = { agents: ['claude'], models: { claude: null } }
+  release(found)
+  await new Promise((r) => setTimeout(r, 0))
+  assert.deepEqual(cache.cached(), found)
+  assert.deepEqual(fresh, [found])
+  t = 30_000
+  cache.refresh(60_000)
+  assert.equal(lookups, 1, 'a recent lookup is not repeated')
+  assert.deepEqual(await cache.get(60_000), found)
+})
+
+test('opening Settings answers at once while model discovery is slow, then pushes the fresh state', async () => {
+  const before = main.discovery.run
+  let release: (a: import('./routing.ts').Availability) => void = () => {}
+  main.discovery.run = () => new Promise((r) => { release = r })
+  const host = mockHost({ results: { 'statusBar.update': {}, 'workspace.list': { workspaces: [], truncated: false } } })
+  const worker = await mountWorker(main, { host })
+  try {
+    const slow = new Promise((r) => setTimeout(() => r('timed out'), 8_000))
+    const reply = await Promise.race([worker.request('sidebar.settings'), slow]) as import('./protocol.ts').SettingsState | string
+    assert.notEqual(reply, 'timed out', 'the reply did not wait for discovery')
+    assert.equal((reply as import('./protocol.ts').SettingsState).availability, undefined, 'none yet')
+    release({ agents: ['claude', 'codex'], models: { claude: null, codex: null } })
+  } finally {
+    main.discovery.run = before
+    await worker.deactivate()
+  }
+})

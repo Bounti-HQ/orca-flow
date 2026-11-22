@@ -1,5 +1,6 @@
 import { assert, test } from 'orca/testing'
-import { applySettings, DEFAULT_DRAFT, DEFAULT_SETTINGS, fromDraft, normalizeWriters, settingsSession, statusView, toDraft, WRITER_MODELS, type FlowSettings, type SaveReply } from './settings.ts'
+import { addType, applyPreset, DEFAULT_ROUTING, deletePreset, normalizeRouting, removeType, route, savePreset, type Availability, type RoutingSettings } from './routing.ts'
+import { applySettings, normalizeSettings, DEFAULT_DRAFT, DEFAULT_SETTINGS, fromDraft, normalizeWriters, settingsSession, statusView, toDraft, WRITER_MODELS, type FlowSettings, type SaveReply } from './settings.ts'
 
 test('writers: order kept, each provider once, unknown models and providers dropped, missing ones off and last', () => {
   assert.deepEqual(normalizeWriters([
@@ -109,4 +110,55 @@ test('a change that does not reach the file sends nothing, and reset saves defau
   assert.equal(io.calls.length, 1)
   assert.deepEqual(io.calls[0], DEFAULT_SETTINGS)
   assert.equal(session.isDefault(['linearDryRun', 'format']), true)
+})
+
+// The two removed limits, spelled apart so a search for them in the code finds nothing.
+const OLD_LIMITS = { ['max' + 'Parallel']: 5, ['max' + 'Escalations']: 2 }
+
+test('routing persists only when changed, drops at default, keeps unknown keys', () => {
+  const routing = normalizeRouting({ ...DEFAULT_ROUTING, ...OLD_LIMITS, lead: { agent: 'claude', model: 'opus', effort: 'high' } })
+  const saved = applySettings({ other: 1 }, { ...DEFAULT_SETTINGS, routing })
+  assert.deepEqual(saved, { other: 1, routing })
+  assert.deepEqual(applySettings(saved, { ...DEFAULT_SETTINGS, routing: DEFAULT_ROUTING }), { other: 1 })
+  assert.deepEqual(applySettings({ routing: OLD_LIMITS, other: 1 }, DEFAULT_SETTINGS), { routing: OLD_LIMITS, other: 1 })
+  assert.deepEqual(Object.keys(routing).filter((k) => k in OLD_LIMITS), [], 'the old limits are read without error and dropped')
+  assert.deepEqual(normalizeSettings({ routing: OLD_LIMITS }).routing, DEFAULT_ROUTING)
+  assert.deepEqual(normalizeSettings({}).routing, DEFAULT_ROUTING)
+  assert.deepEqual(fromDraft(toDraft({ ...DEFAULT_SETTINGS, routing })).routing, routing)
+  assert.deepEqual(DEFAULT_DRAFT.routing, DEFAULT_ROUTING)
+})
+
+test('worker rows and saved presets persist; a preset applied back to Balanced drops routing from the file', () => {
+  const economy = applyPreset(DEFAULT_ROUTING, 'economy')
+  const file = applySettings({}, { ...DEFAULT_SETTINGS, routing: economy })
+  assert.deepEqual((file.routing as RoutingSettings).workers, economy.workers)
+  assert.deepEqual(normalizeSettings(JSON.parse(JSON.stringify(file))).routing, economy)
+  const withSaved = savePreset(economy, 'Cheap')
+  const file2 = applySettings(file, { ...DEFAULT_SETTINGS, routing: withSaved })
+  assert.deepEqual(normalizeSettings(JSON.parse(JSON.stringify(file2))).routing.presets.map((p) => p.id), ['saved:cheap'])
+  // back to Balanced, but the saved preset keeps routing in the file
+  const balancedKept = applyPreset(withSaved, 'balanced')
+  assert.deepEqual(Object.keys(applySettings(file2, { ...DEFAULT_SETTINGS, routing: balancedKept })), ['routing'])
+  assert.deepEqual(applySettings(file2, { ...DEFAULT_SETTINGS, routing: deletePreset(balancedKept, 'saved:cheap') }), {})
+  // old rating fields mean nothing now: the file reads as the default
+  assert.deepEqual(normalizeSettings({ routing: { workerMode: 'fixed', candidates: [{ agent: 'claude', model: 'haiku', tier: 1, cost: 1 }] } }).routing, DEFAULT_ROUTING)
+})
+
+test('task types persist in the file, survive the dialog draft, and drop out when removed', () => {
+  const row = { model: { agent: 'codex', model: 'gpt-6-luna', effort: 'low' as const }, fallback: null }
+  const typed = addType(DEFAULT_ROUTING, 'Images', 'Make or edit images', row)
+  const file = applySettings({ other: 1 }, { ...DEFAULT_SETTINGS, routing: typed })
+  assert.deepEqual((file.routing as RoutingSettings).types, [{ id: 'images', name: 'Images', description: 'Make or edit images', route: row }])
+  assert.deepEqual(normalizeSettings(JSON.parse(JSON.stringify(file))).routing, typed)
+  assert.deepEqual(fromDraft(toDraft({ ...DEFAULT_SETTINGS, routing: typed })).routing, typed)
+  assert.deepEqual(applySettings(file, { ...DEFAULT_SETTINGS, routing: removeType(typed, 'images') }), { other: 1 }, 'no types and Balanced: the default again')
+})
+
+test('precedence from stored settings: override > role > kind row', () => {
+  const avail: Availability = { agents: ['claude'], models: { claude: null } }
+  const routing = normalizeSettings({ routing: { lead: { agent: 'claude', model: 'opus' }, workers: { simple: { model: { agent: 'claude', model: 'haiku' }, fallback: null } } } }).routing
+  assert.deepEqual((route(routing, { role: 'lead' }, avail) as { choice: unknown }).choice, { agent: 'claude', model: 'opus' })
+  assert.deepEqual((route(routing, { role: 'lead', model: 'sonnet' }, avail) as { choice: unknown }).choice, { agent: 'claude', model: 'sonnet' })
+  assert.deepEqual((route(routing, { role: 'worker', kind: 'simple' }, avail) as { choice: unknown }).choice, { agent: 'claude', model: 'haiku' }, 'Orca takes no effort for Haiku')
+  assert.deepEqual(routing.workers.normal, DEFAULT_ROUTING.workers.normal)
 })

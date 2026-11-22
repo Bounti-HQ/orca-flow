@@ -2,7 +2,7 @@ import { assert, test } from 'orca/testing'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ANTIGRAVITY_MODEL, cliProviders, codexHomeFromAccounts, createWriter, LUNA_MODEL, PRIMARY_COOLDOWN_MS, providerFailure, runWriterCommand, WriterError, writerDiagnostic, type CommandRunner } from './writer.ts'
+import { ANTIGRAVITY_MODEL, cliProviders, cliResolver, codexHomeFromAccounts, createWriter, LUNA_MODEL, PRIMARY_COOLDOWN_MS, providerFailure, runWriterCommand, WriterError, writerDiagnostic, type CommandRunner } from './writer.ts'
 import { SUMMARY_SCHEMA, summarizePane, summaryProviders, turnSummarizer, validateSummary } from './summarize.ts'
 import { configuredWriters } from './config.ts'
 import type { WriterSetting } from './settings.ts'
@@ -499,4 +499,26 @@ test('the Antigravity adapter runs the model chosen in Settings; an unknown one 
   const writer = createWriter({ writers: () => chainOf(['claude', 'sonnet', true]), sonnet: async (r) => { got.push(r.model); return card() } })
   await writer(request)
   assert.deepEqual(got, [undefined])
+})
+
+test('a CLI resolves through the login shell once; noisy startup output is skipped; a failed lookup falls back', async () => {
+  const calls: string[][] = []
+  const resolve = cliResolver(async (file, args) => { calls.push([file, ...args]); return 'welcome back\n/Users/me/.nvm/bin/codex\n' }, '/bin/zsh', (p) => p.startsWith('/Users/me'))
+  assert.equal(await resolve('codex'), '/Users/me/.nvm/bin/codex')
+  assert.equal(await resolve('codex'), '/Users/me/.nvm/bin/codex')
+  assert.deepEqual(calls, [['/bin/zsh', '-ilc', 'command -v codex']], 'asked once')
+  // A path that does not exist, a shell that fails: today's fixed list (or the bare name).
+  const bare = cliResolver(async () => { throw new Error('timeout') }, '/bin/zsh', () => false)
+  assert.equal(await bare('nonexistent-cli'), 'nonexistent-cli')
+  const missing = cliResolver(async () => '/gone/codex\n', '/bin/zsh', () => false)
+  assert.equal(await missing('nonexistent-cli'), 'nonexistent-cli')
+})
+
+test('the interactive lookup takes the last valid path from noisy output; a failed one falls to the -lc result', async () => {
+  const noisy = cliResolver(async () => 'Last login: today\n/not/real/codex\n/Users/me/.nvm/bin/codex\nnvm ready\n', '/bin/zsh', (p) => p.startsWith('/Users/me'))
+  assert.equal(await noisy('codex'), '/Users/me/.nvm/bin/codex')
+  const calls: string[] = []
+  const fallback = cliResolver(async (_f, args) => { calls.push(args[0]); if (args[0] === '-ilc') throw new Error('timed out'); return '/opt/homebrew/bin/codex\n' }, '/bin/zsh', () => true)
+  assert.equal(await fallback('codex'), '/opt/homebrew/bin/codex')
+  assert.deepEqual(calls, ['-ilc', '-lc'])
 })

@@ -4,7 +4,7 @@
 //   node scripts/settings-preview.mjs                 serve; open the printed URL (add ?page=format&theme=light)
 //   node scripts/settings-preview.mjs --shots <dir>   capture every page, dark and light, narrow and wide, then exit
 //                                                     (--broken adds an unreadable config.json; --tips adds tooltips shown;
-//                                                     --updates captures About in every Check for Updates state instead)
+//                                                     --models captures only Models; --updates captures About in every Check for Updates state instead)
 import { execFile, execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -31,8 +31,22 @@ const settings = {
   version: '0.2.64', error: null,
   settings: {
     writers: [{ provider: 'claude', model: 'haiku', enabled: true }, { provider: 'codex', model: 'gpt-6-luna', enabled: true }, { provider: 'antigravity', model: 'gemini-3.8-flash-low', enabled: false }],
-    messageFormat: ['~/orca/coordinators', '~/orca/workspaces/shop'], marginGB: 2, warnHeadroomGB: 2, linearDryRun: false
+    messageFormat: ['~/orca/coordinators', '~/orca/workspaces/shop'], marginGB: 2, warnHeadroomGB: 2, linearDryRun: false,
+    routing: {
+      coordinator: { agent: 'claude', model: 'opus', effort: 'high' }, lead: null,
+      workers: {
+        simple: { model: { agent: 'claude', model: 'haiku' }, fallback: { agent: 'claude', model: 'sonnet', effort: 'low' } },
+        normal: { model: { agent: 'codex', model: 'gpt-retired', effort: 'medium' }, fallback: { agent: 'claude', model: 'sonnet', effort: 'medium' } },
+        hard: { model: { agent: 'claude', model: 'opus', effort: 'high' }, fallback: null }
+      },
+      types: [], presets: []
+    }
   },
+  // What the worker discovered: installed agents and the Codex catalog (`codex debug models`).
+  availability: { agents: ['claude', 'codex', 'antigravity'], models: { claude: null, codex: [
+    { id: 'gpt-6-luna', label: 'GPT-6 Luna', efforts: ['low', 'medium'] },
+    { id: 'gpt-6-astra', label: 'GPT-6 Astra', efforts: ['low', 'medium', 'high', 'xhigh'] }
+  ] } },
   writers: [
     { provider: 'claude', lastSuccessAt: now - 2 * 60_000, failure: null, installed: true },
     { provider: 'codex', lastSuccessAt: null, failure: null, installed: true },
@@ -56,6 +70,19 @@ const CHECKS = {
 const upd = q.get('update');
 settings.updateCheck = CHECKS[upd] ?? null;
 if (upd === 'available') settings.update = { kind: 'available', version: '0.2.65' };
+// ?fixture=types: two task types (Browser checks on Gemini-like Codex, Images unavailable), as in the approved design.
+if (q.get('fixture') === 'types') { const r = settings.settings.routing; r.types = [
+  { id: 'browser-checks', name: 'Browser checks', description: 'Open pages, click through flows, take screenshots', route: { model: { agent: 'codex', model: 'gpt-6-luna', effort: 'low' }, fallback: { agent: 'claude', model: 'sonnet', effort: 'low' } } },
+  { id: 'images', name: 'Images', description: 'Make or edit images, icons and illustrations', route: { model: { agent: 'codex', model: 'gpt-6-astra' }, fallback: null } }
+]; }
+// ?fixture=saved: the setup equals the saved preset "Mine", so it is selected and removable.
+if (q.get('fixture') === 'saved') { const r = settings.settings.routing; r.workers.normal.model = { agent: 'claude', model: 'sonnet', effort: 'medium' }; r.presets = [{ id: 'saved:mine', name: 'Mine', builtIn: false, coordinator: r.coordinator, lead: r.lead, workers: JSON.parse(JSON.stringify(r.workers)) }]; }
+// ?click=<selector>: click that element (for screenshots), after the page shows.
+if (q.get('click')) setTimeout(() => { const el = document.querySelector(q.get('click')); el?.scrollIntoView({ block: 'center' }); setTimeout(() => el?.click(), 100); }, 500);
+// ?eval=<js>: run it after the page shows and put its result in document.title (for checks with --dump-dom).
+if (q.get('eval')) setTimeout(async () => { try { document.title = 'EVAL ' + JSON.stringify(await (0, eval)(q.get('eval'))); } catch (e) { document.title = 'EVAL ERROR ' + e.message; } }, 1500);
+// ?avail=none: the first model lookup has not landed yet.
+if (q.get('avail') === 'none') delete settings.availability;
 if (q.get('state') === 'broken') settings.error = '~/.orca-flow/config.json isn’t valid JSON (Expected double-quoted property name in JSON at position 18).';
 window.previewCalls = [];
 window.orca = {
@@ -69,6 +96,8 @@ window.addEventListener('load', () => setTimeout(() => {
   document.getElementById('settings-open').click();
   setTimeout(() => document.querySelector('[data-page="' + (q.get('page') || 'summaries') + '"]')?.click(), 100);
   if (upd === 'checking') setTimeout(() => document.getElementById('s-check')?.click(), 400);
+  // ?scroll=1: the page scrolled to its end (for screenshots of a long page).
+  if (q.get('scroll')) setTimeout(() => { const p = document.getElementById('s-page'); if (p) p.scrollTop = p.scrollHeight }, 700);
   // ?tip=<selector>: hover that element so its tooltip shows (for screenshots).
   if (q.get('tip')) setTimeout(() => document.querySelector(q.get('tip'))?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })), 900);
 }, 200));
@@ -103,13 +132,29 @@ server.listen(0, '127.0.0.1', () => {
   const profile = mkdtempSync(join(tmpdir(), 'orca-flow-chrome-'))
   const sizes = { 360: [360, 820], wide: [1180, 780] }
   const jobs = []
-  for (const page of ['summaries', 'format', 'capacity', 'advanced']) for (const theme of ['dark', 'light']) for (const [w, [width, height]] of Object.entries(sizes)) jobs.push({ page, theme, w, width, height })
+  for (const page of ['summaries', 'models', 'format', 'capacity', 'advanced']) for (const theme of ['dark', 'light']) for (const [w, [width, height]] of Object.entries(sizes)) jobs.push({ page, theme, w, width, height })
   if (process.argv.includes('--broken')) jobs.push({ page: 'summaries', theme: 'dark', w: 'wide', width: 1180, height: 780, state: 'broken' })
   // --updates: About's rows in every Check for Updates state, instead of the four pages.
   if (process.argv.includes('--updates')) {
     jobs.length = 0
     for (const update of ['idle', 'checking', 'current', 'available', 'failed', 'cannot']) for (const theme of ['dark', 'light']) for (const [w, [width, height]] of Object.entries(sizes)) jobs.push({ page: 'about', theme, w, width, height, update, name: `about-${update}` })
     for (const [update, theme, w] of [['cannot', 'dark', 'wide'], ['failed', 'light', '360'], ['current', 'dark', '360']]) jobs.push({ page: 'about', theme, w, width: sizes[w][0], height: sizes[w][1], update, tip: '#s-page .s-value[data-tip]', name: `about-${update}-tooltip` })
+  }
+  // --models: only the Models page (the routing map), dark and light, wide and narrow, with its popover and forms.
+  if (process.argv.includes('--models')) {
+    jobs.length = 0
+    const card = (row, slot = 'model') => `[data-card="${row}"][data-slot="${slot}"]`
+    for (const theme of ['dark', 'light']) for (const [w, [width, height]] of Object.entries(sizes)) jobs.push({ page: 'models', theme, w, width, height, fixture: 'types', name: 'models-map' })
+    for (const theme of ['dark', 'light']) jobs.push({ page: 'models', theme, w: 'wide', width: 1180, height: 780, fixture: 'types', click: card('kind:normal'), name: 'models-popover' })
+    jobs.push({ page: 'models', theme: 'dark', w: '360', width: 360, height: 820, fixture: 'types', click: card('kind:normal'), name: 'models-popover' })
+    jobs.push({ page: 'models', theme: 'light', w: 'wide', width: 1180, height: 780, fixture: 'types', click: card('kind:normal', 'fallback'), name: 'models-popover-fallback' })
+    jobs.push({ page: 'models', theme: 'dark', w: 'wide', width: 1180, height: 780, fixture: 'types', click: card('kind:simple'), name: 'models-popover-haiku' })
+    jobs.push({ page: 'models', theme: 'dark', w: 'wide', width: 1180, height: 780, fixture: 'types', click: '#m-addtype', name: 'models-add-type' })
+    jobs.push({ page: 'models', theme: 'light', w: '360', width: 360, height: 820, fixture: 'types', click: '[data-edit="images"]', name: 'models-edit-type' })
+    jobs.push({ page: 'models', theme: 'dark', w: 'wide', width: 1180, height: 780, fixture: 'saved', name: 'models-saved-preset' })
+    jobs.push({ page: 'models', theme: 'light', w: '360', width: 360, height: 820, fixture: 'saved', click: '#s-saveas', name: 'models-saving' })
+    jobs.push({ page: 'models', theme: 'dark', w: 'wide', width: 1180, height: 780, avail: 'none', name: 'models-checking' })
+    jobs.push({ page: 'models', theme: 'dark', w: 'wide', width: 1180, height: 780, fixture: 'types', tip: card('kind:normal'), name: 'models-unavailable-tooltip' })
   }
   if (process.argv.includes('--tips')) {
     jobs.push({ page: 'summaries', theme: 'dark', w: 'wide', width: 1180, height: 780, tip: '.s-gh .s-label', name: 'tooltip-writers' })
@@ -120,12 +165,13 @@ server.listen(0, '127.0.0.1', () => {
     for (const j of jobs) {
       const file = join(out, `${j.name ? `${j.name}-${j.theme}-${j.w}` : `${j.page}-${j.theme}-${j.w}${j.state ? `-${j.state}` : ''}`}.png`)
       await new Promise((resolve, reject) => {
-        const query = `page=${j.page}&theme=${j.theme}${j.state ? `&state=${j.state}` : ''}${j.update ? `&update=${j.update}` : ''}${j.tip ? `&tip=${encodeURIComponent(j.tip)}` : ''}`
-        const framed = j.width < 600 || !!j.tip
+        const query = `page=${j.page}&theme=${j.theme}${j.state ? `&state=${j.state}` : ''}${j.update ? `&update=${j.update}` : ''}${j.tip ? `&tip=${encodeURIComponent(j.tip)}` : ''}${j.scroll ? '&scroll=1' : ''}${j.avail ? `&avail=${j.avail}` : ''}${j.fixture ? `&fixture=${j.fixture}` : ''}${j.click ? `&click=${encodeURIComponent(j.click)}` : ''}`
+        const framed = j.width < 600 || !!j.tip || !!j.click
         const args = ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--user-data-dir=${profile}`, `--window-size=${framed ? Math.max(600, j.width + 100) : j.width},${framed ? j.height + 100 : j.height}`, '--virtual-time-budget=4000', `--screenshot=${file}`,
           framed ? `${base}frame?${query}&w=${j.width}&h=${j.height}` : `${base}?${query}`]
-        execFile(chrome, args, { timeout: 60_000 }, (e) => {
-          if (e) return reject(e)
+        execFile(chrome, args, { timeout: 60_000 }, (e, _out, stderr) => {
+          // Chrome can exit non-zero on teardown after writing the shot; that is not a failed capture.
+          if (e && !/bytes written to file/.test(String(stderr))) return reject(e)
           // Keep just the panel: sips crops around the centre, where the iframe sits.
           if (framed) execFileSync('sips', ['--cropToHeightWidth', String(j.height), String(j.width), file], { stdio: 'ignore' })
           resolve()

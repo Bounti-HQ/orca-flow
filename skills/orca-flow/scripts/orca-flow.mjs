@@ -10,10 +10,33 @@
 //   orca-flow summarize-run --pane <key> [--force]   Re-summarize an agent's latest turn now
 //   orca-flow bots [--repo <name>] [--json]   Orca bots you can hand work to, with the command for each
 //   orca-flow role lead|clear                 Record (or clear) that the user made this session a lead
+//   orca-flow types [--json]                  The user's task types (Settings → Models): id, name,
+//                                             description, model. None: every task goes by difficulty
+//   orca-flow route --role worker|lead|coordinator [--type <id>] [--kind simple|normal|hard] [--risk high]
+//       [--context large] [--attempt n] [--agent a] [--model m] [--effort e] [--json] [--explain]
+//                                             Which model a start would use, and why. Launches nothing.
+//                                             --type: that type's row; kind, risk and context then do not count
+//   orca-flow dispatch --role worker|lead [routing flags] [worker-start flags: --worktree --task
+//       --task-title --spec --spec-file --keep-open --repo --name --base-branch --display-name
+//       --comment --setup --deps --parent --run --retry-of --retry-request] [--attempt n, only with
+//       --retry-of] [--restart] [--dry-run] [--json]
+//                                             Capacity gate, route, then `orca orchestration worker-start`
+//                                             on the routed model. Exit 2: capacity said no; 3: no model;
+//                                             4: start outcome unknown. The same command asks Orca first:
+//                                             running, nothing starts; unknown, it replays the request,
+//                                             or with no request id refuses (exit 4) until --restart
+//   orca-flow plan check|start|next|status <plan.json> [--worktree <sel>] [--run <id>] [--dry-run]
+//       [--restart <id>]                      A lead's parallel plan: checked file ownership and deps,
+//                                             one Orca task each, started in waves, each behind the memory check
+//   route, dispatch and plan cache model discovery for 10 minutes (models-cache.json);
+//   --refresh-models looks again.
 //
 // Data lives in ~/.orca-flow (ORCA_FLOW_DIR overrides): cards/<worktree>.json written by
 // coordinators, agents/<pane>.json written by the summarizer (the plugin worker), config.json for
-// limits, roles.json for leads the user named (roles.mjs). The Orca plugin reads both folders. No dependencies.
+// limits and `routing` (Settings → Models), roles.json for leads the user named (roles.mjs),
+// routes.jsonl (one line per routed start), plans/<slug>-<path hash>.json (plan state),
+// pending-starts.json (dispatches whose outcome is unknown), models-cache.json. The Orca plugin reads
+// them too. No dependencies.
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync, appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -423,6 +446,28 @@ export function role(args, { env = process.env, cwd = process.cwd(), home = home
   return clearRole(DIR, session.id) ? `Cleared the lead record of session ${session.id}.` : `Session ${session.id} had no role record.`
 }
 
+// ---------- route, dispatch, plan ----------
+
+const flow = await import('./dispatch.mjs')
+const { discover } = await import(new URL('../../../src/model-discovery.ts', import.meta.url).href)
+
+/** The real machine: Orca's CLI, model discovery and the memory gate. Tests pass fakes instead. */
+function liveDeps(args = {}) {
+  return {
+    dir: DIR,
+    cwd: process.cwd(),
+    orcaBin: ORCA_BIN,
+    orca: flow.orcaRunner(ORCA_BIN),
+    // Codex lists models from the selected Codex account's home, as in Settings (src/worker.ts
+    // discoverHere). Cached 10 minutes per home in models-cache.json; --refresh-models looks again.
+    discover: flow.accountDiscovery(DIR, { orca: flow.orcaRunner(ORCA_BIN, { timeoutMs: 10_000 }), discover: (opts) => discover(flow.execCommand, { orcaBin: ORCA_BIN, ...opts }), refresh: !!args['refresh-models'] }),
+    capacity,
+    readStdin: () => readFileSync(0, 'utf8'),
+    out: (s) => console.log(s),
+    now: () => new Date()
+  }
+}
+
 // ---------- main ----------
 
 async function main() {
@@ -459,8 +504,22 @@ async function main() {
       console.log(args.json ? JSON.stringify(b, null, 2) : formatBots(b))
       break
     }
+    case 'types':
+    case 'route':
+    case 'dispatch':
+    case 'plan': {
+      const run = { types: flow.typesCommand, route: flow.routeCommand, dispatch: flow.dispatchCommand, plan: flow.planCommand }[command]
+      try {
+        process.exitCode = await run(args, liveDeps(args))
+      } catch (e) {
+        if (!(e instanceof flow.Refused || e instanceof flow.UsageError)) throw e
+        console.error(e.message)
+        process.exitCode = e instanceof flow.Refused ? e.code : 1
+      }
+      break
+    }
     default:
-      console.log('usage: orca-flow <queue|capacity|set|get|resume|summarize-run|bots|role> [options]  (see the header of scripts/orca-flow.mjs)')
+      console.log('usage: orca-flow <queue|capacity|set|get|resume|summarize-run|bots|role|types|route|dispatch|plan> [options]  (see the header of scripts/orca-flow.mjs)')
       process.exit(command ? 1 : 0)
   }
 }
