@@ -1536,25 +1536,34 @@ test('a coordinator Orca lists twice (stale pane beside its live pane) sorts wit
   noMatch(flowRow, /Sleeping|Not started/, 'its row shows its live status')
 })
 
-test('a session’s model is the first thing on the right of its row, in the state its source says; the route is in that tooltip, not the status', () => {
+test('an agent’s model is a badge between its avatar and title: the provider mark and the name, in the state its source says, no tooltip', () => {
   const route = 'Claude Sonnet · medium — standard task'
   const html = (model: any, extra: object = {}) => page({ ...snap, rows: [row('w', 'shop', [agent('p-w', 'Rename flag', 'working', { route, ...(model ? { model } : {}), ...extra })])] }, emptyUi())
   const seen = html({ name: 'Sonnet 5.5', effort: 'medium', source: 'seen' })
-  assert.match(seen, /<span class="r"><span class="ml" data-tip="Sonnet 5\.5 · medium\nSeen in its latest reply\.\nAsked for: Claude Sonnet · medium — standard task">Sonnet 5\.5<\/span>/)
-  assert.match(seen, /data-tip="Working"/, 'the status tooltip no longer carries the route')
+  assert.match(seen, /<span class="mbadge" aria-label="Claude · Sonnet 5\.5"><svg[\s\S]*?<\/svg><span class="mn">Sonnet 5\.5<\/span><\/span><span class="t">Rename flag<\/span>/, 'seen: the mark and the name, not pending, before the title')
+  noMatch(seen, /<span class="mbadge[^"]*"[^>]*data-tip=/, 'the badge has no tooltip')
+  const right = seen.slice(seen.indexOf('<span class="t">Rename flag'), seen.indexOf('</button>', seen.indexOf('<span class="t">Rename flag')))
+  noMatch(right, /Sonnet 5\.5/, 'the right side no longer shows the model')
+  assert.match(seen, /<span class="r"><span class="soft">shop<\/span>/, 'the right side keeps the repo and age')
+  assert.match(seen, /data-tip="Working"/, 'the status tooltip still says Working')
   const asked = html({ name: 'Sonnet', source: 'asked' })
-  assert.match(asked, /<span class="ml pending" data-tip="Sonnet\nAsked for: Claude Sonnet · medium — standard task\nNo reply yet\.">Sonnet<\/span>/)
-  assert.match(html({ name: 'default', source: 'default', provider: 'Claude' }, { route: null }), /<span class="ml pending" data-tip="Claude’s default model\nNo reply yet, so the model is not known\.\nThe name shows after its first reply\.">default<\/span>/)
-  noMatch(html(null, { route: null }), /class="ml/, 'nothing known: the row looks as before')
+  assert.match(asked, /<span class="mbadge pending" aria-label="Claude · Sonnet"><svg[\s\S]*?<\/svg><span class="mn">Sonnet<\/span><\/span>/, 'asked: pending, the mark and the name')
+  const dflt = html({ name: 'default', source: 'default', provider: 'Claude' }, { route: null })
+  assert.match(dflt, /<span class="mbadge pending" aria-label="Claude · default"><svg[\s\S]*?<\/svg><span class="mn">default<\/span><\/span>/, 'default: pending, the mark and the name')
+  noMatch(html(null, { route: null }), /mbadge|class="mn"/, 'nothing known: no badge, and the provider mark stays as before (not mixed: none)')
   assert.match(html(null), /data-tip="Working"/)
 })
 
-test('lead, worker and coordinator rows show their model; the name goes before the Linear chip, PR and repo', () => {
+test('lead, worker and coordinator rows: the badge carries the provider mark even when providers are not mixed; the coordinator chip has no mark and its picker still renders', () => {
   const m = (name: string) => ({ name, source: 'seen' as const })
   const lead = agent('p-l', 'Lead title', 'working', { model: m('Opus 5.5') })
-  const worker = agent('p-k', 'Worker title', 'working', { leadPane: 'p-l', model: m('GPT-5.6 Sol') })
-  const out = page({ ...snap, coordinators: [{ ...snap.coordinators[0], session: agent('p-c', 'Coordinator', 'done', { model: m('Opus 5.5') }) }], rows: [row('feat', 'shop', [lead, worker], { pr: { number: 7, url: 'u', state: 'open', checks: null } })] }, emptyUi())
-  assert.match(out, /<span class="r"><span class="ml"[^>]*>Opus 5\.5<\/span><span class="pr[^>]*>#7<\/span><span class="soft">/, 'the lead: model, then its PR, repo and age')
-  assert.match(out, /<span class="r"><span class="ml"[^>]*>GPT-5\.6 Sol<\/span><\/span>/, 'a worker row, whose right side was empty, gets just the name')
-  assert.match(out, /coord-label[\s\S]*?<span class="r"><span class="ml"[^>]*>Opus 5\.5<\/span><\/span>/, 'the coordinator row')
+  const worker = agent('p-k', 'Worker title', 'working', { agentType: 'codex', leadPane: 'p-l', model: m('GPT-5.6 Sol') })
+  const coordSnap: Snapshot = { ...snap, handoverProviders: ['claude', 'codex'], coordinators: [{ ...snap.coordinators[0], session: agent('p-c', 'Coordinator', 'done', { model: m('Opus 5.5') }), sessions: { version: 1, current: 'm1', members: [{ id: 'm1', agentType: 'claude' }] } as any }] }
+  const out = page({ ...coordSnap, rows: [row('feat', 'shop', [lead, worker], { pr: { number: 7, url: 'u', state: 'open', checks: null } })] }, emptyUi())
+  assert.match(out, /<span class="mbadge" aria-label="Claude · Opus 5\.5"><svg[\s\S]*?<\/svg><span class="mn">Opus 5\.5<\/span><\/span><span class="t">Lead title<\/span><span class="r"><span class="pr[^>]*>#7<\/span><span class="soft">shop<\/span><span class="age">/, 'the lead: badge before the title; its right side keeps PR, repo and age')
+  assert.match(out, /<span class="mbadge" aria-label="Codex · GPT-5\.6 Sol"><svg[\s\S]*?<\/svg><span class="mn">GPT-5\.6 Sol<\/span><\/span><span class="t">Worker title<\/span><span class="r"><\/span>/, 'a worker: its own provider’s mark, and an empty right side')
+  assert.match(out, /<span class="mbadge model-only"><span class="mn">Opus 5\.5<\/span><\/span>/, 'the coordinator chip: the model name alone')
+  noMatch(out.slice(out.indexOf('class="mbadge model-only"') - 40, out.indexOf('class="mbadge model-only"') + 80), /<svg/, 'the coordinator chip has no mark')
+  assert.match(out, /<button class="session-trigger" data-handover="alpha"/, 'the coordinator’s handover picker still renders')
+  noMatch(out, /<span class="mbadge[^"]*"[^>]*data-tip=/, 'no badge has a tooltip, on any row')
 })
