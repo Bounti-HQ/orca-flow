@@ -151,7 +151,7 @@ square. The face and the badge at the bottom right show what Orca reports:
 amber when only another agent would fit (not a new worktree with its dev servers), and red when
 nothing fits. Disk turns amber under 25 GB and red under 10 GB.
 
-**Bots.** Between Up next and Linear, one line per Orca bot (`orca bot list`): its avatar, name,
+**Bots** (off until Settings → Features → Bots is on). Between Up next and Linear, one line per Orca bot (`orca bot list`): its avatar, name,
 what it is for, and on the right whether it waits on you, works, is paused, or when it runs next.
 A click opens its Home chat's workspace. Bots sit under the coordinator whose `coordinator.json`
 lists them in `bots` (by name or folder name; ask the coordinator to adopt one), else under
@@ -220,6 +220,9 @@ Changes apply at once; there is no Save button. Close it with the × or Escape.
   list ([Message format](#message-format)).
 - **Capacity:** the memory always kept free and the extra room under memory pressure
   ([Capacity](#capacity)).
+- **Features:** Bots (off by default; shows the Bots section, bot chats in Up next and the waiting
+  count). Display only: Orca's bots, schedules and chats are untouched, and while it is off Orca Flow
+  does not read `orca bot list`. Saved as `features.bots` in the settings file.
 - **Advanced:** Linear test mode (log the Linear comments and status changes Orca Flow would send,
   and send nothing) and Show in Finder for the settings file.
 - **About:** the running version, and Check for Updates (see
