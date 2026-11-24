@@ -34,6 +34,30 @@ These controls supply no proof that a restarted process retains a supervised dis
 run binding. Use the original-conversation recovery for active supervised work. Flow has no
 automatic select/launch/restore sequence, account-home override or credential migration.
 
+### How the account picker keeps a terminal conversation
+
+The Claude account row in the **Usage** menu calls the desktop account selector with the chosen
+account and runtime. Orca then queues the eligible terminal panes selected for restart. The queue
+stores a pane's PTY ID and provider. It carries no independent destination account ID.
+
+For a resumable terminal, Orca reads that pane's recorded provider session and launch settings.
+The resume command is `claude --resume <session-id>` or `codex resume <session-id>` (with
+applicable launch options). Orca restarts the process in the same pane and worktree. The provider
+session ID gives the user their conversation back. Claude checks whether the same session is open
+in another pane before resuming it. Codex can fall back to a fresh process when it cannot build
+a resume command, so clicking **Restart** by itself is insufficient proof of continuity.
+
+Reuse this host implementation for automatic switching. Expose the existing pane restart through a
+supported CLI or plugin operation that takes the destination account as part of the same request,
+requires exact-session resume, and confirms the resulting account and owner. On 1.4.272 Flow's
+public `agent.resume` accepts only workspace, provider and session. Calling it after a host-wide
+account change also changes which account unrelated launches use.
+
+The installed implementation can be traced from `runtime-provider-accounts-client` (selection),
+through `queuePaneAccountRestarts` and the renderer's `resumeProviderSession` construction, to
+`shared/agent-launch/startup/agent-resume-argv.js` (provider commands). The detached-pane path in
+the desktop renderer uses `replacesPtyId` while keeping the worktree, tab and leaf IDs.
+
 ## Installed-host evidence
 
 Checked on 2026-11-24 using the installed CLI, generated plugin types and bundled contracts.
