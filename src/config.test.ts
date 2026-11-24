@@ -157,20 +157,37 @@ test('a dialog opened before another change: its save keeps that change and adds
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
-test('account switching persists per workspace next to an older file’s keys, and a broken file is never overwritten', async () => {
-  const { withAccountOverride } = await import('./settings.ts')
+test('account switching: two dialogs opened for A and B, then a stale unrelated save, keep both overrides', async () => {
+  const { writeAccountChange } = await import('./config.ts')
   const dir = temp()
   try {
     writeFileSync(configFile(dir), JSON.stringify({ marginGB: 3, futureKey: { a: 1 } }))
-    assert.deepEqual(readSettings(dir).settings.accountSwitching, { workspaces: {} }, 'an older file: on everywhere')
-    const off = withAccountOverride({ workspaces: {} }, 'identity:a', { enabled: false, exclude: { claude: [], codex: [] } })
-    writeSettings(withSettings({ marginGB: 3, accountSwitching: off }), dir)
-    assert.deepEqual(fileOf(dir), { marginGB: 3, futureKey: { a: 1 }, accountSwitching: { workspaces: { 'identity:a': { enabled: false, exclude: { claude: [], codex: [] } } } } })
-    assert.deepEqual(readSettings(dir).settings.accountSwitching, off)
-    writeSettings(withSettings({ marginGB: 3 }), dir)
-    assert.deepEqual(fileOf(dir), { marginGB: 3, futureKey: { a: 1 } }, 'back at the default: removed')
+    // Both dialogs open now and keep these snapshots, as the panel's settings session does.
+    const snapA = readSettings(dir).settings, snapB = readSettings(dir).settings
+    assert.deepEqual(snapA.accountSwitching, { workspaces: {} }, 'an older file: on everywhere')
+    writeAccountChange('identity:a', { kind: 'exclude', provider: 'claude', id: 'acct-c2', excluded: true }, dir)
+    writeAccountChange('identity:b', { kind: 'enabled', enabled: false }, dir)
+    const both = { workspaces: { 'identity:a': { enabled: true, exclude: { claude: ['acct-c2'], codex: [] } }, 'identity:b': { enabled: false, exclude: { claude: [], codex: [] } } } }
+    assert.deepEqual(fileOf(dir), { marginGB: 3, futureKey: { a: 1 }, accountSwitching: both }, 'B never puts back A’s older state')
+    // A stale dialog (opened before either change) saves an unrelated Models-page change.
+    writeSettings({ ...snapA, routing: { ...snapA.routing, coordinator: { agent: 'claude', model: 'sonnet', effort: 'low' } } }, dir)
+    assert.deepEqual(fileOf(dir).accountSwitching, both, 'a stale whole-settings save keeps the overrides')
+    assert.equal(fileOf(dir).routing.coordinator.model, 'sonnet', 'and still saves its own change')
+    // An older caller sends settings without the key at all.
+    const { accountSwitching: _, ...older } = snapB
+    writeSettings({ ...older, marginGB: 4 } as never, dir)
+    assert.deepEqual(fileOf(dir).accountSwitching, both, 'a caller without the key keeps them too')
+    // The panel's own stale save, with the base it opened with (the worker's settingsToSave path).
+    saveFromDialog(dir, { ...snapA, marginGB: 6 }, snapA)
+    assert.deepEqual(fileOf(dir).accountSwitching, both, 'a stale dialog save with its base keeps them')
+    assert.equal(fileOf(dir).marginGB, 6)
+    // A's reset removes only A.
+    writeAccountChange('identity:a', { kind: 'reset' }, dir)
+    assert.deepEqual(fileOf(dir).accountSwitching, { workspaces: { 'identity:b': both.workspaces['identity:b'] } })
+    writeAccountChange('identity:b', { kind: 'enabled', enabled: true }, dir)
+    assert.equal('accountSwitching' in fileOf(dir), false, 'back at the default everywhere: the key goes')
     writeFileSync(configFile(dir), '{ broken')
-    assert.throws(() => writeSettings(withSettings({ accountSwitching: off }), dir), /won’t overwrite/)
+    assert.throws(() => writeAccountChange('identity:a', { kind: 'reset' }, dir), /won’t overwrite/)
     assert.equal(readFileSync(configFile(dir), 'utf8'), '{ broken')
   } finally {
     rmSync(dir, { recursive: true, force: true })

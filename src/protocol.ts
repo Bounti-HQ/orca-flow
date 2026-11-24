@@ -710,6 +710,8 @@ declare module 'orca' {
     'sidebar.settings': { output: SettingsState }
     /** Settings → Account switching: Orca's managed Claude and Codex logins, read when the page opens (src/accounts.ts). */
     'sidebar.accounts': { output: import('./accounts.ts').AccountsState }
+    /** One Account switching change for one workspace, applied to config.json as it is now (src/settings.ts applyAccountChange). */
+    'sidebar.saveAccountSwitching': { input: { workspace: string; change: import('./settings.ts').AccountChange }; output: { ok: boolean; error?: string; state: SettingsState } }
     /** Saves the dialog's settings to ~/.orca-flow/config.json (changed keys only; unknown keys kept; a broken file is never overwritten). `base`: what the dialog started from; given, only what differs from it is applied over the file, so a change made elsewhere since stays (older panels send none: `settings` is written as is). */
     'sidebar.saveSettings': { input: { settings: import('./settings.ts').FlowSettings; base?: import('./settings.ts').FlowSettings }; output: { ok: boolean; error?: string; state: SettingsState } }
     /** Checks for a newer Orca Flow release now, as the 15-minute timer does; an offered update shows everywhere. */

@@ -26,9 +26,9 @@ import { askingRows, asleep, CHAT_KEYS, chatTargets, FOLDED_KEY, finishedAgents,
 import type { AgentInfo, AgentState, AgentSummary, Bot, Capacity, Coordinator, LinearData, Priority, SettingsState, Snapshot, WakeOutcome, WorkspaceRow, WorkstreamCard, CoordinatorSessions, AnalyticsView, AnalyticsWindow } from './protocol.ts'
 import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
 import { createWriter } from './writer.ts'
-import { configFile, configuredWriters, readSettings, writeSettings } from './config.ts'
+import { configFile, configuredWriters, readSettings, writeAccountChange, writeSettings } from './config.ts'
 import { discoverAccounts } from './accounts.ts'
-import { settingsToSave, WRITER_PROVIDERS, type WriterStatus } from './settings.ts'
+import { accountChangeOf, accountWorkspaceOf, settingsToSave, WRITER_PROVIDERS, type WriterStatus } from './settings.ts'
 import { currentSummaryJobs, findTranscript, refreshStale, summaryMatches, summarizePane, summaryProviders, turnSummarizer } from './summarize.ts'
 import { ensureOwnLinks, ensureOwnStopHook, ensureSeeds, linksFor, pluginDir, seedsFor, stopHookFor } from './install.ts'
 import { bootstrapCoordinator, coordinatorPrompt } from './coordinator-bootstrap.ts'
@@ -1881,6 +1881,16 @@ export default function activate(orca: OrcaWorkerApi): void {
   orca.panels.handle('sidebar.settings', () => settingsState(true))
   // Read only when Settings → Account switching opens: listing accounts selects or changes nothing.
   orca.panels.handle('sidebar.accounts', () => accountDiscovery.run(run))
+  orca.panels.handle('sidebar.saveAccountSwitching', async ({ workspace, change }) => {
+    const ws = accountWorkspaceOf(workspace), c = accountChangeOf(change)
+    if (!ws || !c) return { ok: false, error: 'That account switching change isn’t valid.', state: await settingsState() }
+    try {
+      writeAccountChange(ws, c, settingsDir.path)
+    } catch (e) {
+      return { ok: false, error: (e as Error).message, state: await settingsState() }
+    }
+    return { ok: true, state: await settingsState() }
+  })
   orca.panels.handle('sidebar.saveSettings', async ({ settings, base }) => {
     try {
       // With the dialog's base, only what it changed goes over the file: another window's or a hand edit's change since stays.

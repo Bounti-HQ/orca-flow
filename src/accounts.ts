@@ -69,19 +69,23 @@ function onlyMatch<T>(items: T[], match: (item: T) => boolean): T | null {
   return found.length === 1 ? found[0] : null
 }
 
+/** Orca answered, but not with an account list: said as such, never with the answer's text. */
+class UnusableAnswer extends Error {}
+
 /**
  * Orca's Claude block (`accounts`, `systemDefaultEmail`, `systemDefaultOrganizationUuid`). Only
- * this host's logins count: a WSL login runs elsewhere. System default is the login with the same
- * email and organization, or the one Orca says runs on it.
+ * this host's logins count: a WSL login runs elsewhere. System default is the login Orca says runs
+ * on it, or the one login with the same email and the same organization, both known: an email alone,
+ * or an organization missing on both sides, is no proof.
  */
 export function projectClaude(block: unknown): DiscoveredAccount[] {
-  if (!isObject(block) || !Array.isArray(block.accounts)) throw new Error('Orca returned no Claude account list')
+  if (!isObject(block) || !Array.isArray(block.accounts)) throw new UnusableAnswer('no Claude account list')
   const host = block.accounts.filter((a): a is Record<string, unknown> => isObject(a) && !!text(a.id) && !!text(a.email) && (a.managedAuthRuntime ?? 'host') === 'host')
   const seen = new Set<string>()
   const unique = host.filter((a) => !seen.has(a.id as string) && !!seen.add(a.id as string))
   const sdEmail = lower(block.systemDefaultEmail)
   const sdOrg = text(block.systemDefaultOrganizationUuid)
-  const alias = sdEmail ? onlyMatch(unique, (a) => lower(a.email) === sdEmail && (text(a.organizationUuid) ?? null) === sdOrg) : null
+  const alias = sdEmail && sdOrg ? onlyMatch(unique, (a) => lower(a.email) === sdEmail && text(a.organizationUuid) === sdOrg) : null
   return unique.map((a) => ({
     id: a.id as string,
     label: labelOf(text(a.email)!, a.displayName),
@@ -93,20 +97,18 @@ export function projectClaude(block: unknown): DiscoveredAccount[] {
 
 /**
  * Orca's Codex block (`accounts`, `systemDefault: { email, providerAccountId, workspaceLabel }`).
- * System default is the login with the same email and provider account (or, without one, the same
- * workspace).
+ * System default is the one login with the same email and the same provider account, both known. A
+ * workspace name is a label, not an identity, and a provider account missing on both sides is no proof.
  */
 export function projectCodex(block: unknown): DiscoveredAccount[] {
-  if (!isObject(block) || !Array.isArray(block.accounts)) throw new Error('Orca returned no Codex account list')
+  if (!isObject(block) || !Array.isArray(block.accounts)) throw new UnusableAnswer('no Codex account list')
   const host = block.accounts.filter((a): a is Record<string, unknown> => isObject(a) && !!text(a.id) && !!text(a.email) && (a.managedHomeRuntime ?? 'host') === 'host')
   const seen = new Set<string>()
   const unique = host.filter((a) => !seen.has(a.id as string) && !!seen.add(a.id as string))
   const sd = isObject(block.systemDefault) && block.systemDefault.hasAuth !== false ? block.systemDefault : null
   const sdEmail = lower(sd?.email)
   const sdAccount = text(sd?.providerAccountId)
-  const alias = sdEmail
-    ? onlyMatch(unique, (a) => lower(a.email) === sdEmail && (sdAccount ? text(a.providerAccountId) === sdAccount : (text(a.workspaceLabel) ?? null) === (text(sd?.workspaceLabel) ?? null)))
-    : null
+  const alias = sdEmail && sdAccount ? onlyMatch(unique, (a) => lower(a.email) === sdEmail && text(a.providerAccountId) === sdAccount) : null
   return unique.map((a) => ({
     id: a.id as string,
     label: labelOf(text(a.email)!, a.displayName),
@@ -116,13 +118,19 @@ export function projectCodex(block: unknown): DiscoveredAccount[] {
   }))
 }
 
-/** A short reason for the page: one line, no paths. */
+/**
+ * A short reason for the page, always one of a few fixed sentences: Orca's own error text can hold
+ * home paths or identities, so it is matched, never shown.
+ */
 export function readFailure(provider: SwitchProvider, e: unknown): string {
-  const msg = String((e as Error)?.message ?? e).split('\n')[0].replace(/(?:\/[\w.@-]+){2,}/g, '…').trim()
-  if (/unknown (?:flag|option)|unsupported|not a command|unknown command/i.test(msg)) return `This Orca can’t list ${PROVIDER_NAME[provider]} accounts. Update Orca to see them here.`
-  if (/ENOENT|not found|spawn/i.test(msg)) return 'Orca’s command line isn’t available, so accounts can’t be listed.'
-  if (/timed out/i.test(msg)) return `Orca took too long to list ${PROVIDER_NAME[provider]} accounts.`
-  return `Couldn’t read ${PROVIDER_NAME[provider]} accounts${msg ? `: ${msg.slice(0, 140)}` : '.'}`
+  const name = PROVIDER_NAME[provider]
+  if (e instanceof UnusableAnswer) return `Orca’s answer about ${name} accounts couldn’t be read.`
+  const msg = String((e as Error)?.message ?? e)
+  const code = String((e as { code?: unknown })?.code ?? '')
+  if (/unknown (?:flag|option)|unsupported|not a command|unknown command/i.test(msg) || code === 'invalid_argument') return `This Orca can’t list ${name} accounts. Update Orca to see them here.`
+  if (code === 'ENOENT' || /\bENOENT\b|spawn .* ENOENT/i.test(msg)) return 'Orca’s command line isn’t available, so accounts can’t be listed.'
+  if (/timed out/i.test(msg)) return `Orca took too long to list ${name} accounts.`
+  return `Couldn’t read ${name} accounts. Try again, or check Settings → AI Provider Accounts in Orca.`
 }
 
 const PROJECT: Record<SwitchProvider, (block: unknown) => DiscoveredAccount[]> = { claude: projectClaude, codex: projectCodex }

@@ -77,14 +77,31 @@ test('discovery only lists, one provider at a time, and one failing never hides 
   assert.equal(state.enforcement.paidUsageStop, false, 'nor a stop before paid usage')
 })
 
-test('discovery failures read as one short line, without paths', async () => {
+test('discovery failures read as one of a few fixed lines, never Orca’s own text', async () => {
   const state = await discoverAccounts(async () => ({ ok: true }))
-  assert.equal(state.claude.error, 'Couldn’t read Claude accounts: Orca returned no Claude account list')
+  assert.equal(state.claude.error, 'Orca’s answer about Claude accounts couldn’t be read.')
   assert.equal(readFailure('claude', new Error('spawn /fixture/bin/orca ENOENT')), 'Orca’s command line isn’t available, so accounts can’t be listed.')
   assert.equal(readFailure('codex', new Error('orca account list timed out')), 'Orca took too long to list Codex accounts.')
-  const odd = readFailure('claude', new Error('permission denied reading /fixture/home/.claude/x.json\nstack'))
-  assert.equal(odd.includes('/fixture'), false)
-  assert.equal(odd.includes('stack'), false)
+  // An unknown error may carry a home path or an identity: it is never forwarded.
+  const generic = 'Couldn’t read Claude accounts. Try again, or check Settings → AI Provider Accounts in Orca.'
+  assert.equal(readFailure('claude', new Error('permission denied reading /fixture/home/.claude/x.json\nstack')), generic)
+  assert.equal(readFailure('claude', new Error('Account dev@studio.example in org org-studio is locked')), generic)
+  assert.equal(readFailure('claude', Object.assign(new Error('Unexpected error'), { code: 'internal', data: { home: '/fixture/home' } })), generic)
+  assert.equal(readFailure('claude', 'a thrown string with /fixture/home'), generic)
+  const leaked = (await discoverAccounts(async () => { throw new Error('dev@studio.example: token at /fixture/home/.codex/auth.json expired') })).codex.error ?? ''
+  for (const leak of ['@', '/fixture', 'token']) assert.equal(leaked.includes(leak), false, `the panel never gets ${leak}`)
+})
+
+test('System default needs identity evidence: missing organization or provider account on both sides is none', () => {
+  const claudeNoOrg = { accounts: [{ id: 'acct-c1', email: 'dev@studio.example', managedAuthRuntime: 'host' }], systemDefaultEmail: 'dev@studio.example' }
+  assert.equal(projectClaude(claudeNoOrg)[0].systemDefault, false, 'email alone is no proof')
+  assert.equal(projectClaude({ ...claudeNoOrg, systemDefaultOrganizationUuid: 'org-studio' })[0].systemDefault, false, 'an organization on one side only')
+  assert.equal(projectClaude({ accounts: [{ ...claudeNoOrg.accounts[0], organizationUuid: 'org-studio' }], systemDefaultEmail: 'dev@studio.example' })[0].systemDefault, false, 'and on the other side only')
+  assert.equal(projectClaude({ ...claudeNoOrg, accounts: [{ ...claudeNoOrg.accounts[0], runsOnSystemDefault: true }] })[0].systemDefault, true, 'Orca saying so explicitly still counts')
+  const codexNoAccount = { accounts: [{ id: 'acct-x1', email: 'dev@studio.example', managedHomeRuntime: 'host', workspaceLabel: 'Studio' }], systemDefault: { hasAuth: true, email: 'dev@studio.example', workspaceLabel: 'Studio' } }
+  assert.equal(projectCodex(codexNoAccount)[0].systemDefault, false, 'same email and workspace name, no provider account: no proof')
+  assert.equal(projectCodex({ ...codexNoAccount, systemDefault: { hasAuth: true, email: 'dev@studio.example' } })[0].systemDefault, false, 'nothing but the email')
+  assert.equal(projectCodex({ accounts: [{ ...codexNoAccount.accounts[0], providerAccountId: 'prov-1' }], systemDefault: { hasAuth: true, email: 'dev@studio.example' } })[0].systemDefault, false, 'a provider account on one side only')
 })
 
 test('the current workspace: one focused workspace, else its coordinator’s folder, else none', () => {

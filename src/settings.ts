@@ -123,6 +123,42 @@ export function normalizeAccountSwitching(value: unknown): AccountSwitchingSetti
 export const accountOverrideFor = (s: AccountSwitchingSettings, workspace: string): AccountOverride =>
   clone(s.workspaces[workspace] ?? DEFAULT_ACCOUNT_OVERRIDE)
 
+/** One edit on the Account switching page, for the workspace it was opened in. */
+export type AccountChange =
+  | { kind: 'enabled'; enabled: boolean }
+  | { kind: 'exclude'; provider: 'claude' | 'codex'; id: string; excluded: boolean }
+  | { kind: 'reset' }
+
+/** The change as sent by the panel, or null when it is not one (the worker refuses it). */
+export function accountChangeOf(value: unknown): AccountChange | null {
+  if (!isObject(value)) return null
+  if (value.kind === 'reset') return { kind: 'reset' }
+  if (value.kind === 'enabled' && typeof value.enabled === 'boolean') return { kind: 'enabled', enabled: value.enabled }
+  if (value.kind === 'exclude' && (value.provider === 'claude' || value.provider === 'codex') && typeof value.id === 'string' && value.id.trim() && value.id.length <= 256 && typeof value.excluded === 'boolean')
+    return { kind: 'exclude', provider: value.provider, id: value.id.trim(), excluded: value.excluded }
+  return null
+}
+
+/** A workspace id the panel may save under: a non-empty string of reasonable length. */
+export const accountWorkspaceOf = (value: unknown): string | null => (typeof value === 'string' && value.trim() && value.length <= 512 ? value : null)
+
+/**
+ * The config object with one workspace's account preference changed, starting from `raw` as the
+ * file holds it now. Every other workspace, and every other key, stays exactly as written.
+ */
+export function applyAccountChange(raw: Record<string, unknown>, workspace: string, change: AccountChange): Record<string, unknown> {
+  const current = normalizeAccountSwitching(raw.accountSwitching)
+  const o = accountOverrideFor(current, workspace)
+  const next = change.kind === 'reset' ? clone(DEFAULT_ACCOUNT_OVERRIDE)
+    : change.kind === 'enabled' ? { ...o, enabled: change.enabled }
+    : { ...o, exclude: { ...o.exclude, [change.provider]: change.excluded ? [...o.exclude[change.provider], change.id] : o.exclude[change.provider].filter((id) => id !== change.id) } }
+  const out: Record<string, unknown> = { ...raw }
+  const saved = withAccountOverride(current, workspace, next)
+  if (same(saved, DEFAULT_SETTINGS.accountSwitching)) delete out.accountSwitching
+  else out.accountSwitching = saved
+  return out
+}
+
 /** The settings with one workspace's preference set; back at the default, its override is removed. */
 export function withAccountOverride(s: AccountSwitchingSettings, workspace: string, next: AccountOverride): AccountSwitchingSettings {
   return normalizeAccountSwitching({ workspaces: { ...s.workspaces, [workspace]: next } })
@@ -148,13 +184,16 @@ export function normalizeSettings(raw: unknown): FlowSettings {
 /**
  * The config object after saving `next`: only the keys whose meaning changed are touched. A key set
  * back to its default is removed; a key never changed stays as written; unknown keys are kept.
+ * `accountSwitching` is never written here: a whole-settings save comes from a dialog that may be
+ * stale or from a caller that predates the key, so it keeps what the file holds. Account changes go
+ * through applyAccountChange, one workspace at a time, against the file as it is then.
  */
 export function applySettings(raw: Record<string, unknown>, next: FlowSettings): Record<string, unknown> {
   const now = normalizeSettings(raw)
   const want = normalizeSettings(next)
   const out: Record<string, unknown> = { ...raw }
   for (const key of SETTINGS_KEYS) {
-    if (same(now[key], want[key])) continue
+    if (key === 'accountSwitching' || same(now[key], want[key])) continue
     if (same(want[key], DEFAULT_SETTINGS[key])) delete out[key]
     else out[key] = clone(want[key])
   }
@@ -391,6 +430,16 @@ export function settingsSession(save: (settings: FlowSettings, base: FlowSetting
     get error() { return s.error },
     /** The file's settings, as the dialog opens. */
     load(settings: FlowSettings) { s.saved = toDraft(settings); s.shown = clone(s.saved); s.error = null },
+    /**
+     * Takes Account switching as the file now holds it (after its own save, which never goes through
+     * this session's saves), leaving every other control and any save in flight alone.
+     */
+    adopt(settings: FlowSettings) {
+      const a = normalizeAccountSwitching(settings.accountSwitching)
+      s.saved.accountSwitching = clone(a)
+      s.shown.accountSwitching = clone(a)
+      onUpdate()
+    },
     /** Applies a change to the controls and saves it. */
     change(mutate: (d: Draft) => void): Promise<void> {
       mutate(s.shown)

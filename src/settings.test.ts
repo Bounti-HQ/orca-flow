@@ -360,12 +360,36 @@ test('account switching: only deviations are kept, per workspace, in a stable or
   assert.deepEqual(s.workspaces['identity:a'].exclude.claude, ['acct-1', 'acct-2'], 'a copy, never the saved value')
 })
 
-test('account switching: the dialog draft round-trips it, and a file saves only what deviates', async () => {
+test('account switching: a whole-settings save never writes it, so the file keeps its overrides', async () => {
   const { withAccountOverride } = await import('./settings.ts')
-  const s = { ...structuredClone(DEFAULT_SETTINGS), accountSwitching: withAccountOverride({ workspaces: {} }, 'identity:a', { enabled: false, exclude: { claude: [], codex: ['acct-x3'] } }) }
-  assert.deepEqual(fromDraft(toDraft(s)), s)
-  assert.deepEqual(applySettings({ futureKey: 1 }, s), { futureKey: 1, accountSwitching: { workspaces: { 'identity:a': { enabled: false, exclude: { claude: [], codex: ['acct-x3'] } } } } })
-  assert.deepEqual(applySettings({ futureKey: 1, accountSwitching: s.accountSwitching }, DEFAULT_SETTINGS), { futureKey: 1 }, 'all back at the default: the key goes')
+  const mine = withAccountOverride({ workspaces: {} }, 'identity:a', { enabled: false, exclude: { claude: [], codex: ['acct-x3'] } })
+  const s = { ...structuredClone(DEFAULT_SETTINGS), accountSwitching: mine }
+  assert.deepEqual(fromDraft(toDraft(s)), s, 'the dialog draft round-trips it')
+  assert.deepEqual(applySettings({ futureKey: 1 }, s), { futureKey: 1 }, 'a dialog’s copy is not written')
+  const onDisk = { futureKey: 1, accountSwitching: { workspaces: { 'identity:b': { enabled: false } } } }
+  assert.deepEqual(applySettings(onDisk, { ...structuredClone(DEFAULT_SETTINGS), marginGB: 5 }), { ...onDisk, marginGB: 5 }, 'a stale dialog with no overrides keeps the file’s')
+  const { accountSwitching: _, ...older } = structuredClone(DEFAULT_SETTINGS)
+  assert.deepEqual(applySettings(onDisk, { ...older, marginGB: 5 } as never), { ...onDisk, marginGB: 5 }, 'a caller without the key keeps them too')
+})
+
+test('account switching: one change for one workspace, against the file as it is', async () => {
+  const { applyAccountChange, accountChangeOf, accountWorkspaceOf } = await import('./settings.ts')
+  const raw = { marginGB: 3, accountSwitching: { workspaces: { 'identity:b': { enabled: false, exclude: { claude: [], codex: [] } } } } }
+  const a = applyAccountChange(raw, 'identity:a', { kind: 'exclude', provider: 'claude', id: 'acct-2', excluded: true })
+  assert.deepEqual(a, { marginGB: 3, accountSwitching: { workspaces: {
+    'identity:a': { enabled: true, exclude: { claude: ['acct-2'], codex: [] } },
+    'identity:b': { enabled: false, exclude: { claude: [], codex: [] } }
+  } } }, 'B’s override stays')
+  const again = applyAccountChange(a, 'identity:a', { kind: 'exclude', provider: 'claude', id: 'acct-2', excluded: false })
+  assert.deepEqual(again, raw, 'included again: A is back at the default and goes')
+  assert.deepEqual(applyAccountChange(a, 'identity:b', { kind: 'reset' }), { marginGB: 3, accountSwitching: { workspaces: { 'identity:a': { enabled: true, exclude: { claude: ['acct-2'], codex: [] } } } } }, 'a reset touches only its workspace')
+  assert.deepEqual(applyAccountChange({ marginGB: 3, accountSwitching: { workspaces: { 'identity:b': { enabled: false } } } }, 'identity:b', { kind: 'enabled', enabled: true }), { marginGB: 3 }, 'nothing left: the key goes')
+  assert.equal(accountChangeOf({ kind: 'exclude', provider: 'gemini', id: 'x', excluded: true }), null)
+  assert.equal(accountChangeOf({ kind: 'exclude', provider: 'codex', id: ' ', excluded: true }), null)
+  assert.equal(accountChangeOf({ kind: 'enabled', enabled: 'no' }), null)
+  assert.equal(accountChangeOf({ kind: 'replace', workspaces: {} }), null, 'never a whole map')
+  assert.equal(accountWorkspaceOf(''), null)
+  assert.equal(accountWorkspaceOf(7), null)
 })
 
 test('stale dialog: account switching merges one workspace at a time', async () => {

@@ -1916,20 +1916,33 @@ test('Settings → Account switching end to end: on-demand discovery, a per-work
     for (const leak of ['/fixture', 'org-studio', 'prov-1']) assert.equal(JSON.stringify(found).includes(leak), false, `the panel gets no ${leak}`)
     assert.ok(calls.every((a) => a[0] === 'account' && a[1] === 'list'), 'only lists: no select, add or rm')
 
-    const settings = (await worker.request('sidebar.settings') as import('./protocol.ts').SettingsState).settings
-    assert.deepEqual(settings.accountSwitching, { workspaces: {} }, 'on everywhere by default')
-    const next = { ...settings, accountSwitching: { workspaces: { 'identity:atlas': { enabled: true, exclude: { claude: ['acct-c2'], codex: [] } } } } }
-    const saved = await worker.request('sidebar.saveSettings', { settings: next }) as { ok: boolean; state: import('./protocol.ts').SettingsState }
-    assert.equal(saved.ok, true)
-    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')), { accountSwitching: { workspaces: { 'identity:atlas': { enabled: true, exclude: { claude: ['acct-c2'], codex: [] } } } } }, 'only the deviation is written')
-    assert.deepEqual((await worker.request('sidebar.settings') as import('./protocol.ts').SettingsState).settings.accountSwitching, next.accountSwitching, 'it reads back')
+    type Reply = { ok: boolean; error?: string; state: import('./protocol.ts').SettingsState }
+    // Two dialogs open, for atlas and for billing, each with its own snapshot of the settings.
+    const snapA = (await worker.request('sidebar.settings') as import('./protocol.ts').SettingsState).settings
+    const snapB = (await worker.request('sidebar.settings') as import('./protocol.ts').SettingsState).settings
+    assert.deepEqual(snapA.accountSwitching, { workspaces: {} }, 'on everywhere by default')
+    const a = await worker.request('sidebar.saveAccountSwitching', { workspace: 'identity:atlas', change: { kind: 'exclude', provider: 'claude', id: 'acct-c2', excluded: true } }) as Reply
+    const b = await worker.request('sidebar.saveAccountSwitching', { workspace: 'identity:billing', change: { kind: 'enabled', enabled: false } }) as Reply
+    assert.equal(a.ok && b.ok, true)
+    const both = { workspaces: { 'identity:atlas': { enabled: true, exclude: { claude: ['acct-c2'], codex: [] } }, 'identity:billing': { enabled: false, exclude: { claude: [], codex: [] } } } }
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')), { accountSwitching: both }, 'only the deviations are written, and B kept A’s')
+    // B's dialog, still holding its snapshot, saves an unrelated Models change through the whole-settings path.
+    const stale = await worker.request('sidebar.saveSettings', { settings: { ...snapB, marginGB: 5 } }) as Reply
+    assert.equal(stale.ok, true)
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')), { accountSwitching: both, marginGB: 5 }, 'the stale save keeps both overrides')
+    assert.deepEqual(stale.state.settings.accountSwitching, both, 'and its reply carries them back to the dialog')
+    const reset = await worker.request('sidebar.saveAccountSwitching', { workspace: 'identity:atlas', change: { kind: 'reset' } }) as Reply
+    assert.deepEqual(reset.state.settings.accountSwitching, { workspaces: { 'identity:billing': both.workspaces['identity:billing'] } }, 'a reset clears only its workspace')
+    const bad = await worker.request('sidebar.saveAccountSwitching', { workspace: '', change: { kind: 'replace', workspaces: {} } } as never) as Reply
+    assert.equal(bad.ok, false, 'a malformed change is refused, never written')
+    void snapA
 
     fail = true
     const failed = await worker.request('sidebar.accounts') as import('./accounts.ts').AccountsState
     assert.deepEqual([failed.claude.error, failed.codex.error], ['Orca took too long to list Claude accounts.', 'Orca took too long to list Codex accounts.'])
 
     writeFileSync(join(dir, 'config.json'), '{ broken')
-    const refused = await worker.request('sidebar.saveSettings', { settings: next }) as { ok: boolean; error?: string; state: import('./protocol.ts').SettingsState }
+    const refused = await worker.request('sidebar.saveAccountSwitching', { workspace: 'identity:atlas', change: { kind: 'reset' } }) as Reply
     assert.equal(refused.ok, false)
     assert.match(refused.error ?? '', /won’t overwrite/)
     assert.ok(refused.state.error, 'the dialog learns the file is broken')

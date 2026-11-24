@@ -117,6 +117,7 @@ Date.now = () => NOW;
 const snapshot = ${json(snapshot)};
 const goals = ${json(goals)};
 const settings = ${json(settings)};
+settings.settings.accountSwitching ??= { workspaces: {} };
 // ---- Account fixture (made-up identities and readings). Atlas may share context within the Studio organization.
 //   state=healthy | included (fresh 100% included reading, paid capacity left, no error) | switched (destination
 //   verified) | spent (every eligible login's included usage used up) | notproof (&reason=rounded|stale|othermodel|retry)
@@ -162,6 +163,8 @@ function paused() {
   return STATE === 'spent' || STATE === 'scope' || (['included','switched'].includes(STATE) && eligible(PROVIDER).length < 2);
 }
 if (paused()) for (const r of snapshot.rows) for (const a of r.agents) if (a.paneKey === TARGET) { a.state = 'done'; r.state = 'done'; }
+// Stands in for the worker's per-workspace save; the real one (src/settings.ts applyAccountChange) is tested in src/.
+const applyChange = (all, ws, c) => { const o = structuredClone(all[ws] ?? { enabled: true, exclude: { claude: [], codex: [] } }); if (c.kind === 'reset') { delete all[ws]; return } if (c.kind === 'enabled') o.enabled = c.enabled; else o.exclude[c.provider] = c.excluded ? [...o.exclude[c.provider], c.id].sort() : o.exclude[c.provider].filter((x) => x !== c.id); if (o.enabled && !o.exclude.claude.length && !o.exclude.codex.length) delete all[ws]; else all[ws] = o; };
 const stored = { 'linear': { folded: true }, 'speed-ui': { folded: true }, 'goals-ui': { folded: false }, 'folded': ['idle'] };
 window.previewCalls = [];
 window.previewErrors = [];
@@ -179,7 +182,8 @@ window.orca = {
       if (name === 'sidebar.accounts') return q.get('accounts') === 'fail'
         ? { claude: { accounts: [], error: 'Orca took too long to list Claude accounts.' }, codex: { accounts: [], error: 'This Orca can’t list Codex accounts. Update Orca to see them here.' }, enforcement: ENFORCEMENT }
         : { claude: { accounts: logins('claude').map(view), error: null }, codex: { accounts: logins('codex').map(view), error: null }, enforcement: ENFORCEMENT };
-      if (name === 'sidebar.saveSettings') { settings.settings = data.settings; return { ok: true, state: structuredClone(settings) }; }
+      if (name === 'sidebar.saveSettings') { settings.settings = { ...data.settings, accountSwitching: settings.settings.accountSwitching }; return { ok: true, state: structuredClone(settings) }; }
+      if (name === 'sidebar.saveAccountSwitching') { applyChange(settings.settings.accountSwitching.workspaces, data.workspace, data.change); return { ok: true, state: structuredClone(settings) }; }
       if (name === 'sidebar.checkUpdates') return { kind: 'current', current: '0.2.98', latest: '0.2.98', at: NOW };
       return { ok: true };
     },
@@ -356,8 +360,9 @@ async function shoot(out, reference) {
   await load('state=included&switching=off')
   check('switching off, 100% included: nothing changes', (await ev(regions)) === healthy)
   // Settings → Account switching: the production page beside Models, scoped to the focused workspace.
-  const saves = () => ev(`previewCalls.filter(c => c.name === 'sidebar.saveSettings').map(c => c.data.settings.accountSwitching)`)
-  const lastSave = async () => (await saves()).at(-1)
+  const changes = () => ev(`previewCalls.filter(c => c.name === 'sidebar.saveAccountSwitching').map(c => c.data)`)
+  const lastChange = async () => JSON.stringify((await changes()).at(-1))
+  const wholeSaves = () => ev(`previewCalls.filter(c => c.name === 'sidebar.saveSettings').length`)
   await load('state=settings'); await sleep(600)
   files.push(await shot('10-settings-account-switching'))
   check('settings: Account switching is the nav item right after Models', (await ev(`[...document.querySelectorAll('#s-nav .s-nav-btn')].map(b => b.getAttribute('aria-label')).join('|')`)) === 'Titles & Summaries|Models|Account switching|Message Check|Memory|Features|Advanced|About')
@@ -374,7 +379,8 @@ async function shoot(out, reference) {
   check('settings: no usage or cost figures on the page', ((await text('#s-page')).replace('100% of its included usage', '').match(/\d+%|\$|credit/i)) === null)
   check('settings: no Reset to Defaults at the defaults', (await count('[data-reset="accounts"]')) === 0)
   await ev(`document.querySelector('[data-acct-id="c2"]').click()`); await sleep(200)
-  check('settings: excluding a login saves only this workspace’s deviation', JSON.stringify(await lastSave()) === JSON.stringify({ workspaces: { 'mono:hours': { enabled: true, exclude: { claude: ['c2'], codex: [] } } } }))
+  check('settings: excluding a login sends one change for this workspace', (await lastChange()) === JSON.stringify({ workspace: 'mono:hours', change: { kind: 'exclude', provider: 'claude', id: 'c2', excluded: true } }))
+  check('settings: and never goes through the whole-settings save', (await wholeSaves()) === 0)
   check('settings: Reset to Defaults appears', (await count('[data-reset="accounts"]')) === 1)
   await ev(`document.querySelector('[data-page="models"]').click()`); await sleep(300)
   files.push(await shot('11-settings-models'))
@@ -383,10 +389,11 @@ async function shoot(out, reference) {
   await ev(`document.querySelector('[data-page="accounts"]').click()`); await sleep(300)
   check('settings: back on Account switching, the exclusion is still there', (await ev(`document.querySelector('[data-acct-id="c2"]').checked`)) === false)
   await ev(`document.getElementById('s-acct-on').click()`); await sleep(200)
-  check('settings: switching off saves enabled: false for this workspace', JSON.stringify(await lastSave()) === JSON.stringify({ workspaces: { 'mono:hours': { enabled: false, exclude: { claude: ['c2'], codex: [] } } } }))
+  check('settings: switching off sends enabled: false for this workspace', (await lastChange()) === JSON.stringify({ workspace: 'mono:hours', change: { kind: 'enabled', enabled: false } }))
   check('settings: switched off, the logins can’t be changed', (await ev(`[...document.querySelectorAll('[data-acct]')].every(i => i.disabled)`)) === true)
   await ev(`document.querySelector('[data-reset="accounts"]').click()`); await sleep(200)
-  check('settings: Reset to Defaults removes this workspace’s override', JSON.stringify(await lastSave()) === JSON.stringify({ workspaces: {} }) && (await ev(`document.getElementById('s-acct-on').checked`)) === true)
+  check('settings: Reset to Defaults sends a reset for this workspace only', (await lastChange()) === JSON.stringify({ workspace: 'mono:hours', change: { kind: 'reset' } }) && (await ev(`document.getElementById('s-acct-on').checked`)) === true)
+  check('settings: the whole-settings save was never used for account changes', (await wholeSaves()) === 0)
   check('settings: no page errors', (await ev('previewErrors.length')) === 0, await ev('previewErrors'))
   await load('state=settings&workspace=none'); await sleep(600)
   files.push(await shot('12-settings-no-workspace'))
@@ -397,7 +404,7 @@ async function shoot(out, reference) {
   check('settings: Try Again reads again', (await ev(`previewCalls.filter(c => c.name === 'sidebar.accounts').length`)) === 2)
   await load('state=settings&page=models'); await sleep(600)
   check('settings: the Models deep link has no account section', (await ev(`document.querySelector('#s-nav [aria-current="page"]').dataset.page`)) === 'models' && (await count('#s-page [data-acct]')) === 0)
-  check('settings: nothing saved without a change', (await ev(`previewCalls.filter(c => c.name === 'sidebar.saveSettings').length`)) === 0)
+  check('settings: nothing saved without a change', (await ev(`previewCalls.filter(c => /^sidebar\.save/.test(c.name)).length`)) === 0)
   check('settings: no page errors (failure paths)', (await ev('previewErrors.length')) === 0, await ev('previewErrors'))
 
 

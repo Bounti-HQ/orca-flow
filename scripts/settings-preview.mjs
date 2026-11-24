@@ -76,7 +76,9 @@ const snapshot = ${JSON.stringify(snapshot)};
 const settings = ${JSON.stringify(settings)};
 const accounts = ${JSON.stringify(accounts)};
 if (q.get('workspace') === 'none') for (const r of snapshot.rows) r.active = false;
+settings.settings.accountSwitching ??= { workspaces: {} };
 if (q.get('saved')) settings.settings.accountSwitching = { workspaces: { feature: { enabled: true, exclude: { claude: ['acct-c2'], codex: [] } } } };
+const applyChange = (all, ws, c) => { const o = structuredClone(all[ws] ?? { enabled: true, exclude: { claude: [], codex: [] } }); if (c.kind === 'reset') { delete all[ws]; return } if (c.kind === 'enabled') o.enabled = c.enabled; else o.exclude[c.provider] = c.excluded ? [...o.exclude[c.provider], c.id].sort() : o.exclude[c.provider].filter((x) => x !== c.id); if (o.enabled && !o.exclude.claude.length && !o.exclude.codex.length) delete all[ws]; else all[ws] = o; };
 const accountsAnswer = () => q.get('accounts') === 'loading' ? new Promise(() => {}) : q.get('accounts') === 'fail'
   ? { claude: { accounts: [], error: 'Orca took too long to list Claude accounts.' }, codex: { accounts: [], error: 'This Orca canâ€™t list Codex accounts. Update Orca to see them here.' }, enforcement: accounts.enforcement }
   : accounts;
@@ -115,7 +117,7 @@ if (q.get('state') === 'broken') settings.error = '~/.orca-flow/config.json isnâ
 window.previewCalls = [];
 window.orca = {
   plugin: {
-    request: async (name, data) => { previewCalls.push({ name, data }); return name === 'sidebar.list' ? snapshot : name === 'sidebar.settings' ? settings : name === 'sidebar.checkUpdates' ? (upd === 'checking' ? new Promise(() => {}) : CHECKS[upd] ?? CHECKS.current) : name === 'sidebar.update' ? { started: false, message: 'preview: no update runs' } : name === 'sidebar.saveSettings' ? { ok: true, state: { ...settings, settings: data.settings } } : name === 'sidebar.linear' ? null : name === 'sidebar.accounts' ? accountsAnswer() : { ok: true }; },
+    request: async (name, data) => { previewCalls.push({ name, data }); return name === 'sidebar.list' ? snapshot : name === 'sidebar.settings' ? settings : name === 'sidebar.checkUpdates' ? (upd === 'checking' ? new Promise(() => {}) : CHECKS[upd] ?? CHECKS.current) : name === 'sidebar.update' ? { started: false, message: 'preview: no update runs' } : name === 'sidebar.saveSettings' ? { ok: true, state: { ...settings, settings: data.settings } } : name === 'sidebar.linear' ? null : name === 'sidebar.accounts' ? accountsAnswer() : name === 'sidebar.saveAccountSwitching' ? (applyChange(settings.settings.accountSwitching.workspaces, data.workspace, data.change), { ok: true, state: settings }) : { ok: true }; },
     on: () => () => {}
   },
   storage: { get: async () => null, set: async () => {} }, shell: { openExternal: async () => {} }

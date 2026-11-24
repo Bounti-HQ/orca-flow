@@ -105,6 +105,11 @@ or two different ones, nothing can be changed and the page says a workspace is n
   holds only deviations, as `accountSwitching.workspaces[<row id>] = { enabled, exclude: { claude,
   codex } }` with Orca's managed account ids. A workspace back at the default is removed, and an
   older file without the key reads as on everywhere. A file that can't be read is never overwritten.
+  Each change on the page is sent as one change for one workspace (`sidebar.saveAccountSwitching`)
+  and applied to the file as it is then, reset included. A dialog opened for another workspace, or
+  opened earlier, therefore never puts back an older override. The ordinary whole-settings save never
+  writes `accountSwitching`, so a stale dialog, or a caller that predates the key, keeps the file's
+  overrides.
   An exclusion only removes destinations. Nothing on the page grants a workspace access to a login.
 - **Discovery.** It runs only when the page opens (or on **Try Again**), as `orca account list
   --agent claude --json` and `--agent codex --json`. These read Orca's saved list with
@@ -112,11 +117,15 @@ or two different ones, nothing can be changed and the page says a workspace is n
   never selects, adds or removes an account or reads a token file. The panel receives only each
   login's Orca id, its label (email, or a name with the email), its organization or workspace name,
   whether it needs a new sign-in, and whether it is System default. Home paths, organization and
-  provider account ids stay in the worker, and WSL logins are left out. System default matches a
-  Claude login by email and organization (or Orca's `runsOnSystemDefault`), and a Codex login by
-  email and provider account. A match that would fit two logins is not made.
+  provider account ids stay in the worker, and WSL logins are left out. System default needs identity
+  evidence. A Claude login matches by email and an organization known on both sides, or when Orca
+  says `runsOnSystemDefault`. A Codex login matches by email and a provider account known on both
+  sides. An email alone, a workspace name, or fields missing on both sides are not proof, and a
+  match that would fit two logins is not made.
 - **Failures.** Each provider is read separately, so one failing never hides the other. An Orca
-  without the command, a timeout and an unusable answer each show one short line, with no paths.
+  without the command, a missing CLI, a timeout and an unusable answer each have a fixed sentence.
+  Any other error shows a generic one: Orca's own error text, which can hold home paths or
+  identities, never reaches the panel.
 - **What the page keeps apart.** The preference is saved for the workspace. **New launches** keep
   the account Orca selects (its status-bar picker or `orca account select`), which the page never
   changes. **Move to another account** and **Stop before paid usage** read "Not supported", each

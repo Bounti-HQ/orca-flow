@@ -3,7 +3,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { applySettings, normalizeSettings, same, type FlowSettings } from './settings.ts'
+import { applyAccountChange, applySettings, normalizeSettings, same, type AccountChange, type FlowSettings } from './settings.ts'
 
 export const CONFIG_DIR = join(homedir(), '.orca-flow')
 export const configFile = (dir = CONFIG_DIR) => join(dir, 'config.json')
@@ -45,9 +45,22 @@ export const configuredWriters = (dir = CONFIG_DIR) => readSettings(dir).setting
  * never overwritten: this throws instead. No file and nothing to save: no file is created.
  */
 export function writeSettings(next: FlowSettings, dir = CONFIG_DIR): ConfigRead {
+  return writeRaw(dir, (raw) => applySettings(raw, next))
+}
+
+/**
+ * Saves one Account switching change for one workspace against the file as it is now, so a dialog
+ * opened earlier, or for another workspace, never puts back an older override.
+ */
+export function writeAccountChange(workspace: string, change: AccountChange, dir = CONFIG_DIR): ConfigRead {
+  return writeRaw(dir, (raw) => applyAccountChange(raw, workspace, change))
+}
+
+/** Reads the file, applies `edit` to its object and writes the result atomically; never over an unreadable file. */
+function writeRaw(dir: string, edit: (raw: Record<string, unknown>) => Record<string, unknown>): ConfigRead {
   const current = readSettings(dir)
   if (current.error) throw new Error(`${current.error} Fix or remove the file; Orca Flow won’t overwrite it.`)
-  const raw = applySettings(current.raw, next)
+  const raw = edit(current.raw)
   if (same(raw, current.raw)) return current
   mkdirSync(dir, { recursive: true })
   const tmp = join(dir, `.config.json.${process.pid}.${Date.now()}.tmp`)

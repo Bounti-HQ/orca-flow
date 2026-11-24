@@ -8,7 +8,7 @@ import { approvalTip } from '../approval.ts'
 import { PROVIDER_LOGOS } from '../provider-logos.ts'
 import { addTaskType, cardName, cardProblem, canAddType, choiceText, editTaskType, effortBar, effortsFor, fallbackText, pickEffort, pickModel, pickNone, pickPreset, popoverView, presetView, refFrom, removeTaskType, routingRows, saveNamed, suggestedTypes, UNKNOWN, type RoutingRow, type Slot } from './models.ts'
 import { deletePreset, MAX_TYPE_DESCRIPTION, MAX_TYPE_NAME, MAX_TYPES, resetRouting, type Effort, type ModelChoice, type Preset, type RoutingSettings } from '../routing.ts'
-import { accountOverrideFor, ago, DEFAULT_ACCOUNT_OVERRIDE, same, settingsSession, statusView, withAccountOverride, WRITABLE, type Draft, type DraftKey, type WriterProvider } from '../settings.ts'
+import { accountOverrideFor, ago, DEFAULT_ACCOUNT_OVERRIDE, same, settingsSession, statusView, WRITABLE, type AccountChange, type Draft, type DraftKey, type WriterProvider } from '../settings.ts'
 import { ENFORCEMENT, NEW_LAUNCHES, PROVIDER_NAME, SWITCH_PROVIDERS, type AccountsState, type SwitchProvider, type WorkspaceRef } from '../accounts.ts'
 
 const glyph = (d: string) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`
@@ -76,6 +76,8 @@ let workspace: WorkspaceRef | null = null
 let accounts: AccountsState | null = null
 let accountsLoading = false
 let accountsError: string | null = null
+/** Why the last Account switching change was not saved; cleared by the next one. */
+let accountSaveError: string | null = null
 
 const session = settingsSession(async (settings, base) => {
   const r = await orca.plugin.request('sidebar.saveSettings', { settings, base }) as { ok: boolean; error?: string; state: SettingsState }
@@ -131,6 +133,7 @@ function errorLine(): string {
   const err = state?.error
     ? { text: 'Settings file can’t be read', tip: `${state.error} Orca Flow uses the defaults and saves nothing until you fix or remove the file.` }
     : session.error ? { text: 'Couldn’t save', tip: session.error }
+    : accountSaveError && pageId === 'accounts' ? { text: 'Couldn’t save', tip: accountSaveError }
     : loadError ? { text: 'Couldn’t load settings', tip: loadError } : null
   return err ? `<div class="s-err" role="alert" tabindex="0" data-tip="${esc(err.tip)}" aria-description="${esc(err.tip)}">${ICON.warn}<span>${esc(err.text)}</span></div>` : ''
 }
@@ -186,6 +189,24 @@ function pageAdvanced(): string {
 
 const NEED_WORKSPACE = 'Open a workspace in Orca, then Settings, to change its account switching.'
 const ON_TIP = 'Off: Orca Flow never moves this workspace’s work to another account. Other workspaces keep their own choice.'
+
+/**
+ * Saves one change for the workspace Settings was opened in. The worker applies it to the file as it
+ * is now, so another dialog's overrides, or this dialog's other settings, are never written with it.
+ */
+function saveAccount(change: AccountChange): void {
+  const ws = workspace?.id
+  if (!ws || locked()) return
+  accountSaveError = null
+  orca.plugin.request('sidebar.saveAccountSwitching', { workspace: ws, change })
+    .then((r) => {
+      const reply = r as { ok: boolean; error?: string; state: SettingsState }
+      state = reply.state
+      if (!reply.ok) accountSaveError = reply.error ?? 'The change could not be saved.'
+      session.adopt(reply.state.settings)
+    })
+    .catch((e: Error) => { accountSaveError = e.message; render() })
+}
 
 function loadAccounts(): void {
   accountsLoading = true
@@ -598,6 +619,7 @@ orca.plugin.on('sidebar.settingsChanged', (s) => {
 
 export function openSettings(current: WorkspaceRef | null = null): void {
   workspace = current
+  accountSaveError = null
   accounts = null
   accountsError = null
   opener = document.activeElement as HTMLElement | null
@@ -665,7 +687,7 @@ function onClick(e: MouseEvent): void {
   if (ds.rmtype) { removeTypeNow(ds.rmtype); return }
   if (ds.page) { pageId = ds.page as PageId; popover = null; typeForm = null; render(); if (pageId === 'accounts' && !accounts && !accountsLoading) loadAccounts(); return }
   if (ds.acctRetry !== undefined) { loadAccounts(); return }
-  if (ds.reset === 'accounts') { const ws = workspace?.id; if (ws) void session.change((x) => { x.accountSwitching = withAccountOverride(x.accountSwitching, ws, DEFAULT_ACCOUNT_OVERRIDE) }); return }
+  if (ds.reset === 'accounts') { saveAccount({ kind: 'reset' }); return }
   if (ds.reset === 'models') { resetModels(); return }
   if (ds.reset) { void session.reset(PAGES.find((p) => p.id === ds.reset)!.keys); return }
   if (ds.rmpreset) { const id = ds.rmpreset; focusAfter = '#s-saveas'; void session.change((x) => { x.routing = deletePreset(x.routing, id) }); return }
@@ -709,15 +731,8 @@ function onChange(e: Event): void {
   else if (t.id === 's-linear-on') void session.change((x) => { x.linear = t.checked })
   else if (t.id === 's-speed') void session.change((x) => { x.tokenSpeed = t.checked })
   else if (t.id === 's-linear') void session.change((x) => { x.linearDryRun = t.checked })
-  else if (t.id === 's-acct-on' && workspace) { const ws = workspace.id; void session.change((x) => { x.accountSwitching = withAccountOverride(x.accountSwitching, ws, { ...accountOverrideFor(x.accountSwitching, ws), enabled: t.checked }) }) }
-  else if (t.dataset.acct && workspace) {
-    const ws = workspace.id, p = t.dataset.acct as SwitchProvider, id = t.dataset.acctId!
-    void session.change((x) => {
-      const o = accountOverrideFor(x.accountSwitching, ws)
-      o.exclude[p] = t.checked ? o.exclude[p].filter((e) => e !== id) : [...o.exclude[p], id]
-      x.accountSwitching = withAccountOverride(x.accountSwitching, ws, o)
-    })
-  }
+  else if (t.id === 's-acct-on') saveAccount({ kind: 'enabled', enabled: t.checked })
+  else if (t.dataset.acct) saveAccount({ kind: 'exclude', provider: t.dataset.acct as SwitchProvider, id: t.dataset.acctId!, excluded: !t.checked })
 }
 
 function onKey(e: KeyboardEvent): void {
