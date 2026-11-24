@@ -251,32 +251,33 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     const act = (id) => $('[data-gopen="' + id + '"]')?.parentElement?.querySelector(':scope > .gact');
     const word = (id) => act(id)?.textContent.trim();
     const shown = (id) => !!act(id) && getComputedStyle(act(id)).display !== 'none';
-    // The room the title line keeps for the pill (its spacer), and whether the pill shares that one line with the
-    // avatars and the progress ring: the same vertical center, after them, the title ending before them, and the Next
-    // text on its own full-width line below.
-    const room = (id) => parseFloat(getComputedStyle(row(id), '::after').width) || 0;
+    // The width the row's button gives up for the pill, and whether the cluster is one row centered in the goal row:
+    // avatar, progress ring and pill share one vertical center, which is the row's center (within 1 px), the pill comes
+    // after the ring, and the title and the Next text both end before the cluster.
+    const room = (id) => Math.round(act(id).parentElement.getBoundingClientRect().width - row(id).getBoundingClientRect().width);
     const oneLine = (id) => {
       const r = (el) => el.getBoundingClientRect(), mid = (b) => b.top + b.height / 2;
-      const p = r(act(id)), ring = r(row(id).querySelector('.gprogress')), ti = r(row(id).querySelector('.ti')), nx = r(row(id).querySelector('.nx'));
+      const box = r(act(id).parentElement), p = r(act(id)), ring = r(row(id).querySelector('.gprogress')), ti = r(row(id).querySelector('.ti')), nx = r(row(id).querySelector('.nx'));
       const who = row(id).querySelector('.who') && r(row(id).querySelector('.who'));
-      const checks = { pillOnRingLine: Math.abs(mid(p) - mid(ring)) <= 1, avatarOnRingLine: !who || Math.abs(mid(who) - mid(ring)) <= 1.5, pillAfterRing: p.left >= ring.right + 2,
-        titleBeforeCluster: ti.right <= (who || ring).left, nextBelow: nx.top >= Math.max(p.bottom, ring.bottom) - 1, nextFullWidth: Math.abs(nx.right - p.right) <= 1 && Math.abs(nx.left - ti.left) <= 1 };
+      const center = mid(box), first = who || ring;
+      const checks = { pillAtRowCenter: Math.abs(mid(p) - center) <= 1, ringAtRowCenter: Math.abs(mid(ring) - center) <= 1, avatarAtRowCenter: !who || Math.abs(mid(who) - center) <= 1,
+        pillAfterRing: p.left >= ring.right + 2, titleBeforeCluster: ti.right <= first.left, nextBeforeCluster: nx.right <= first.left, pillInRow: p.right <= box.right };
       const bad = Object.keys(checks).filter((k) => !checks[k]);
-      return bad.length ? 'not one line: ' + bad.join(', ') + ' ' + JSON.stringify({ p: [p.left, p.top, p.right, p.bottom], ring: [ring.left, ring.top, ring.right, ring.bottom], nx: [nx.left, nx.top, nx.right] }) : '';
+      return bad.length ? 'not one centered row: ' + bad.join(', ') + ' ' + JSON.stringify({ box: [box.top, box.bottom], p: [p.left, p.top, p.right, p.bottom], ring: [ring.left, ring.top, ring.right, ring.bottom] }) : '';
     };
     ok(word('g_super-admin') === 'Jump' && word('g_lesson-splitting') === 'Jump' && !!act('g_super-admin').querySelector('svg'), 'Jump → for a working agent and for one waiting for the user');
     ok(word('g_shift-scheduling') === 'Assign', 'Assign → when nobody is on the step');
     ok(word('g_onboarding-review') === 'Jump' && act('g_onboarding-review').getAttribute('aria-label') === 'Jump to des-360 lead' && !row('g_onboarding-review').querySelector('.who'), 'agents that are done but live still count: Jump → to the worktree lead, with no working avatar');
     ok(act('g_super-admin').classList.contains('send') && act('g_super-admin').classList.contains('pill') && act('g_super-admin').getAttribute('aria-label').startsWith('Jump to ') && act('g_shift-scheduling').getAttribute('aria-label') === 'Assign the next step to a coordinator', 'the Linear Send pill, the full meaning in the label');
-    ok(!shown('g_super-admin') && !shown('g_shift-scheduling') && room('g_super-admin') === 0 && room('g_shift-scheduling') === 0, 'at rest: no buttons, the Next text has the whole width');
+    ok(!shown('g_super-admin') && !shown('g_shift-scheduling') && room('g_super-admin') === 0 && room('g_shift-scheduling') === 0, 'at rest: no buttons, the row button (title and Next) has the whole width');
     row('g_shift-scheduling').focus({ focusVisible: true }); await wait();
     ok(shown('g_shift-scheduling') && room('g_shift-scheduling') > 0 && !shown('g_super-admin'), 'keyboard focus on a row shows its button and makes room for it');
     let line = oneLine('g_shift-scheduling');
-    ok(!line, 'Assign → shares one line with the progress ring; the Next line keeps the full width ' + line);
+    ok(!line, 'Assign → shares one centered row with the progress ring; title and Next end before it ' + line);
     row('g_shift-scheduling').blur(); await wait();
     row('g_super-admin').focus({ focusVisible: true }); await wait();
     line = oneLine('g_super-admin');
-    ok(shown('g_super-admin') && !line, 'Jump → after the avatar and the progress ring, all on the title line ' + line);
+    ok(shown('g_super-admin') && !line, 'Jump → after the avatar and the progress ring, one row centered in the goal row ' + line);
     row('g_super-admin').blur(); await wait();
     ok(!act('g_lawyer-intro') && !row('g_lawyer-intro').closest('.gline'), 'no button for a goal with no Next step');
     ok(!$('.gact[data-gjump="g_pdf-export"],.gact[data-gassign="g_pdf-export"]'), 'no button for a done goal');
@@ -307,7 +308,7 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     before = previewCalls.length;
     items[0].click(); await wait(60);
     const pend = act('g_shift-scheduling');
-    ok(pend?.textContent === 'Assigning…' && pend.tagName === 'SPAN' && shown('g_shift-scheduling') && room('g_shift-scheduling') > 0 && !oneLine('g_shift-scheduling'), 'Assigning… shows without hover, on the title line, while it is sent, and there is nothing to press ' + oneLine('g_shift-scheduling'));
+    ok(pend?.textContent === 'Assigning…' && pend.tagName === 'SPAN' && shown('g_shift-scheduling') && room('g_shift-scheduling') > 0 && !oneLine('g_shift-scheduling'), 'Assigning… shows without hover, in the centered cluster, while it is sent, and there is nothing to press ' + oneLine('g_shift-scheduling'));
     const req = previewCalls.slice(before).find((c) => c.name === 'sidebar.goalAssign');
     ok(req?.data.id === 'g_shift-scheduling' && req.data.coordinator === 'home' && req.data.next === step && previewDelivered.at(-1)?.next === step, 'delivery request carries the exact Next text: ' + JSON.stringify(req?.data));
     await wait(700);

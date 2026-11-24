@@ -191,7 +191,7 @@ const completedDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 
 
 /**
  * One goal: its title and step count, and under it the next step (or "lead says done" while an agent proposes it).
- * `button` (nextButton) ends the title line, after the avatars and progress, beside the row's button (not inside it).
+ * `button` (nextButton) ends the right-hand cluster, after the avatars and progress, beside the row's button (not inside it).
  */
 export function goalRow(g: GoalView, open: string | null, avatars = '', button: NextButton | null = null): string {
   const done = g.status === 'done'
@@ -204,7 +204,7 @@ export function goalRow(g: GoalView, open: string | null, avatars = '', button: 
         : '<span class="nx none">No next step yet</span>'
   const detail = done ? `<span class="cnt">${completedDate.format(g.doneAt ?? g.updatedAt)}</span>` : stepProgress(g)
   const row = `<button class="g${done ? ' fin' : ''}${open === g.id ? ' menu-open' : ''}" data-gopen="${esc(g.id)}" aria-haspopup="dialog" aria-expanded="${open === g.id}"><span class="m"><span class="ti">${esc(g.title)}</span>${second}</span>${avatars}${detail}</button>`
-  return button && !done ? `<div class="gline gk-${button.kind}">${row}${nextButtonHtml(g, button)}</div>` : row
+  return button && !done ? `<div class="gline">${row}${nextButtonHtml(g, button)}</div>` : row
 }
 
 /** The store supplies completed goals in reverse completion order. Search the whole history before limiting the rows. */

@@ -135,7 +135,7 @@ test('an assignment for another Next text does not apply: Assign to coordinator 
 
 test('the button sits beside the row button (never inside it), so pressing it does not open the card', () => {
   const html = goalRow(view({ title: '<img src=x>' }), null, '', { kind: 'jump', target: { workspaceId: 'w', terminal: 't', paneKey: 'p', name: '<b>lead</b>' } })
-  assert.match(html, /^<div class="gline gk-jump"><button class="g"[^]*?<\/button><button class="gact act pill send" data-gjump=/)
+  assert.match(html, /^<div class="gline"><button class="g"[^]*?<\/button><button class="gact act pill send" data-gjump=/)
   assert.ok(!html.includes('<img') && !html.includes('<b>lead'), 'goal and agent names are escaped')
 })
 
