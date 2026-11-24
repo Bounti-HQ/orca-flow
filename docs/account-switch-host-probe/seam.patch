@@ -1,0 +1,157 @@
+diff --git a/src/main/claude-accounts/profiles/routing/claude-profile-installed-router.ts b/src/main/claude-accounts/profiles/routing/claude-profile-installed-router.ts
+index 27dd4db9..99b3dcf0 100644
+--- a/src/main/claude-accounts/profiles/routing/claude-profile-installed-router.ts
++++ b/src/main/claude-accounts/profiles/routing/claude-profile-installed-router.ts
+@@ -5,6 +5,7 @@ import type { ClaudeProfileRouter } from './claude-profile-router'
+ import type { ClaudeWslProfileRouter } from '../wsl/claude-profile-wsl-router'
+ import type { ClaudeAccountSelectionTarget } from '../../selection/runtime-selection'
+ import type { ClaudeObservedConfigDirs } from './claude-observed-config-dirs'
++import { CLAUDE_PINNED_ACCOUNT_ENV } from '../../../../shared/agent-accounts/claude/claude-profile-routing'
+ 
+ let installed: ClaudeProfileRouter | undefined
+ 
+@@ -41,6 +42,16 @@ export function withClaudeProfileTerminalEnv<Env extends Record<string, string>
+   env: Env,
+   target: ClaudeAccountSelectionTarget
+ ): Env | Record<string, string> {
++  // PROBE SEAM: a spawn that names its account runs on it, on the host runtime only; the marker
++  // never reaches the agent. An unknown or missing account throws: the spawn fails, never falls back.
++  const pinned = env?.[CLAUDE_PINNED_ACCOUNT_ENV]
++  if (pinned !== undefined) {
++    const { [CLAUDE_PINNED_ACCOUNT_ENV]: _pin, ...rest } = env as Record<string, string>
++    if (target.runtime === 'wsl' || !installed) {
++      throw new Error('claude_pinned_account_unavailable')
++    }
++    return { ...rest, ...installed.pinnedTerminalEnv(pinned) }
++  }
+   const profileEnv = installed?.terminalEnv(target)
+   return profileEnv ? { ...env, ...profileEnv } : env
+ }
+diff --git a/src/main/claude-accounts/profiles/routing/claude-profile-router.ts b/src/main/claude-accounts/profiles/routing/claude-profile-router.ts
+index 6dc87639..c3fbc4e4 100644
+--- a/src/main/claude-accounts/profiles/routing/claude-profile-router.ts
++++ b/src/main/claude-accounts/profiles/routing/claude-profile-router.ts
+@@ -268,6 +268,32 @@ export class ClaudeProfileRouter {
+     }
+   }
+ 
++  /** PROBE SEAM: env for one pane pinned to `accountId`. The pane gets its own pointer file, which
++   *  the stock shell function re-reads on every launch, so a later host switch does not move it and
++   *  this pin does not move any other pane. Refuses rather than falls back: a fallback would run
++   *  the wrong account. */
++  pinnedTerminalEnv(accountId: string): ClaudeEnvPatch {
++    if (!this.savedAccount(accountId)) {
++      throw new Error('claude_pinned_account_unknown')
++    }
++    const home = this.accountHome(accountId)
++    if (!isDirectory(home)) {
++      throw claudeProfileMissing()
++    }
++    const pointer = join(this.args.dataRoot, 'claude-profiles', 'pinned', accountId)
++    if (!existsSync(pointer) || readFileSync(pointer, 'utf8') !== home) {
++      mkdirSync(dirname(pointer), { recursive: true, mode: 0o700 })
++      writeFileAtomically(pointer, home, { mode: 0o600 })
++    }
++    const userConfigDir = readUserClaudeConfigDirAsSet(this.env)
++    return {
++      [CLAUDE_PROFILE_POINTER_ENV]: pointer,
++      ...(userConfigDir ? { [CLAUDE_USER_CONFIG_DIR_ENV]: userConfigDir } : {}),
++      CLAUDE_CONFIG_DIR: home,
++      [CLAUDE_INJECTED_CONFIG_DIR_ENV]: home
++    }
++  }
++
+   /** A broken account selection must not prevent opening a terminal. */
+   terminalEnv(target?: ClaudeAccountSelectionTarget): ClaudeEnvPatch {
+     // Pass the pointer without waiting on the guest.
+diff --git a/src/main/runtime/session-lifecycle/projection/restart-agent-pane-in-place.ts b/src/main/runtime/session-lifecycle/projection/restart-agent-pane-in-place.ts
+index 42a10b0f..fdf96994 100644
+--- a/src/main/runtime/session-lifecycle/projection/restart-agent-pane-in-place.ts
++++ b/src/main/runtime/session-lifecycle/projection/restart-agent-pane-in-place.ts
+@@ -6,6 +6,7 @@ import type { TuiAgent } from '../../../../shared/agent-launch/catalog/tui-agent
+ import type { WorktreeSleepResumeRecorder } from '../../terminal/stop/worktree-sleep-resume-records'
+ import type { AgentProviderSessionMetadata } from '../../../../shared/agent-session/lifecycle/agent-session-resume'
+ import type { AgentSessionResumeClaim } from './agent-session-resume-claims'
++import { CLAUDE_PINNED_ACCOUNT_ENV } from '../../../../shared/agent-accounts/claude/claude-profile-routing'
+ 
+ export type AgentPaneRestartRefusal =
+   /** Not a live terminal of this host's own (an SSH relay or another server's pane). */
+@@ -35,8 +36,14 @@ export abstract class OrcaRuntimeWithRestartAgentPaneInPlace extends OrcaRuntime
+   async restartAgentPaneInPlace(
+     ptyId: string,
+     session: { agent: TuiAgent; providerSession: AgentProviderSessionMetadata },
+-    stillCurrent: () => boolean | Promise<boolean> = () => true
++    stillCurrent: () => boolean | Promise<boolean> = () => true,
++    /** PROBE SEAM: run the new terminal on this managed account instead of the host selection. */
++    target?: { accountId: string }
+   ): Promise<AgentPaneRestartResult> {
++    // PROBE SEAM: Claude only; a target for another agent is refused before anything stops.
++    if (target && session.agent !== 'claude') {
++      return { ok: false, reason: 'no_resume_command' }
++    }
+     const pty = this.ptysById.get(ptyId)
+     const recorded = this.paneOfPty(pty)
+     const pane = parsePaneKey(recorded.paneKey ?? '')
+@@ -175,7 +182,9 @@ export abstract class OrcaRuntimeWithRestartAgentPaneInPlace extends OrcaRuntime
+           undefined,
+           {
+             command: resume.command,
+-            env: resume.env,
++            env: target
++              ? { ...resume.env, [CLAUDE_PINNED_ACCOUNT_ENV]: target.accountId }
++              : resume.env,
+             startupCommandDelivery: resume.startupCommandDelivery,
+             launchConfig: resume.launchConfig,
+             launchAgent: resume.launchAgent,
+diff --git a/src/main/runtime/terminal/lifecycle/pty-exit-lifecycle.ts b/src/main/runtime/terminal/lifecycle/pty-exit-lifecycle.ts
+index fd2b6492..66737809 100644
+--- a/src/main/runtime/terminal/lifecycle/pty-exit-lifecycle.ts
++++ b/src/main/runtime/terminal/lifecycle/pty-exit-lifecycle.ts
+@@ -130,6 +130,9 @@ export abstract class OrcaRuntimeWithOnPtyExit extends RuntimeTerminalWorkerMode
+     this.advancePtyLifecycleGeneration(ptyId)
+     let retirement: Promise<void> | undefined
+     let preservesIntentionallyStoppedSurface = false
++    // PROBE SEAM: a stop restartAgentPaneInPlace made ('replaced') hands a worker's Dispatch to the
++    // existing in-place hold instead of failing it; only that pane's own conversation takes it back.
++    let replacedInPlace = false
+     try {
+       const exactSurfaceByKey = new Map<
+         string,
+@@ -167,9 +170,12 @@ export abstract class OrcaRuntimeWithOnPtyExit extends RuntimeTerminalWorkerMode
+       }
+       const exactSurfaces = [...exactSurfaceByKey.values()]
+       // Why both kinds: a sleep keeps its wake hint, and a restart's replacement takes the pane.
+-      preservesIntentionallyStoppedSurface =
+-        this.intentionalPtyStops.claimExit(ptyId, exitIncarnationId ?? pty?.incarnationId).length >
+-        0
++      const intentionalKinds = this.intentionalPtyStops.claimExit(
++        ptyId,
++        exitIncarnationId ?? pty?.incarnationId
++      )
++      preservesIntentionallyStoppedSurface = intentionalKinds.length > 0
++      replacedInPlace = intentionalKinds.includes('replaced')
+       advertisedUrlWatcher.unbindPty(ptyId)
+       this.mobileSubscribers.delete(ptyId)
+       this.terminalViewSubscribers.clearSubscribers(ptyId)
+@@ -309,7 +315,8 @@ export abstract class OrcaRuntimeWithOnPtyExit extends RuntimeTerminalWorkerMode
+     }
+     for (const surface of preservesAbnormalSshSurface ? [] : exitedSurfaces) {
+       this.failActiveDispatchOnExit(surface.handle, surface.paneKey, exitCause, lastOutput, {
+-        paneRespawning: options.paneRespawning === true && pty?.connectionId == null
++        paneRespawning:
++          (options.paneRespawning === true || replacedInPlace) && pty?.connectionId == null
+       })
+     }
+     // A restart, sleep or recovery in place keeps a coordinator's Runs; any other end retires them.
+diff --git a/src/shared/agent-accounts/claude/claude-profile-routing.ts b/src/shared/agent-accounts/claude/claude-profile-routing.ts
+index 6b1294f2..2e259ba9 100644
+--- a/src/shared/agent-accounts/claude/claude-profile-routing.ts
++++ b/src/shared/agent-accounts/claude/claude-profile-routing.ts
+@@ -12,3 +12,7 @@ export const CLAUDE_PROFILE_MISSING_MESSAGE =
+ 
+ export const CLAUDE_PROFILE_SETUP_FAILED_MESSAGE =
+   'The selected Claude account could not be set up. Try again or choose another account.'
++
++/** PROBE SEAM: names the managed account one spawn must run on, whatever the host selection is.
++ *  Read and removed by main before the spawn; never reaches the agent. */
++export const CLAUDE_PINNED_ACCOUNT_ENV = 'ORCA_CLAUDE_PINNED_ACCOUNT_ID'
