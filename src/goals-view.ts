@@ -123,10 +123,10 @@ export function nextButtonHtml(g: Pick<GoalView, 'id'>, b: NextButton | null): s
   if (b.kind === 'pending') return '<span class="gact rstatus pending" role="status"><span class="refreshing"></span>Assigning…</span>'
   if (b.kind === 'jump') {
     const tip = esc(`Jump to ${b.target.name}`)
-    return `<button class="gact act pill send" data-gjump="${esc(g.id)}" data-tip="${tip}" aria-label="${tip}">Jump ${ARROW}</button>`
+    return `<button class="gact act pill send" data-gjump="${esc(g.id)}" aria-label="${tip}">Jump ${ARROW}</button>`
   }
   const tip = 'Assign the next step to a coordinator'
-  return `<button class="gact act pill send" data-gassign="${esc(g.id)}" aria-haspopup="menu" aria-expanded="false" data-tip="${tip}" aria-label="${tip}">Assign ${ARROW}</button>`
+  return `<button class="gact act pill send" data-gassign="${esc(g.id)}" aria-haspopup="menu" aria-expanded="false" aria-label="${tip}">Assign ${ARROW}</button>`
 }
 
 /** The text a coordinator gets: the exact step, the goal for context, and the commands to keep the goal current. Goal text is data, quoted, on one line each. */

@@ -46,7 +46,7 @@ test('a working agent on a linked worktree: Jump to agent, to its exact workspac
   assert.deepEqual(b?.kind === 'jump' && b.target, { workspaceId: 'identity:des-340', terminal: 'term-w2', paneKey: 'w2', name: 'agent w2' }, 'the working agent before the waiting one')
   const html = nextButtonHtml(view(), b)
   assert.match(html, /^<button class="gact act pill send" data-gjump="g_ship"[^>]*>Jump <svg[^]*<\/svg><\/button>$/, 'the Linear row\'s Send pill: one word and the arrow')
-  assert.match(html, /data-tip="Jump to agent w2" aria-label="Jump to agent w2"/, 'the full meaning in the tooltip and accessible name')
+  assert.match(html, /aria-label="Jump to agent w2">/, 'the full meaning in the accessible name, no tooltip')
 })
 
 test('an agent waiting for the user (a question or a permission prompt) is on the step too', () => {
@@ -105,7 +105,7 @@ test('nobody on the step: Assign to coordinator', () => {
   assert.equal(nextButton(view(), snap([row('identity:des-340', [agent('w1', 'working', { terminal: null })])]))?.kind, 'assign', 'no terminal to focus')
   const html = nextButtonHtml(view(), { kind: 'assign' })
   assert.match(html, /^<button class="gact act pill send" data-gassign="g_ship"[^>]*>Assign <svg[^]*<\/svg><\/button>$/)
-  assert.match(html, /aria-haspopup="menu" aria-expanded="false" data-tip="Assign the next step to a coordinator" aria-label="Assign the next step to a coordinator"/)
+  assert.match(html, /aria-haspopup="menu" aria-expanded="false" aria-label="Assign the next step to a coordinator"/)
 })
 
 test('a done goal, a proposed one, and one with no Next step show no button', () => {
