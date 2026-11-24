@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Account switching · Orca Flow prototype</title>
+<style>
+:root{color-scheme:dark;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#efefef;background:#17181b;--line:#343539;--muted:#a8a9af;--accent:#efae85}
+*{box-sizing:border-box}body{margin:0}button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}button:disabled,select:disabled{cursor:default;opacity:.5}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #edbb99;outline-offset:3px}button,select{border:1px solid var(--line);border-radius:7px;background:#292a2d;padding:7px 11px}button:hover:enabled{background:#3a3a3e}.primary{background:#edbc9d;color:#24180f;border-color:transparent;font-weight:600}.primary:hover:enabled{background:#ffd2b2}header{height:47px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:13px;padding:0 22px;background:#1c1d20}.dots{display:flex;gap:6px}.dots i{width:9px;height:9px;border-radius:100%;background:#545559}.crumb{color:#aaa;font-size:13px}.crumb b{color:#e2e3e4;font-weight:550}.canvas{display:grid;place-items:center;padding:35px 20px 125px;min-height:calc(100vh - 47px);background:radial-gradient(ellipse at center,#26272c,transparent 71%)}.surface{width:min(100%,760px);box-shadow:0 18px 65px #09090b88;border:1px solid #414147;border-radius:13px;background:#151517;overflow:hidden}.layout{display:grid;grid-template-columns:minmax(135px,.68fr) minmax(0,1.4fr)}aside{padding:18px 11px;background:#1e1e21;border-right:1px solid var(--line)}.sect,.meta,small{color:var(--muted);font-size:12px}.sect{display:block;margin:0 9px 12px;font-weight:600}.nav{width:100%;display:flex;align-items:center;gap:9px;background:transparent;border:0;text-align:left;padding:10px;margin:1px 0}.nav.active{background:#353539}.nav svg,.logo svg{height:19px;width:19px;display:block}.nav small{margin-left:auto}.mark{display:inline-flex;vertical-align:middle}.mark svg{width:17px;height:17px}.claude{color:#df966f}.codex{color:#bbc7ce}.pad{padding:21px}.head,.row,.actions,.sectionHead{display:flex;align-items:center;justify-content:space-between;gap:12px}.head{margin-bottom:16px}.head h1,.head h2{margin:0}h1{font-size:21px;letter-spacing:-.5px}h2{font-size:16px}.logo{display:inline-flex;align-items:center;gap:8px}.group{border:1px solid var(--line);border-radius:9px;overflow:hidden}.row{padding:11px 13px}.row+.row{border-top:1px solid #303035}.row b{font-weight:550}.row small,.account small{display:block;margin-top:2px}.row .meta{white-space:nowrap}.meter{display:block;height:4px;border-radius:4px;background:#363639;margin:8px 0 1px;overflow:hidden}.meter i{display:block;height:100%;background:#eb9e78}.usage{padding:12px 13px}.sectionHead{margin:17px 0 7px;color:#adaeb5;font-size:12px}.lineBtn{width:100%;border:0;background:transparent;text-align:left}.actions{margin-top:17px}.actions .meta{flex:1}.desc{color:#b2b2b8;margin:3px 0 15px}.scope{font-size:12px;color:#c3c3c8;text-align:right}.account{display:flex;align-items:center;gap:9px}.account input{accent-color:var(--accent);width:16px;height:16px}.preview{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;padding:8px 10px;max-width:97vw;width:max-content;border-radius:12px;border:1px solid #57575e;background:#242428;box-shadow:0 6px 24px #0008;flex-wrap:wrap;justify-content:center}.preview strong{font-size:12px}.preview select,.preview button{padding:5px 8px;font-size:12px}.preview label{color:#bbb;font-size:11px}.preview label select{margin-left:4px}.feedback{margin:13px 0 0;padding:10px 12px;border-left:2px solid var(--accent);background:#262324;font-size:13px}.chat{max-width:590px}.chat .head{padding-bottom:14px;border-bottom:1px solid var(--line)}.msg{margin:0 0 18px;color:#c5c6cb}.check{color:#acbda8}.tag{font-size:12px;color:#ccc}.hint{margin-top:12px}.back{border:0;background:transparent;padding:0;color:var(--accent);margin-bottom:9px}.plain{border:0;background:transparent}.empty{padding:15px 13px;color:#c3c3c7}.preview .key{min-width:103px;text-align:center}
+@media(max-width:580px){.canvas{padding:14px 9px 155px;align-items:start}.layout{display:block}aside{display:flex;align-items:center;border-right:0;border-bottom:1px solid var(--line);padding:5px}.sect{margin:0 7px}.nav{width:auto;padding:7px}.nav small{display:none}.pad{padding:15px}.preview{gap:4px}.scope{max-width:125px}.row{padding:9px}.actions{flex-wrap:wrap}header{padding:0 12px}}
+</style>
+<header><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="crumb">Orca Flow &nbsp; / &nbsp; <b>Atlas workspace</b></span></header>
+<main class="canvas"><div id="surface" class="surface"></div></main>
+<footer class="preview" aria-label="Prototype controls"><strong>UX draft · sample data</strong>
+<button id="prev" aria-label="Previous design">←</button><b class="key" id="variantName"></b><button id="next" aria-label="Next design">→</button>
+<label>Provider<select id="provider"><option>Claude</option><option>Codex</option></select></label>
+<label>Accounts<select id="count"><option value="multi">Multiple</option><option value="one">One</option><option value="zero">None</option></select></label>
+<label>Limit<select id="limit"><option value="account">Account</option><option value="all">All accounts</option><option value="org">Shared organization</option><option value="retry">Transient retry</option></select></label>
+<button id="simulate">Preview limit</button></footer>
+<script>
+// Three placements for choosing which same-provider accounts may receive a workspace conversation.
+// Standalone design fixture. No account reads, auth, network calls, storage or host bridge.
+const $ = id => document.getElementById(id);
+const variants=['usage','settings','conversation'], titles=['Usage menu','Settings','At the limit'];
+const names={Claude:['Studio','Studio backup'], Codex:['Studio','Studio backup','Personal']};
+const fixture={Claude:[64,12],Codex:[38,19,7]};
+const allowed={Claude:new Set(),Codex:new Set()};
+let variant=variants.includes(new URLSearchParams(location.search).get('variant'))?new URLSearchParams(location.search).get('variant'):'usage';
+let editor=false, incident=false, message='', picks=new Set(), current=0, tried=new Set();
+function accounts(){const list=names[$('provider').value];return $('count').value==='multi'?list:$('count').value==='one'?list.slice(0,1):[]}
+const marks={"claude": "<svg viewBox=\"0 0 24 24\" fill=\"#D97757\" aria-hidden=\"true\"><path d=\"m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z\"/></svg>", "codex": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z\"/></svg>"};
+function mark(p){return '<span class="mark '+p.toLowerCase()+'" aria-hidden="true">'+marks[p.toLowerCase()]+'</span>'}
+function nav(){return '<aside><span class="sect">'+(variant==='settings'?'Settings':'Usage')+'</span>'+Object.keys(names).map(p=>'<button class="nav '+(p===$('provider').value?'active':'')+'" data-provider="'+p+'">'+mark(p)+p+'</button>').join('')+'</aside>'}
+function listRow(label,value){return '<div class="row"><span>'+label+'</span><small>'+value+'</small></div>'}
+function heading(title){return '<div class="head"><h1>'+title+'</h1><span class="scope">Atlas workspace</span></div>'}
+function hint(text){return '<div class="feedback" role="status">'+text+'</div>'}
+function empty(n,p){return '<div class="empty">'+(n===0?'No managed '+p+' accounts.':'Only one distinct '+p+' account.')+' Add another login in Orca’s Manage Accounts to set up switching.</div>'}
+function identity(i){if(i===2)return 'Personal workspace';return i===1&&$('provider').value==='Claude'?'Studio team · Also system default':'Studio team'}
+function introduction(){return 'Choose which accounts may receive this workspace’s conversation history and continue its tasks after an account limit.'}
+function edit(){picks=new Set(allowed[$('provider').value]);editor=true;message='';render()}
+function settingsForm(list,p){
+ return heading('Automatic switching')+'<p class="desc">'+introduction()+'</p><div class="sectionHead"><b>'+mark(p)+' '+p+' accounts</b><span>This Mac</span></div><div class="group">'+(list.length<2?empty(list.length,p):list.map((name,i)=>'<label class="row"><span class="account"><input type="checkbox" data-pick="'+i+'" '+(picks.has(i)?'checked':'')+'><span><b>'+name+'</b><small>'+identity(i)+'</small></span></span><small>'+(i===current?'In use':'')+'</small></label>').join(''))+'</div><div class="actions"><span class="meta">'+(list.length<2?'Switching unavailable':picks.size>1?picks.size+' accounts can share tasks in Atlas.':picks.size===1?'Choose at least two accounts.':'Automatic switching is off.')+'</span><button class="primary" data-action="save" '+(list.length<2||picks.size===1?'disabled':'')+'>Save</button></div>'
+}
+function usage(list,p){
+ const active=list[current],used=fixture[p][current];
+ return '<div class="head"><h1 class="logo">'+mark(p)+p+'</h1><span class="meta">Usage · This Mac</span></div>'+
+ (active?'<div class="group usage"><div class="head"><b>'+active+'</b><small>Current account</small></div><div class="row" style="padding:0"><small>Weekly · resets in 4 days</small><b>'+used+'%</b></div><span class="meter"><i style="width:'+used+'%"></i></span></div>':'')+
+ '<div class="sectionHead"><b>Accounts</b><span>Used</span></div><div class="group">'+(list.length?list.map((name,i)=>listRow('<b>'+name+'</b><small>'+identity(i)+(i===current?' · In use':'')+'</small>',fixture[p][i]+'%')).join(''):empty(0,p))+'</div>'+
+ (list.length>1?'<div class="sectionHead"><b>Atlas workspace</b></div><div class="group"><button class="row lineBtn" data-action="edit"><b>Automatic switching</b><span class="meta">'+(allowed[p].size?allowed[p].size+' accounts':'Set up')+' &nbsp;›</span></button></div>':list.length===1?'<p class="meta">Add another managed login to enable switching.</p>':'')
+}
+function groupExhausted(list,p){const g=allowed[p];return g.has(current)&&!list.some((_,i)=>i!==current&&!tried.has(i)&&g.has(i))}
+function conversation(list,p){
+ let outcome='', choice='';
+ const type=$('limit').value, group=allowed[p], candidates=list.map((_,i)=>i).filter(i=>i!==current&&!tried.has(i)&&(!group.has(current)||group.has(i)));
+ if(message) outcome=message;
+ else if(!list.length) outcome='No managed '+p+' account is available.';
+ else if(type==='retry') outcome=p+' is retrying a temporary request failure on '+list[current]+'.';
+ else if(type==='org'||type==='all') outcome=(type==='org'?'The shared organization allowance is exhausted.':'All eligible accounts are limited.')+' Work is paused. Next reset in 45 min.';
+ else if(candidates.length===0||groupExhausted(list,p)) outcome='No eligible backup is available. Work is paused until reset in 45 min.';
+ else {
+   outcome=list[current]+' reached its account limit. Resets in 45 min.';
+   choice='<p class="desc">Choose an account to receive this conversation and continue this task.</p><div class="group">'+candidates.map(i=>'<button class="row lineBtn" data-once="'+i+'"><span><b>'+list[i]+'</b><small>'+identity(i)+'</small></span><small>Use once ›</small></button>').join('')+'</div><div class="actions"><button data-action="wait">Wait for reset</button><button data-action="edit">Set up automatic switching</button></div>';
+ }
+ return '<div class="head"><h2 class="logo">'+mark(p)+' '+p+' · Update onboarding</h2><span class="scope">Atlas · Lead</span></div><p class="msg">I updated the onboarding form. The remaining step is to check the validation tests.</p>'+hint(outcome)+choice;
+}
+function render(){
+ const p=$('provider').value,list=accounts(),panel=$('surface');
+ const chat=!editor&&(incident||variant==='conversation');
+ panel.className='surface '+(chat?'chat pad':'layout');
+ let body=chat?conversation(list,p):editor||variant==='settings'?settingsForm(list,p):usage(list,p);
+ if(!chat && editor && variant!=='settings')body='<button class="back" data-action="back">‹ Back</button>'+body;
+ if(!chat && message)body+=hint(message);
+ panel.innerHTML=chat?body:nav()+'<div class="pad">'+body+'</div>';
+ $('variantName').textContent=titles[variants.indexOf(variant)];
+}
+function resetView(){editor=false;incident=false;message='';current=0;tried=new Set();picks=new Set(allowed[$('provider').value]);render()}
+function cycle(dir){variant=variants[(variants.indexOf(variant)+dir+3)%3];const url=new URL(location.href);url.searchParams.set('variant',variant);history.replaceState(null,'',url);resetView()}
+function simulate(){
+ const p=$('provider').value,list=accounts(),group=allowed[p];
+ if($('limit').value==='account')tried.add(current);
+ const next=list.findIndex((_,i)=>i!==current&&!tried.has(i)&&group.has(i));
+ incident=true;editor=false;message='';
+ if($('limit').value==='account'&&group.has(current)&&next>=0){const previous=list[current];current=next;message='Continued on '+list[next]+' after '+previous+' reached its limit. Same conversation and task.'}
+ render()
+}
+$('surface').onclick=e=>{
+ const button=e.target.closest('button');if(!button)return;
+ const p=$('provider').value;
+ if(button.dataset.provider){$('provider').value=button.dataset.provider;resetView();return}
+ if(button.dataset.once!==undefined){tried.add(current);current=Number(button.dataset.once);message='Continued on '+accounts()[current]+' for this task.';render();return}
+ switch(button.dataset.action){
+ case 'edit': edit();break;
+ case 'back': editor=false;message='';render();break;
+ case 'save': allowed[p]=new Set(picks);editor=false;message=picks.size?'Automatic switching enabled for '+p+' in Atlas.':'Automatic switching turned off.';if(incident||variant==='conversation'){simulate()}else render();break;
+ case 'wait': message='Waiting for the reset in 45 min. This task stays in its conversation.';render();break;
+ }
+};
+$('surface').onchange=e=>{if(!e.target.matches('[data-pick]'))return;const i=Number(e.target.dataset.pick);e.target.checked?picks.add(i):picks.delete(i);render();document.querySelector('[data-pick="'+i+'"]')?.focus()};
+$('prev').onclick=()=>cycle(-1);$('next').onclick=()=>cycle(1);$('simulate').onclick=simulate;
+$('provider').onchange=resetView;$('count').onchange=()=>{allowed[$('provider').value].clear();resetView()};$('limit').onchange=()=>{message='';render()};
+document.addEventListener('keydown',e=>{if(e.target.closest('input,select,textarea,[contenteditable]'))return;if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();cycle(e.key==='ArrowLeft'?-1:1)}});
+resetView()
+</script></html>
