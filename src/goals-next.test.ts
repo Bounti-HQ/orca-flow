@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { add, get, update } from '../skills/orca-flow/scripts/goals.mjs'
 import type { AssignedSession, GoalAssignment } from '../skills/orca-flow/scripts/goals.d.mts'
-import { goalRow, goalStepMessage, jumpTarget, liveCoordinators, nextButton, nextButtonHtml, type GoalView } from './goals-view.ts'
+import { goalRow, goalStepMessage, goalViews, jumpTarget, liveCoordinators, nextButton, nextButtonHtml, type GoalView } from './goals-view.ts'
 import { applyGoalAction, assignNext, readGoals, type AssignIo } from './goals.ts'
 import { emptyUi, render } from './view.ts'
 import type { AgentInfo, Coordinator, Snapshot, WorkspaceRow } from './protocol.ts'
@@ -69,11 +69,39 @@ test('after a handover the jump follows the coordinator to its new current sessi
   assert.equal(b?.kind === 'jump' && b.target.terminal, 'term-new')
 })
 
+test('an agent that worked on the step and is still live counts: a done lead gives Jump →', () => {
+  const lead = agent('lead', 'done')
+  const worker = agent('worker', 'done', { parentPane: 'lead', summary: { updatedAt: NOW } as AgentInfo['summary'] })
+  const b = nextButton(view(), snap([row('identity:des-340', [worker, lead])]))
+  assert.equal(b?.kind === 'jump' && b.target.terminal, 'term-lead', 'the worktree lead, not the agent it dispatched')
+  assert.equal(jumpTarget(view(), snap([row('identity:des-340', [agent('lead', 'done', { live: false }), worker])]))?.terminal, 'term-worker', 'the lead\'s session is closed: another live agent there')
+  const older = agent('a', 'done', { parentPane: 'gone-lead', summary: { updatedAt: NOW - 60_000 } as AgentInfo['summary'] })
+  const newer = agent('b', 'done', { parentPane: 'gone-lead', summary: { updatedAt: NOW } as AgentInfo['summary'] })
+  assert.equal(jumpTarget(view(), snap([row('identity:des-340', [agent('gone-lead', 'done', { live: false }), older, newer])]))?.terminal, 'term-b', 'most recently active first')
+})
+
+test('a working agent beats a done lead; an agent waiting for the user beats it too', () => {
+  const lead = agent('lead', 'done')
+  assert.equal(jumpTarget(view(), snap([row('identity:des-340', [lead, agent('w', 'working', { parentPane: 'lead' })])]))?.terminal, 'term-w')
+  assert.equal(jumpTarget(view(), snap([row('identity:des-340', [lead, agent('q', 'waiting', { parentPane: 'lead' })])]))?.terminal, 'term-q')
+  const s = snap([row('identity:des-340', [lead])], [coordinator('home', agent('cpane', 'done', { terminal: 'term-c' }))])
+  assert.equal(jumpTarget(view({ assigned: assigned() }), s)?.terminal, 'term-lead', 'an agent on the worktree before the assigned coordinator')
+})
+
+test('the avatars stay working-only: a done lead is a jump target but not an avatar', () => {
+  const rows = [row('identity:des-340', [agent('lead', 'done')])]
+  assert.deepEqual(goalViews([view()], rows)[0].workingPanes, [])
+  assert.equal(jumpTarget(view(), snap(rows))?.paneKey, 'lead')
+})
+
 test('nobody on the step: Assign to coordinator', () => {
-  const idle = snap([row('identity:des-340', [agent('w1', 'done')]), row('identity:other', [agent('w2', 'working')])])
-  assert.equal(nextButton(view(), idle)?.kind, 'assign', 'done agents and agents elsewhere do not count')
+  const elsewhere = snap([row('identity:des-340', [agent('w1', 'done', { live: false })]), row('identity:other', [agent('w2', 'working')])])
+  assert.equal(nextButton(view(), elsewhere)?.kind, 'assign', 'a closed session on the linked worktree and agents elsewhere do not count')
   assert.equal(nextButton(view({ links: { linear: [], worktrees: [] } }), snap())?.kind, 'assign', 'no links at all')
+  assert.equal(nextButton(view(), snap([row('identity:other', [agent('w2', 'working')])]))?.kind, 'assign', 'a linked worktree that was removed')
+  assert.equal(nextButton(view(), snap([row('identity:des-340', [])]))?.kind, 'assign', 'a linked worktree with no agent')
   assert.equal(nextButton(view(), snap([row('identity:des-340', [agent('w1', 'working', { live: false })])]))?.kind, 'assign', 'a pane without a live session')
+  assert.equal(nextButton(view(), snap([row('identity:des-340', [agent('w1', 'done', { live: undefined })])]))?.kind, 'assign', 'a done agent with no evidence its session is live')
   assert.equal(nextButton(view(), snap([row('identity:des-340', [agent('w1', 'working', { terminal: null })])]))?.kind, 'assign', 'no terminal to focus')
   const html = nextButtonHtml(view(), { kind: 'assign' })
   assert.match(html, /^<button class="gact act pill send" data-gassign="g_ship"[^>]*>Assign <svg[^]*<\/svg><\/button>$/)

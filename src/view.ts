@@ -11,7 +11,7 @@ import type { AgentInfo, Bot, Capacity, CockpitStats, Coordinator, LinearData, L
 import { AGY_WAITING_TIP, CODEX_WAITING_TIP, RELOAD_TIP, reloadSummary, visibleReload } from './skill-reload.ts'
 import { mixedProviders, providerBadge, providerMark, providerOf } from './providers.ts'
 import { PROVIDER_LOGOS } from './provider-logos.ts'
-import { asksYou, byUrgency, canRemove, claimsAsk, holdsWorkstream, laterAsk, monitoring, needsYou, waitingQueue } from './rank.ts'
+import { asksYou, byUrgency, canRemove, claimsAsk, holdsWorkstream, laterAsk, monitoring, needsYou, waitingQueue, worktreeLead } from './rank.ts'
 import { BEAMS, capGlyph, headLines, nodeX, rowLines, trunkX, type NodeState } from './lines.ts'
 import { COMPLETED_BATCH, goalsHead, goalsRows, nextButton, type GoalView } from './goals-view.ts'
 import { ARROW } from './icons.ts'
@@ -1014,9 +1014,8 @@ export function isCurrent(a: AgentInfo, row: WorkspaceRow, focused: string[] | n
   return worktreeLead(row)?.paneKey === a.paneKey
 }
 
-/** The agent no other agent in its worktree dispatched (the first, when several were started by hand). */
-export const worktreeLead = (row: WorkspaceRow): AgentInfo | undefined =>
-  row.agents.find((a) => ![a.leadPane, a.parentPane].some((p) => p && row.agents.some((b) => b.paneKey === p)))
+/** The agent no other agent in its worktree dispatched (rank.ts; goals-view.ts uses it too). */
+export { worktreeLead }
 
 /** A coordinator's row is current when its own session's tab is in front (or, focus known only by workspace, its folder is focused). */
 const coordinatorCurrent = (c: Coordinator, focused: string[] | null | undefined) =>

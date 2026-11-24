@@ -4,6 +4,7 @@
 import type { Goal, GoalAssignment } from '../skills/orca-flow/scripts/goals.d.mts'
 import type { AgentInfo, Coordinator, Snapshot, WorkspaceRow } from './protocol.ts'
 import { ARROW } from './icons.ts'
+import { worktreeLead } from './rank.ts'
 
 /**
  * A goal as the panel gets it: the stored goal, the agents working on its linked worktrees, and the
@@ -48,8 +49,8 @@ export function goalViews(goals: Goal[], rows: Pick<WorkspaceRow, 'id' | 'path' 
 
 // ---------- the Next step's button: Jump to agent, or Assign to coordinator ----------
 
-/** An agent in one of these states is on the goal's step: working, or waiting for the user (a question, a permission prompt). */
-const ON_STEP: AgentInfo['state'][] = ['working', 'waiting', 'blocked']
+/** Waiting for the user: a question, or a permission prompt. */
+const ASKING: AgentInfo['state'][] = ['waiting', 'blocked']
 
 /** Where Jump to agent goes: an exact live session (its workspace and terminal), checked against a snapshot. */
 export type JumpTarget = { workspaceId: string; terminal: string; paneKey: string; name: string; coordinator?: string }
@@ -72,15 +73,27 @@ export function coordinatorTarget(c: Coordinator | undefined, gone: ReadonlySet<
 export const liveCoordinators = (snap: SnapLike): Coordinator[] => snap.coordinators.filter((c) => coordinatorTarget(c))
 
 /**
- * Who is on the goal's Next step right now, by the given snapshot: an agent on a linked worktree that
- * is working (first) or waiting for the user, else the coordinator the current step was assigned to,
- * at its current live session. Sessions in `gone` (seen dead) are skipped. Null: nobody.
+ * Who is on the goal's Next step right now, by the given snapshot. Among the agents on its linked worktrees that still
+ * have a live session (never a closed one): one working; else one waiting for the user; else a worktree's lead in any
+ * other state (it worked on the step and is done, waiting for review); else any other live agent there, most recently
+ * active first. Else the coordinator the current step was assigned to, at its current live session. Sessions in `gone`
+ * (seen dead) are skipped. Null (Assign →): no linked worktree, none that still exists, or no live agent on one.
+ * Working and asking agents count unless Orca says their session is closed; a done or idle one only with positive
+ * evidence that it is live.
  */
 export function jumpTarget(g: GoalView, snap: SnapLike, gone: ReadonlySet<string> = new Set()): JumpTarget | null {
   if (g.status === 'done') return null
-  const linked = snap.rows.filter((row) => !row.historical && g.links.worktrees.some((w) => linkedTo(w, row)))
-  const agents = linked.flatMap((row) => row.agents.filter((a) => ON_STEP.includes(a.state) && a.live !== false && !!a.terminal && !gone.has(a.terminal)).map((a) => ({ row, a })))
-  const pick = agents.find(({ a }) => a.state === 'working') ?? agents[0]
+  const linked = snap.rows
+    .filter((row) => !row.historical && g.links.worktrees.some((w) => linkedTo(w, row)))
+    .sort((x, y) => (y.lastActivityAt ?? 0) - (x.lastActivityAt ?? 0))
+  const open = (a: AgentInfo) => !!a.terminal && !gone.has(a.terminal) && (a.state === 'working' || ASKING.includes(a.state) ? a.live !== false : a.live === true)
+  const placed = linked.flatMap((row) => row.agents.filter(open).map((a) => ({ row, a })))
+  const recent = (x: (typeof placed)[number], y: (typeof placed)[number]) => (y.a.summary?.updatedAt ?? 0) - (x.a.summary?.updatedAt ?? 0)
+  const pick =
+    placed.find(({ a }) => a.state === 'working') ??
+    placed.find(({ a }) => ASKING.includes(a.state)) ??
+    placed.find(({ row, a }) => worktreeLead(row)?.paneKey === a.paneKey) ??
+    [...placed].sort(recent)[0]
   if (pick) return { workspaceId: pick.row.id, terminal: pick.a.terminal!, paneKey: pick.a.paneKey, name: pick.a.title || pick.row.name }
   const a = g.assigned
   if (!a || a.state === 'pending' || a.next !== g.next) return null

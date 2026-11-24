@@ -41,7 +41,13 @@ const snapshot = {
   ],
   rows: [
     wrow('identity:des-340', 'des-340-super-admin-permissions', 'working', { linearIssue: 'DES-340' }),
-    wrow('identity:bou-4206', 'bou-4206-aic-split-lessons', 'waiting', { linearIssue: 'BOU-4206' })
+    wrow('identity:bou-4206', 'bou-4206-aic-split-lessons', 'waiting', { linearIssue: 'BOU-4206' }),
+    // Three live Codex agents that finished their turn and wait for review: the goal on this worktree still offers Jump →, to its lead.
+    wrow('identity:des-360', 'des-360-onboarding-review', 'done', { linearIssue: 'DES-360', agents: [
+      agent('des-360 lead', 'codex', { state: 'done' }),
+      agent('des-360 worker 1', 'codex', { state: 'done', parentPane: 'des-360 lead' }),
+      agent('des-360 worker 2', 'codex', { state: 'done', parentPane: 'des-360 lead' })
+    ] })
   ]
 }
 const g = (id, title, over = {}) => ({
@@ -68,6 +74,10 @@ const goals = [
     note: 'Research that leads to a plan. Look at how other scheduling tools suggest or auto-fill shifts.',
     steps: ['List 5 products to analyze', 'Write down what each one automates', 'Draft the feature plan'].map((text) => ({ text, done: false })),
     next: 'List 5 products to analyze', doneWhen: 'A written plan for the feature, ready to turn into tickets', lastChange: { by: 'you', field: 'next', at: now - 2 * 24 * H } }),
+  g('g_onboarding-review', 'Ship the onboarding fix', {
+    steps: [['Fix the empty state', 1], ['Review the PR', 0]].map(([text, d]) => ({ text, done: !!d })),
+    next: 'Review the PR and merge it', links: { linear: ['DES-360'], worktrees: [{ key: 'des-360', name: 'mono/des-360-onboarding-review' }] },
+    lastChange: { by: 'the DES-360 lead', field: 'next', at: now - 30 * 60_000 } }),
   g('g_pdf-export', 'Fix PDF export timeouts on large schedules', {
     steps: [['Reproduce with the 200-shift schedule', 1], ['Stream the render', 1], ['Add a regression test', 1]].map(([text, d]) => ({ text, done: !!d })),
     next: 'Merge the PR', doneWhen: 'A 200-shift schedule exports in under 10 s', status: 'proposed', links: { linear: ['BOU-4300'], worktrees: [] },
@@ -155,7 +165,7 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
   const edit = async (field, text, how = 'blur') => { const el = $('#goalpop [data-gedit="' + field + '"]'); el.focus(); el.textContent = text; if (how === 'enter') key(el, 'Enter'); else el.blur(); await wait(); };
   try {
     await wait(300);
-    ok(document.querySelector('#goals-head .lfold span').textContent === 'Goals' && $('#goals-head .gc').textContent === '5', 'header: Goals 5');
+    ok(document.querySelector('#goals-head .lfold span').textContent === 'Goals' && $('#goals-head .gc').textContent === '6', 'header: Goals 6');
     ok(!!$('[aria-label="View completed goals"]'), 'Completed is accessible from the Goals header');
     ok(!!row('g_super-admin').querySelector('.sav svg.ch') && !row('g_lesson-splitting').querySelector('.sav svg.ch'), 'agent avatar only on the goal with a working agent');
     ok(row('g_super-admin').querySelector('.cnt').textContent === '2/4' && row('g_super-admin').querySelector('.nx').textContent.startsWith('Finish chat'), 'row: count 2/4 and next');
@@ -163,7 +173,7 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     ok(!titles().includes('Intro call with the Germany lawyer'), 'done goal hidden');
     // fold
     $('[data-gfold]').click(); await wait(); ok(titles().length === 0 && previewCalls.some((c) => c.name === 'storage.set' && c.data.v.folded === true), 'fold hides rows and is stored');
-    $('[data-gfold]').click(); await wait(); ok(titles().length === 5, 'unfold shows 5');
+    $('[data-gfold]').click(); await wait(); ok(titles().length === 6, 'unfold shows 6');
     // add
     $('[data-gadd]').click(); await wait(); const inp = $('#goal-new'); ok(!$('#goal-add').hidden && document.activeElement === inp, 'add box opens focused');
     key(inp, 'Escape'); await wait(); ok($('#goal-add').hidden, 'Esc cancels the add box');
@@ -256,6 +266,7 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     };
     ok(word('g_super-admin') === 'Jump' && word('g_lesson-splitting') === 'Jump' && !!act('g_super-admin').querySelector('svg'), 'Jump → for a working agent and for one waiting for the user');
     ok(word('g_shift-scheduling') === 'Assign', 'Assign → when nobody is on the step');
+    ok(word('g_onboarding-review') === 'Jump' && act('g_onboarding-review').getAttribute('aria-label') === 'Jump to des-360 lead' && !row('g_onboarding-review').querySelector('.who'), 'agents that are done but live still count: Jump → to the worktree lead, with no working avatar');
     ok(act('g_super-admin').classList.contains('send') && act('g_super-admin').classList.contains('pill') && act('g_super-admin').getAttribute('aria-label').startsWith('Jump to ') && act('g_shift-scheduling').getAttribute('aria-label') === 'Assign the next step to a coordinator', 'the Linear Send pill, the full meaning in the label');
     ok(!shown('g_super-admin') && !shown('g_shift-scheduling') && room('g_super-admin') === 0 && room('g_shift-scheduling') === 0, 'at rest: no buttons, the Next text has the whole width');
     row('g_shift-scheduling').focus({ focusVisible: true }); await wait();
@@ -274,6 +285,10 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     act('g_super-admin').click(); await wait(200);
     let calls = previewCalls.slice(before);
     const open1 = calls.find((c) => c.name === 'sidebar.open');
+    before = previewCalls.length;
+    act('g_onboarding-review').click(); await wait(200);
+    const openDone = previewCalls.slice(before).find((c) => c.name === 'sidebar.open');
+    ok(openDone?.data.workspaceId === 'identity:des-360' && openDone?.data.terminal === 'term-des-360 lead', 'Jump → on the done-only worktree focuses its lead');
     ok(calls[0]?.name === 'sidebar.list' && open1?.data.workspaceId === 'identity:des-340' && open1?.data.terminal === 'term-des-340-super-admin-permissions lead', 'Jump to agent re-reads the snapshot and focuses the pane of the working agent');
     ok($('#goalpop').hidden, 'pressing the button does not open the card');
     // A session that is gone: no dead pane is focused; the toast says so and the button offers Assign.
