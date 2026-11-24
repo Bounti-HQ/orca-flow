@@ -83,17 +83,23 @@ A live cross-account task continuation and the desktop restart controls were not
 
 ## Contract for automatic substitution
 
-1. **Choose who may receive context.** When the host supports targeted continuation, add an optional
-   **Account substitutes** control in Settings. Let the user create an ordered group of managed
-   IDs for one provider, execution host and authorized workspace scope. Start with no groups.
-   Both accounts must still belong to the group and match their approved provider identities and
-   organization or workspace before transfer. Reauthentication under a different identity
-   invalidates membership. Emails, labels, a shared host or a matching organization confer no consent.
+1. **Use every eligible account by default.** When the host supports targeted continuation, switching
+   is on with no setup, prompt or picker. Candidates are all automatically discovered managed logins
+   of the same provider on the same execution host, with System default and other aliases collapsed
+   onto the one login they point to. A candidate is eligible only inside the workspace's already
+   authorized context-sharing scope, as Orca reports it for both the workspace and the login.
+   Discovering a login, or its email, label, shared host or organization name, does not establish
+   that scope. Defaulting to all never sends private work to an unrelated identity. When Orca cannot
+   establish the scope, leave the work in place and say why. Reauthentication under a different
+   identity makes a login a new candidate that has to be checked again. Offer a quiet override,
+   reached only when the user looks for it, to exclude logins or turn switching off. Healthy work
+   shows no account chrome. A successful switch leaves one inline record in the conversation.
+   `docs/account-failover-prototype.html` is the UX draft.
 2. **Require a confirmed stop.** Orca supplies a stable event ID, exact source session, turn,
    account, owner generation and scope of the exhausted allowance. A transient request takes the
    provider's retry path. Exclude every candidate covered by an organization-wide limit. Unknown
-   scope leaves work in place. Keep the chosen model and effort, asking the user if no eligible
-   account supports them.
+   scope leaves work in place. Keep the chosen model and effort. A candidate that cannot run them
+   is ineligible for this incident.
 3. **Continue once.** Prefer a host operation that changes the account in the original session.
    Bind the target account, source checkpoint, expected owner generation and idempotency key in
    the same operation. Fence the source before the target acts. Verify the destination before
@@ -106,6 +112,7 @@ A live cross-account task continuation and the desktop restart controls were not
    an atomic transfer of these bindings or refusal before releasing the source.
 5. **Bound retries.** Persist the source and attempted identities per incident, including known reset
    times. Try each eligible identity at most once. Duplicate events, concurrent observers and plugin
-   restarts reconcile the same incident. On exhaustion, show one waiting state with the earliest
-   applicable reset if known. Recheck capacity on a fresh host signal or explicit user retry.
+   restarts reconcile the same incident. On exhaustion, show one actionable waiting line with the
+   earliest known reset, without cycling through accounts. Recheck capacity on a fresh host signal
+   or explicit user retry.
    Store opaque IDs and recovery metadata in Flow. Orca owns authentication and context migration.

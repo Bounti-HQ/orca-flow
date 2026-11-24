@@ -2,54 +2,42 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Account backups · Orca Flow UX draft</title>
+<title>Account switching · Orca Flow UX draft</title>
 <!--
-  Disposable UX draft: choosing same-provider backup accounts for a workspace in Orca Flow.
+  Disposable UX draft: Orca Flow continuing a conversation on another same-provider account after a
+  usage limit. One flow, on by default, with no account UI while work is healthy.
   Standalone fixture. No account reads, auth, network, storage, host bridge or real sessions.
-  Identities are made up (*.example). Host constraints: docs/account-failover.md.
-  Open directly, or with ?placement=usage|settings|limit.
+  Identities are made up (*.example). Host constraints and contract: docs/account-failover.md.
+  Open directly, or with ?state=normal|switched|exhausted|scope&provider=Claude|Codex&host=ready|today.
 -->
 <style>
 :root {
   color-scheme: dark;
   --bg: #161618; --page: #0f0f11; --ink: #e9e9ec; --muted: #8d8d96; --faint: #6c6c74; --line: #27272c;
-  --hair: color-mix(in srgb, var(--ink) 10%, transparent); --fill: color-mix(in srgb, var(--ink) 8%, transparent);
+  --hair: color-mix(in srgb, var(--ink) 10%, transparent); --fill: color-mix(in srgb, var(--ink) 7%, transparent);
   --pop: #1e1e21; --card: color-mix(in srgb, var(--ink) 5.5%, var(--pop));
-  --ask: #8fb3ff; --warn: #e8b64c; --action: #4fc7c0; --danger: #ec6a52; --on: #0a84ff;
+  --ask: #8fb3ff; --warn: #e8b64c; --action: #4fc7c0; --on: #0a84ff;
   font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--ink); }
 button, select, input { font: inherit; color: inherit; }
 button { cursor: pointer; background: none; border: 0; padding: 0; }
-button:disabled { cursor: default; opacity: .45; }
 :focus-visible { outline: 2px solid color-mix(in srgb, var(--ask) 80%, transparent); outline-offset: 2px; border-radius: 5px; }
-.wrap { max-width: 1120px; margin: 0 auto; padding: 16px 16px 40px; }
-
-/* Draft chrome: title, placement tabs, scenario controls. Not product UI. */
-.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 10px 16px; margin-bottom: 10px; }
-.top h1 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 16px 16px 40px; }
+.top { margin-bottom: 12px; }
+.top h1 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
 .top p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-.tabs { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--fill); }
-.tab { padding: 5px 11px; border-radius: 6px; color: var(--muted); white-space: nowrap; }
-.tab[aria-pressed="true"] { background: #2c2c31; color: var(--ink); font-weight: 600; }
-.tab .rec { margin-left: 6px; font-size: 10.5px; font-weight: 600; color: var(--action); }
-.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 10px; margin-bottom: 8px; border: 1px dashed #3a3a41; border-radius: 9px; font-size: 12px; color: var(--muted); }
-.controls label { display: inline-flex; align-items: center; gap: 5px; }
-.controls select { background: #222226; border: 1px solid #36363c; border-radius: 6px; padding: 3px 6px; }
-.controls .grow { flex: 1; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; border: 1px solid #3a3a41; background: #26262a; white-space: nowrap; }
-.btn:hover:enabled { background: #303035; }
-.btn.primary { background: var(--on); border-color: transparent; color: #fff; font-weight: 600; }
-.btn.primary:hover:enabled { background: #2b95ff; }
-.placementNote { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
-.placementNote b { color: var(--ink); font-weight: 600; }
 
-/* The Orca window mock */
-.window { position: relative; display: grid; grid-template-columns: 236px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 26px; height: 620px;
+/* The Orca window: the thing being designed, so it gets the space */
+.window { position: relative; display: grid; grid-template-columns: 236px minmax(0, 1fr); height: 600px;
   border: 1px solid #2f2f35; border-radius: 11px; overflow: hidden; background: var(--bg); box-shadow: 0 20px 60px -20px #000c; }
 .flow { border-right: 1px solid var(--line); padding: 10px 10px 0; overflow: auto; }
-.flow h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.flowHead { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
+.flowHead h2 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.gear { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; color: var(--faint); }
+.gear:hover { color: var(--ink); background: var(--fill); }
+.gear svg { width: 14px; height: 14px; }
 .ws { margin-bottom: 12px; }
 .ws > b { display: block; font-size: 12px; margin: 0 0 4px 2px; }
 .card { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 1px 6px; padding: 6px 7px; border-radius: 7px; }
@@ -57,17 +45,13 @@ button:disabled { cursor: default; opacity: .45; }
 .card .dot { width: 7px; height: 7px; border-radius: 50%; margin: 5px 0 0 3px; background: var(--action); }
 .card .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .s { grid-column: 2; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tone-warn .dot { background: var(--warn); } .tone-warn .s { color: var(--warn); }
-.tone-ask .dot { background: var(--ask); } .tone-ask .s { color: var(--ask); }
-.tone-move .dot { background: var(--action); } .tone-move .s { color: var(--action); }
-.tone-idle .dot { background: var(--faint); }
+.card.waiting .dot { background: var(--warn); } .card.waiting .s { color: var(--warn); }
+.card.idle .dot { background: var(--faint); }
 
 .pane { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
 .phead { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 14px; border-bottom: 1px solid var(--line); }
 .phead .title { min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phead .role { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
-.who { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; max-width: 55%; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; color: var(--muted); background: var(--fill); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.who.moved { color: var(--action); background: color-mix(in srgb, var(--action) 12%, transparent); }
 .mark { display: inline-flex; flex: none; } .mark svg { width: 15px; height: 15px; } .codex { color: #c9d1d6; }
 .log { overflow: auto; padding: 14px 16px; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 12px; }
 .msg { color: #c9c9cf; max-width: 640px; }
@@ -75,206 +59,116 @@ button:disabled { cursor: default; opacity: .45; }
 .tool { font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); }
 .compose { margin: 0 14px 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--faint); }
 
-/* Limit and continuation rows: one quiet line in the conversation, a card only when Orca needs an answer. */
-.ev { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; max-width: 680px; padding: 8px 10px; border-radius: 8px; background: var(--fill); }
-.ev .ic { width: 16px; height: 16px; margin-top: 1px; color: var(--muted); }
-.ev .ic svg { width: 16px; height: 16px; }
-.ev .main { min-width: 0; }
-.ev .sub { color: var(--muted); font-size: 12px; }
-.ev .side { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.ev.warn .ic { color: var(--warn); }
-.ev.move .ic { color: var(--action); }
-.ev.quiet { background: none; padding-block: 2px; }
-.ev .acts { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.link { color: var(--ask); }
-.link:hover { text-decoration: underline; }
-.pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--action); margin-right: 6px; vertical-align: 1px; animation: p 1s ease-in-out infinite alternate; }
-@keyframes p { to { opacity: .25; } }
-@media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
-.ask { max-width: 560px; border: 1px solid color-mix(in srgb, var(--ask) 35%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--ask) 5%, var(--bg)); padding: 11px 12px; display: grid; gap: 8px; }
-.ask h3 { margin: 0; font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
-.ask h3 .ic { color: var(--warn); display: inline-flex; } .ask h3 svg { width: 16px; height: 16px; }
-.ask p { margin: 0; color: #c4c4ca; }
-.ask .opts { display: grid; border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; }
-.opt { display: flex; align-items: center; gap: 9px; padding: 7px 10px; cursor: pointer; }
-.opt + .opt { border-top: 1px solid var(--hair); }
-.opt input { accent-color: var(--on); margin: 0; }
-.opt small, .brow small { display: block; color: var(--muted); font-size: 11.5px; }
-.opt .use { margin-left: auto; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
-.ask .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.check { display: inline-flex; align-items: center; gap: 7px; color: #c4c4ca; font-size: 12.5px; }
-.check input { accent-color: var(--on); margin: 0; }
-.details { grid-column: 2 / -1; margin: 6px 0 2px; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; font-size: 12px; }
-.details dt { color: var(--muted); } .details dd { margin: 0; }
+/* The only two things this feature ever adds to a conversation */
+.record { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; max-width: 680px; font-size: 12px; color: var(--muted); }
+.record .ic { color: var(--action); display: inline-flex; align-self: center; } .record svg, .waitline svg { width: 14px; height: 14px; }
+.record b { color: #c9c9cf; font-weight: 500; }
+.waitline { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; max-width: 680px; padding: 8px 10px; border-radius: 8px; background: var(--fill); }
+.waitline .ic { color: var(--warn); margin-top: 1px; display: inline-flex; }
+.waitline .sub { color: var(--muted); font-size: 12px; }
+.btn { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 6px; border: 1px solid #3a3a41; background: #26262a; white-space: nowrap; font-size: 12px; }
+.btn:hover { background: #303035; }
+.link { color: var(--ask); font-size: 12px; } .link:hover { text-decoration: underline; }
+.details { flex-basis: 100%; margin: 4px 0 0 22px; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; }
+.details dt { color: var(--faint); } .details dd { margin: 0; color: #c4c4ca; }
 .ok { color: var(--action); }
 
-/* Status bar and the Usage picker (modelled on Orca's Claude status-bar menu) */
-.statusbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); background: #141416; }
-.statusbar .sp { flex: 1; }
-.sbi { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 5px; }
-.sbi:hover, .sbi[aria-expanded="true"] { background: var(--fill); color: var(--ink); }
-.sbi .mark svg { width: 12px; height: 12px; }
-.overlay { position: absolute; inset: 0; pointer-events: none; }
-.overlay > * { pointer-events: auto; }
-.pop { position: absolute; right: 8px; bottom: 32px; width: min(440px, calc(100% - 16px)); max-height: calc(100% - 44px); overflow: auto;
-  background: var(--pop); border: 1px solid var(--hair); border-radius: 10px; box-shadow: 0 16px 40px -10px #000d; padding: 6px 0; }
-.pop-h { display: flex; align-items: center; gap: 7px; padding: 6px 14px 8px; font-weight: 600; }
-.pop-h .meta { margin-left: auto; font-weight: 400; font-size: 11.5px; color: var(--muted); }
-.pop-sec { display: flex; justify-content: space-between; padding: 6px 14px 3px; font-size: 11px; font-weight: 600; color: var(--muted); }
-.pop-sec .cols { display: flex; gap: 6px; font-weight: 500; } .pop-sec .cols span { width: 72px; text-align: right; }
-.arow { display: flex; align-items: center; gap: 10px; padding: 6px 14px; min-height: 36px; }
-.arow .tick { width: 14px; flex: none; color: var(--ink); } .arow .tick svg { width: 14px; height: 14px; }
-.arow .who2 { min-width: 0; flex: 1; } .arow .who2 b { font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.arow .who2 small { display: block; color: var(--muted); font-size: 11px; }
-.tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 10.5px; font-weight: 600; color: var(--action); background: color-mix(in srgb, var(--action) 13%, transparent); vertical-align: 1px; }
-.meters { display: flex; gap: 6px; flex: none; }
-.meter { width: 72px; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.meter i { flex: 1; height: 4px; border-radius: 4px; background: #333338; overflow: hidden; }
-.meter i b { display: block; height: 100%; background: #bfbfc6; }
-.meter.hot i b { background: var(--warn); } .meter.full i b { background: var(--danger); }
-.pop-item { display: block; width: 100%; text-align: left; padding: 6px 14px 6px 38px; color: var(--ink); }
-.pop-item:hover { background: var(--fill); }
-.pop hr { border: 0; border-top: 1px solid var(--hair); margin: 6px 0; }
-.wsrow { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 14px; text-align: left; }
-.wsrow:hover { background: var(--fill); }
-.wsrow .v { margin-left: auto; color: var(--muted); white-space: nowrap; }
-.editor { padding: 2px 14px 10px; display: grid; gap: 8px; }
-.editor p { margin: 0; color: #c4c4ca; font-size: 12.5px; }
-.editor .acts { display: flex; justify-content: flex-end; gap: 6px; }
-
-/* Backup list, shared by the Usage editor and Settings */
-.blist { display: grid; border: 1px solid var(--hair); border-radius: 9px; overflow: hidden; background: var(--card); }
-.brow { position: relative; display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 5px 8px 5px 10px; }
-.brow + .brow::before { content: ""; position: absolute; top: 0; left: 10px; right: 0; height: 1px; background: var(--hair); }
-.brow input { accent-color: var(--on); margin: 0; width: 15px; height: 15px; flex: none; }
-.brow .nm { min-width: 0; flex: 1; } .brow .nm b { font-weight: 500; }
-.brow .ord { display: flex; gap: 2px; }
-.brow .ord button { width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; color: var(--muted); }
-.brow .ord button:hover:enabled { background: var(--fill); color: var(--ink); }
-.brow .ord svg { width: 12px; height: 12px; }
-.brow .n { width: 16px; text-align: center; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.brow .warnTxt { color: var(--warn); }
-.empty { padding: 11px 12px; color: #c4c4ca; font-size: 12.5px; }
-.consent { font-size: 12px; color: var(--muted); margin: 0; }
-.consent.on { color: #c4c4ca; }
-.sgrp .consent { padding: 0 10px; }
-
-/* Settings, in Orca Flow's System Settings layout */
+#overlay { position: absolute; inset: 0; pointer-events: none; }
+#overlay > * { pointer-events: auto; }
+/* Quiet override: reached only from the Flow settings gear or a record's details */
 .scrim { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; background: #0008; }
-.sdlg { width: min(720px, 100%); height: min(540px, 100%); display: grid; grid-template-rows: 38px minmax(0, 1fr); background: var(--pop); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; box-shadow: 0 22px 56px -12px #000a; }
-.shead { position: relative; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--hair); background: color-mix(in srgb, var(--ink) 4%, var(--pop)); font-weight: 600; }
-.sx { position: absolute; left: 10px; top: 9px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); background: var(--fill); }
-.sx svg { width: 10px; height: 10px; }
-.sbody { display: grid; grid-template-columns: 186px minmax(0, 1fr); min-height: 0; }
-.snav { background: color-mix(in srgb, var(--ink) 4%, var(--pop)); border-right: 1px solid var(--hair); padding: 8px; display: grid; align-content: start; gap: 1px; }
-.snav span { display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 5px; border-radius: 6px; white-space: nowrap; color: var(--muted); }
-.snav span.cur { background: color-mix(in srgb, var(--ink) 13%, transparent); color: var(--ink); font-weight: 500; }
-.snav i { width: 18px; height: 18px; border-radius: 5px; flex: none; }
-.spage { padding: 14px 18px 18px; display: grid; align-content: start; gap: 14px; overflow: auto; }
-.spage h3 { margin: 0; font-size: 15px; font-weight: 650; }
-.sgrp { display: grid; gap: 5px; }
-.sgh { margin: 0; padding: 0 10px; font-size: 12px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-.srow { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px 10px 5px 12px; background: var(--card); border: 1px solid var(--hair); border-radius: 9px; }
-.srow select { background: var(--fill); border: 0; border-radius: 6px; padding: 3px 6px; margin-left: auto; }
-.sfoot { margin: 0; padding: 0 10px; font-size: 11.5px; color: var(--muted); }
+.sheet { width: min(460px, 100%); max-height: 100%; overflow: auto; background: var(--pop); border: 1px solid var(--hair); border-radius: 12px; box-shadow: 0 22px 56px -12px #000a; padding: 14px 16px 16px; display: grid; gap: 12px; }
+.sheet header { display: flex; align-items: center; justify-content: space-between; }
+.sheet h3 { margin: 0; font-size: 14px; }
+.x { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); background: var(--fill); }
+.x svg { width: 10px; height: 10px; }
+.srow { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 12px; background: var(--card); border: 1px solid var(--hair); border-radius: 9px; }
+.srow span { flex: 1; }
+.switch { position: relative; width: 32px; height: 19px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch i { position: absolute; inset: 0; border-radius: 999px; background: #3a3a40; transition: background .15s; pointer-events: none; }
+.switch i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch input:checked + i { background: var(--on); } .switch input:checked + i::after { transform: translateX(13px); }
+.switch input:focus-visible + i { outline: 2px solid var(--ask); outline-offset: 2px; }
+.grp { display: grid; gap: 5px; }
+.gh { margin: 0; padding: 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.list { border: 1px solid var(--hair); border-radius: 9px; overflow: hidden; background: var(--card); }
+.acc { position: relative; display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 5px 12px; }
+.acc + .acc::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: 1px; background: var(--hair); }
+.acc input { accent-color: var(--on); margin: 0; width: 15px; height: 15px; flex: none; }
+.acc small { display: block; color: var(--muted); font-size: 11.5px; }
+.acc.out { color: var(--faint); } .acc.out .slot { width: 15px; flex: none; }
+.dim { opacity: .45; pointer-events: none; }
+.foot { margin: 0; font-size: 11.5px; color: var(--muted); }
 
-/* Draft notes: reviewer annotations, never shipped */
-.anno { max-width: 680px; padding: 6px 9px; border: 1px dashed #4a4a52; border-radius: 7px; font-size: 11.5px; color: #a9a9b1; }
-.anno::before { content: "Draft note · "; font-weight: 600; color: #c9c9cf; }
-body.noNotes .anno { display: none; }
-
-.notes { margin-top: 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-.notes section { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #141416; }
-.notes h2 { margin: 0 0 6px; font-size: 13px; }
-.notes ul { margin: 0; padding-left: 18px; color: #c4c4ca; font-size: 12.5px; }
+/* Fixture controls: deliberately small and below the window */
+.fixture { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 11.5px; color: var(--faint); }
+.fixture b { font-weight: 600; color: var(--muted); }
+.seg { display: inline-flex; flex-wrap: wrap; max-width: 100%; padding: 2px; gap: 2px; border-radius: 7px; background: var(--fill); }
+.seg button { padding: 2px 9px; border-radius: 5px; color: var(--muted); white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: #2c2c31; color: var(--ink); }
+.fixture select { background: transparent; border: 1px solid #2f2f35; border-radius: 6px; padding: 2px 5px; color: var(--muted); }
+.notes { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.notes section { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.notes h2 { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); }
+.notes ul { margin: 0; padding-left: 18px; color: #b4b4bb; font-size: 12px; }
 .notes li + li { margin-top: 4px; }
-.notes .lead { margin: 0 0 6px; color: #c4c4ca; font-size: 12.5px; }
 
 @media (max-width: 720px) {
-  .tabs { display: flex; flex-wrap: wrap; width: 100%; }
-  .tab { flex: 1 1 auto; padding: 5px 8px; font-size: 12px; }
-  .window { grid-template-columns: minmax(0, 1fr); height: 680px; }
+  .window { grid-template-columns: minmax(0, 1fr); height: 640px; }
   .flow { display: none; }
   .phead .role { display: none; }
-  .sbody { grid-template-columns: minmax(0, 1fr); }
-  .snav { display: none; }
-  .meters .meter:first-child { display: none; } .pop-sec .cols span:first-child { display: none; }
 }
+@media (prefers-reduced-motion: reduce) { .switch i, .switch i::after { transition: none; } }
 </style>
 <body>
 <div class="wrap">
   <header class="top">
-    <div>
-      <h1>Account backups for a workspace</h1>
-      <p>Orca Flow UX draft · fixture identities only · nothing here reads accounts or touches Orca</p>
-    </div>
-    <div class="tabs" id="tabs" aria-label="Placement"></div>
+    <h1>Account switching</h1>
+    <p>Orca Flow UX draft · fixture identities only · nothing here reads accounts or touches Orca</p>
   </header>
-
-  <section class="controls" aria-label="Scenario controls">
-    <label>Provider <select id="provider"><option>Claude</option><option>Codex</option></select></label>
-    <label>Signed in <select id="roster">
-      <option value="all">All fixture accounts</option>
-      <option value="one">One login</option>
-      <option value="none">No managed accounts</option>
-      <option value="resigned">A backup signed in again as someone else</option>
-    </select></label>
-    <label>Limit <select id="limit">
-      <option value="account">Account limit</option>
-      <option value="org">Organization limit</option>
-      <option value="all">Every allowed account limited</option>
-      <option value="retry">Temporary error (HTTP 429)</option>
-      <option value="unknown">Limit scope unknown</option>
-      <option value="model">Backup lacks the model</option>
-      <option value="unconfirmed">Move not confirmed</option>
-    </select></label>
-    <label>Host <select id="host">
-      <option value="ready">Supports continuing on an account</option>
-      <option value="today">Orca 1.4.272 (today)</option>
-    </select></label>
-    <label><input type="checkbox" id="notes" checked> Draft notes</label>
-    <span class="grow"></span>
-    <button class="btn primary" id="trigger">Trigger limit</button>
-    <button class="btn" id="reset">Reset</button>
-  </section>
-
-  <p class="placementNote" id="placementNote"></p>
 
   <div class="window" id="window">
     <aside class="flow" id="flow" aria-label="Orca Flow sidebar (mock)"></aside>
     <section class="pane" id="pane" aria-label="Agent conversation (mock)"></section>
-    <footer class="statusbar" id="statusbar"></footer>
-    <div class="overlay" id="overlay"></div>
+    <div id="overlay"></div>
+  </div>
+
+  <div class="fixture" aria-label="Fixture controls">
+    <b>Fixture</b>
+    <span class="seg" id="states" role="group" aria-label="State">
+      <button data-state="normal">Normal</button>
+      <button data-state="switched">Limit, switched</button>
+      <button data-state="exhausted">Limit, all limited</button>
+      <button data-state="scope">Limit, scope unknown</button>
+    </span>
+    <span class="seg" id="providers" role="group" aria-label="Provider">
+      <button data-provider="Claude">Claude</button>
+      <button data-provider="Codex">Codex</button>
+    </span>
+    <label>Host <select id="host">
+      <option value="ready">Can continue on another account</option>
+      <option value="today">Orca 1.4.272 (today)</option>
+    </select></label>
   </div>
 
   <div class="notes">
     <section>
-      <h2>Recommendation</h2>
-      <p class="lead"><b>Ask at the first limit. Manage in workspace settings. In Usage, show only status.</b></p>
+      <h2>Behaviour</h2>
       <ul>
-        <li>The first limit is when the cost is real. The person can see which conversation would move, to which login, and that the login will receive its history. Nothing is set up beforehand, so there are no groups by default.</li>
-        <li><b>Continue on …</b> applies once. <b>Do this automatically for Atlas</b> creates the workspace group. It is off by default.</li>
-        <li>Workspace settings is the lasting home. It shows both providers per workspace, with order, revoking and re-approving. Every continuation receipt links there.</li>
-        <li>No consent control in the Usage menu. Clicking an account row there changes the host default for new launches, so a workspace checkbox next to it suggests the wrong scope. Usage shows only which account Atlas is using now.</li>
+        <li>On by default. Every eligible login of the same provider is used, in discovery order, with no setup, prompt or picker.</li>
+        <li>Eligible means discovered, distinct, inside the workspace’s authorized sharing scope, not excluded and not limited. System default is an alias for one login, never a second account.</li>
+        <li>Discovering a login doesn’t authorize it. A login outside the scope (the Acme Codex login here) is never sent Atlas’s work, even when it has capacity.</li>
+        <li>When Orca can’t establish the scope, the chat stays where it is and the waiting line says why.</li>
+        <li>Healthy work shows nothing. A successful switch leaves one muted record. When everything is limited, one waiting line shows the earliest known reset and <b>Check now</b>. It doesn’t cycle through accounts.</li>
       </ul>
     </section>
     <section>
-      <h2>Same in every placement</h2>
+      <h2>Override (only when sought)</h2>
       <ul>
-        <li>Consent is per managed login, never per System default. System default appears only as a note on the login it currently points to (“also System default”).</li>
-        <li>A temporary error never changes accounts. An unknown limit scope keeps the work in place. An organization limit skips the logins in that organization.</li>
-        <li>Each login is tried at most once per limit. When none is left, there is one waiting line with the earliest reset and <b>Check now</b>.</li>
-        <li>Continuation status is one line in the conversation, a subtitle on the Flow card and an “Atlas” tag in Usage. Proof (account, session, model, role) appears under <b>Details</b>.</li>
-        <li>On Orca 1.4.272 nothing new appears. Work continues in its conversation after the reset.</li>
-      </ul>
-    </section>
-    <section>
-      <h2>Open for the user</h2>
-      <ul>
-        <li>Placement: pick one of the three, or use the recommended mix.</li>
-        <li>Should work move back to the original login after its reset? The contract doesn’t say, and the draft promises nothing.</li>
-        <li>Should <b>Do this automatically</b> start checked once the person has picked the same backup twice?</li>
-        <li>Unattended workers: is a “Needs you” card enough, or should the coordinator also get mail?</li>
+        <li>Reached from the gear in the Orca Flow sidebar, or from <b>Account switching</b> inside a record’s details.</li>
+        <li>One switch turns it off. Unchecking a login excludes it. New logins in scope are used automatically.</li>
+        <li>On Orca 1.4.272 nothing appears in the conversation beyond today’s wait for the reset.</li>
       </ul>
     </section>
   </div>
@@ -287,451 +181,170 @@ const mark = p => `<span class="mark ${p.toLowerCase()}" aria-hidden="true">${ma
 const svg = d => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`
 const I = {
   pause: svg('<circle cx="8" cy="8" r="6"/><path d="M6.5 5.8v4.4M9.5 5.8v4.4"/>'),
-  move: svg('<path d="M3 5.5h8.5M9 3l2.5 2.5L9 8M13 10.5H4.5M7 8l-2.5 2.5L7 13"/>'),
-  retry: svg('<path d="M12.5 8a4.5 4.5 0 1 1-1.3-3.2M12.5 3v2.5H10"/>'),
-  tick: svg('<path d="M3.5 8.5l3 3 6-7"/>'),
-  up: svg('<path d="M4 10l4-4 4 4"/>'),
-  down: svg('<path d="M4 6l4 4 4-4"/>'),
-  close: svg('<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>'),
-  chev: svg('<path d="M6 4l4 4-4 4"/>')
+  swap: svg('<path d="M3 5.5h8.5M9 3l2.5 2.5L9 8M13 10.5H4.5M7 8l-2.5 2.5L7 13"/>'),
+  gear: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"/>'),
+  close: svg('<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>')
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 const $ = id => document.getElementById(id)
 
-// ---- Fixture: two Claude logins (the first also backs System default) and three Codex accounts.
+// ---- Fixture. Atlas is authorized to share context within the Studio organization.
+// Discovery reports what Orca can see, including the System default alias; scope decides eligibility.
+const SCOPE = 'Studio'
 const FIX = {
   Claude: {
-    model: 'Opus 5.5 · High', fallback: 'Sonnet 5.5 · High',
-    accounts: [
-      { id: 'c1', email: 'dev@studio.example', org: 'Studio', five: 96, week: 71, reset: '3:45 PM', at: 945, systemDefault: true },
-      { id: 'c2', email: 'me@home.example', org: 'Personal', five: 12, week: 30, reset: '6:10 PM', at: 1090, resigned: 'other@home.example' }
+    model: 'Opus 5.5 · High',
+    discovered: [
+      { id: 'sd', alias: 'c1', label: 'System default' },
+      { id: 'c1', email: 'dev@studio.example', org: 'Studio', reset: '3:45 PM', at: 945 },
+      { id: 'c2', email: 'qa@studio.example', org: 'Studio', reset: '6:10 PM', at: 1090 }
     ]
   },
   Codex: {
-    model: 'GPT-6 Luna · xhigh', fallback: 'GPT-6 Luna · high',
-    accounts: [
-      { id: 'x1', email: 'dev@studio.example', org: 'Studio', five: 92, week: 64, reset: '4:20 PM', at: 980 },
-      { id: 'x2', email: 'ops@studio.example', org: 'Studio', five: 38, week: 22, reset: '5:05 PM', at: 1025 },
-      { id: 'x3', email: 'me@home.example', org: 'Personal', five: 7, week: 15, reset: '7:30 PM', at: 1170, resigned: 'other@home.example' }
+    model: 'GPT-6 Luna · xhigh',
+    discovered: [
+      { id: 'x1', email: 'dev@studio.example', org: 'Studio', reset: '4:20 PM', at: 980 },
+      { id: 'x2', email: 'ops@studio.example', org: 'Studio', reset: '5:05 PM', at: 1025 },
+      { id: 'x3', email: 'contractor@acme.example', org: 'Acme', reset: '2:30 PM', at: 870 }
     ]
   }
 }
-const PLACEMENTS = [
-  { id: 'usage', label: 'Usage menu', note: '<b>Usage menu:</b> set up backups next to the meters people open when they are close to a limit. The menu covers the whole host. This one row covers only the workspace.' },
-  { id: 'settings', label: 'Workspace settings', note: '<b>Workspace settings:</b> a page in Orca Flow’s Settings with both providers, per workspace. Easy to review and revoke, but hard to discover before a limit.' },
-  { id: 'limit', label: 'First limit', rec: true, note: '<b>First limit:</b> nothing to set up beforehand. When a login is limited and another one exists, the conversation asks once and can remember the answer for the workspace. Settings remains where it is managed.' }
-]
-const WORKSPACES = ['Atlas', 'Billing']
 
-// ---- State
-const S = {
-  placement: 'limit', provider: 'Claude', roster: 'all', limit: 'account', host: 'ready',
-  groups: {},          // "workspace|provider" -> ordered managed IDs the person allowed
-  reapproved: {},      // provider -> true once a re-signed login is allowed again
-  current: {},         // provider -> managed ID the Atlas conversation runs on
-  tried: new Set(),    // IDs tried for this limit
-  incident: null, overlay: null, usageDraft: null, settingsWs: 'Atlas', details: false, timer: 0
-}
-const P = () => S.provider
-const gkey = (ws, p) => ws + '|' + p
-const group = (p, ws = 'Atlas') => (S.groups[gkey(ws, p)] ||= [])
-function roster(p) {
-  const base = FIX[p].accounts
-  const list = S.roster === 'none' ? [] : S.roster === 'one' ? base.slice(0, 1) : base
-  return list.map(a => (S.roster === 'resigned' && a.resigned ? { ...a, email: a.resigned, was: a.email, changed: true } : a))
-}
-const acct = (p, id) => roster(p).find(a => a.id === id)
-const invalid = (p, a) => !!a.changed && !S.reapproved[p]
-const validMembers = (p, ws = 'Atlas') => group(p, ws).map(id => acct(p, id)).filter(a => a && !invalid(p, a))
-const isOn = (p, ws = 'Atlas') => validMembers(p, ws).length >= 2
-const atlasAcct = p => acct(p, S.current[p]) || roster(p)[0] || null
-const ready = () => S.host === 'ready'
-const detail = (p, a) => a.org + (p === 'Claude' && a.systemDefault ? ' · also System default' : '')
-const orgExcluded = (a, src) => S.limit === 'org' && a.org === src.org
+const S = { state: 'normal', provider: 'Claude', host: 'ready', on: true, excluded: new Set(), sheet: false, details: false, checked: false }
 
-// ---- Incident logic (mirrors the contract in docs/account-failover.md)
-function trigger() {
-  clearTimeout(S.timer)
-  const p = P(), src = atlasAcct(p)
-  S.overlay = null; S.details = false
-  const reset = src ? src.reset : '3:45 PM'
-  if (!ready()) return set({ kind: 'wait', from: src?.email, reset, why: 'today' })
-  if (S.limit === 'retry') return set({ kind: 'retry', from: src?.email })
-  if (!src) return set({ kind: 'wait', reset, why: 'none' })
-  if (S.limit === 'unknown') return set({ kind: 'unknown', from: src.email })
-  S.tried.add(src.id)
-  if (S.limit === 'all') return set(roster(p).length < 2 ? { kind: 'wait', from: src.email, reset, why: 'insufficient' } : exhausted(p, src))
-  const skipped = roster(p).filter(a => a.id !== src.id && orgExcluded(a, src)).map(a => a.email)
-  const allowed = validMembers(p).some(a => a.id === src.id)
-    ? validMembers(p).filter(a => !S.tried.has(a.id) && !orgExcluded(a, src)) : []
-  if (allowed.length) {
-    if (S.limit === 'model') return set({ kind: 'askModel', from: src.email, to: allowed[0], reset, skipped })
-    return move(src, allowed[0], { skipped })
+// Distinct logins, with System default collapsed onto the login it points to.
+function logins(p) {
+  const d = FIX[p].discovered
+  return d.filter(a => !a.alias).map(a => ({ ...a, systemDefault: d.some(x => x.alias === a.id) }))
+}
+const scopeKnown = () => S.state !== 'scope'
+const inScope = a => scopeKnown() && a.org === SCOPE
+const eligible = p => logins(p).filter(a => inScope(a) && !S.excluded.has(a.id))
+const source = p => logins(p)[0]   // the login this conversation started on
+
+// What the conversation shows for the chosen fixture state.
+function outcome() {
+  const p = S.provider, src = source(p)
+  if (S.state === 'normal') return null
+  if (S.host === 'today') return { kind: 'wait', head: `${src.email} reached its usage limit`, sub: `This chat continues here after the reset.`, reset: src.reset }
+  if (S.state === 'scope') return { kind: 'wait', head: `${src.email} reached its usage limit`, sub: `Orca couldn’t confirm which accounts may receive Atlas’s work, so this chat stays here.`, reset: src.reset }
+  if (!S.on) return { kind: 'wait', head: `${src.email} reached its usage limit`, sub: `Account switching is off, so this chat continues here after the reset.`, reset: src.reset }
+  const others = eligible(p).filter(a => a.id !== src.id)
+  if (S.state === 'switched') {
+    if (others.length) return { kind: 'switched', from: src, to: others[0] }
+    return { kind: 'wait', head: `${src.email} reached its usage limit`, sub: `No other ${p} account can take Atlas’s work, so this chat continues here after the reset.`, reset: src.reset }
   }
-  const others = roster(p).filter(a => a.id !== src.id && !S.tried.has(a.id) && !orgExcluded(a, src))
-  if (!others.length) return set(S.tried.size > 1 || skipped.length ? exhausted(p, src, skipped) : { kind: 'wait', from: src.email, reset, why: 'insufficient' })
-  if (S.placement === 'limit') return set({ kind: 'ask', from: src.email, reset, options: others.map(a => a.id), pick: others[0].id, always: false, skipped })
-  set({ kind: 'wait', from: src.email, reset, why: 'pointer' })
-}
-function exhausted(p, src, skipped = []) {
-  // Accounts covered by the same organization limit reset with the source, so they are not listed separately.
-  const pool = (isOn(p) ? validMembers(p) : roster(p).filter(a => S.tried.has(a.id) || S.limit === 'all'))
-    .filter(a => a.id === src.id || !orgExcluded(a, src))
-  const earliest = [...pool].sort((a, b) => a.at - b.at)[0] || src
-  return { kind: 'exhausted', scoped: isOn(p), from: src.email, earliest: earliest.email, reset: earliest.reset, others: pool.filter(a => a !== earliest).map(a => `${a.email} at ${a.reset}`), skipped }
-}
-function move(src, target, extra = {}) {
-  const p = P()
-  set({ kind: 'moving', from: src.email, to: target.email, ...extra })
-  S.timer = setTimeout(() => {
-    S.tried.add(target.id)
-    if (S.limit === 'unconfirmed' && !extra.retried) {
-      const next = validMembers(p).find(a => !S.tried.has(a.id) && !orgExcluded(a, src))
-      if (next) return move(src, next, { ...extra, retried: true, failed: target.email })
-      return set({ kind: 'unconfirmed', from: src.email, to: target.email, reset: src.reset })
-    }
-    S.current[p] = target.id
-    set({ kind: 'continued', from: src.email, to: target.email, reset: src.reset, ...extra })
-  }, 1100)
-}
-function set(incident) { S.incident = incident; render() }
-
-// ---- Pieces
-function meter(v) { return `<span class="meter ${v >= 95 ? 'full' : v >= 80 ? 'hot' : ''}"><i><b style="width:${v}%"></b></i>${v}%</span>` }
-
-function backupList(p, ids, ctx) {
-  // ids: the ordered allowed list being edited. Checked rows first, in order; then the rest.
-  const list = roster(p)
-  if (list.length < 2) return `<div class="blist"><div class="empty">${insufficient(p)}</div></div>`
-  const on = a => ids.includes(a.id) && (ctx === 'draft' || !invalid(p, a))
-  const checked = ids.map(id => list.find(a => a.id === id)).filter(a => a && on(a))
-  const rest = list.filter(a => !checked.includes(a))
-  const now = atlasAcct(p)
-  const rows = [...checked, ...rest].map(a => {
-    const c = checked.includes(a), pos = checked.indexOf(a)
-    const wasMember = !c && a.changed && group(p, ctx === 'draft' ? 'Atlas' : S.settingsWs).includes(a.id)
-    const sub = wasMember
-      ? `<small class="warnTxt">Signed in again as a different account (was ${esc(a.was)}). Check to allow it again.</small>`
-      : `<small>${esc(detail(p, a))}${ctx !== 'draft' && S.settingsWs !== 'Atlas' ? '' : a.id === now?.id ? ' · Atlas uses this now' : ''}</small>`
-    const ord = checked.length > 1 && c
-      ? `<span class="ord"><button data-up="${a.id}" data-ctx="${ctx}" data-p="${p}" ${pos === 0 ? 'disabled' : ''} aria-label="Move ${esc(a.email)} up">${I.up}</button><button data-down="${a.id}" data-ctx="${ctx}" data-p="${p}" ${pos === checked.length - 1 ? 'disabled' : ''} aria-label="Move ${esc(a.email)} down">${I.down}</button></span>`
-      : ''
-    return `<label class="brow"><span class="n">${c && checked.length > 1 ? pos + 1 : ''}</span><input type="checkbox" data-toggle="${a.id}" data-ctx="${ctx}" data-p="${p}" data-k="${ctx}-${a.id}" ${c ? 'checked' : ''}><span class="nm"><b>${esc(a.email)}</b>${sub}</span>${ord}</label>`
-  })
-  return `<div class="blist">${rows.join('')}</div>${consent(p, checked)}`
-}
-function insufficient(p) {
-  if (S.roster === 'none') return `No ${p} accounts are signed in to Orca. <button class="link" data-act="addAccount">Add account…</button>`
-  return (p === 'Claude'
-    ? 'Only one Claude login is signed in. System default is that same login, so there is no other account to continue on.'
-    : 'Only one Codex account is signed in.') + ` <button class="link" data-act="addAccount">Add another account…</button>`
-}
-function consent(p, checked) {
-  if (checked.length < 2) return `<p class="consent">${checked.length ? 'Check one more account to turn this on.' : 'Off. Work waits for the reset.'}</p>`
-  const orgs = [...new Set(checked.map(a => a.org))]
-  return `<p class="consent on">When one reaches its limit, work continues in the same conversation on the next account in this order. Each checked account receives the conversation’s history${orgs.length > 1 ? `, including across ${orgs.map(esc).join(' and ')}` : ''}.</p>`
+  // exhausted: every eligible login is limited. One line, earliest known reset, no cycling.
+  const pool = [src, ...others]
+  const first = [...pool].sort((a, b) => a.at - b.at)[0]
+  return { kind: 'wait', head: pool.length > 1 ? `All ${pool.length} ${p} accounts for Atlas are limited` : `${src.email} reached its usage limit`,
+    sub: `This chat continues on ${first.email}, the earliest reset.`, reset: first.reset, waitingOn: first }
 }
 
-// ---- Flow sidebar
-function flowHTML() {
-  const i = S.incident, p = P()
-  let tone = '', sub = 'Lead · working'
-  if (i) {
-    const k = i.kind
-    if (k === 'moving') { tone = 'tone-move'; sub = `Moving to ${i.to}…` }
-    else if (k === 'continued') { tone = 'tone-move'; sub = `On ${i.to} · after a limit` }
-    else if (k === 'ask' || k === 'askModel') { tone = 'tone-ask'; sub = 'Needs you · account limit' }
-    else if (k === 'retry') { tone = 'tone-idle'; sub = 'Lead · retrying' }
-    else if (k === 'unknown') { tone = 'tone-warn'; sub = 'Waiting · reset unknown' }
-    else { tone = 'tone-warn'; sub = `Waiting · resets ${i.reset}` }
-  }
-  return `<h2>Orca Flow</h2>
+// ---- Render
+function flowHTML(o) {
+  const waiting = o?.kind === 'wait'
+  return `<div class="flowHead"><h2>Orca Flow</h2><button class="gear" data-act="sheet" aria-label="Orca Flow settings">${I.gear}</button></div>
   <div class="ws"><b>Atlas</b>
-    <div class="card focus ${tone}"><span class="dot"></span><span class="t">Update onboarding</span><span class="s">${esc(sub)}</span></div>
-    <div class="card tone-idle"><span class="dot"></span><span class="t">Validation tests</span><span class="s">Worker · waiting on lead</span></div>
+    <div class="card focus ${waiting ? 'waiting' : ''}"><span class="dot"></span><span class="t">Update onboarding</span><span class="s">${waiting ? `Waiting · resets ${esc(o.reset)}` : 'Lead · working'}</span></div>
+    <div class="card idle"><span class="dot"></span><span class="t">Validation tests</span><span class="s">Worker · waiting on lead</span></div>
   </div>
   <div class="ws"><b>Billing</b>
     <div class="card"><span class="dot"></span><span class="t">Export CSV</span><span class="s">Worker · working</span></div>
   </div>`
 }
-
-// ---- Conversation pane
-function paneHTML() {
-  const p = P(), a = atlasAcct(p), i = S.incident
-  const moved = i?.kind === 'continued'
-  const who = i?.kind === 'moving' ? `${esc(i.from)} → ${esc(i.to)}` : a ? esc(a.email) : 'System default'
-  return `<div class="phead">${mark(p)}<span class="title">Update onboarding</span><span class="role">Lead · Atlas</span>
-    <span class="who ${moved ? 'moved' : ''}" title="Account this conversation runs on">${moved ? I.move.replace('<svg', '<svg width="11" height="11"') : ''}${who}</span></div>
+function recordHTML(o) {
+  const p = S.provider
+  const det = S.details ? `<dl class="details">
+      <dt>Account</dt><dd><span class="ok">✓</span> ${esc(o.to.email)}, confirmed by Orca</dd>
+      <dt>Conversation</dt><dd><span class="ok">✓</span> Same session, pane and worktree</dd>
+      <dt>Model</dt><dd><span class="ok">✓</span> ${esc(FIX[p].model)}, unchanged</dd>
+      <dt>Assignment</dt><dd><span class="ok">✓</span> Lead of the Atlas run, questions and gates kept</dd>
+      <dt>Settings</dt><dd><button class="link" data-act="sheet">Account switching</button></dd>
+    </dl>` : ''
+  return `<div class="record" role="status"><span class="ic">${I.swap}</span><span>Continued on <b>${esc(o.to.email)}</b>. ${esc(o.from.email)} reached its limit (resets ${esc(o.from.reset)}).</span>
+    <button class="link" data-act="details" aria-expanded="${S.details}">${S.details ? 'Hide' : 'Details'}</button>${det}</div>`
+}
+function waitHTML(o) {
+  return `<div class="waitline" role="status"><span class="ic">${I.pause}</span>
+    <div><div>${esc(o.head)}</div><div class="sub">${esc(o.sub)}${S.checked ? ' Checked just now: still limited.' : ''}</div></div>
+    <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><span class="sub">Resets ${esc(o.reset)}</span><button class="btn" data-act="check">Check now</button></span></div>`
+}
+function paneHTML(o) {
+  const p = S.provider
+  return `<div class="phead">${mark(p)}<span class="title">Update onboarding</span><span class="role">Lead · Atlas</span></div>
   <div class="log" aria-live="polite">
     <div class="msg user">Update the onboarding form and get the validation tests green.</div>
     <div class="msg">I updated the onboarding form and split the address step. Next I’ll run the validation tests.</div>
     <div class="tool">$ npm test -- onboarding</div>
-    ${incidentHTML()}
+    ${o?.kind === 'switched' ? recordHTML(o) + `<div class="msg">All 14 onboarding tests pass. The address step now validates postcodes per country.</div>` : ''}
+    ${o?.kind === 'wait' ? waitHTML(o) : ''}
   </div>
   <div class="compose">Message ${p}…</div>`
 }
-function ev(cls, icon, main, sub, side = '', acts = '', extra = '') {
-  return `<div class="ev ${cls}" role="status"><span class="ic">${icon}</span><div class="main">${main}${sub ? `<div class="sub">${sub}</div>` : ''}</div><span class="side">${side}</span>${acts ? `<div class="acts">${acts}</div>` : ''}${extra}</div>`
+function sheetHTML() {
+  const ready = S.host === 'ready'
+  const body = !ready
+    ? `<div class="srow"><span>Needs a newer Orca</span></div><p class="foot">Orca 1.4.272 can’t continue a conversation on another account. A limited chat continues in place after the reset.</p>`
+    : `<div class="srow"><span>Continue on another account when one is limited</span><label class="switch"><input type="checkbox" role="switch" id="onSwitch" ${S.on ? 'checked' : ''} aria-label="Continue on another account when one is limited"><i></i></label></div>
+      <div class="${S.on ? '' : 'dim'}" style="display:grid;gap:12px">
+      ${['Claude', 'Codex'].map(p => {
+        const rows = logins(p).map(a => {
+          if (!inScope(a)) {
+            const why = scopeKnown() ? `Not used for Atlas: ${a.org} is outside its sharing scope` : 'Not used until Orca confirms Atlas’s sharing scope'
+            return `<div class="acc out" data-out="${a.id}"><span class="slot"></span><span><span>${esc(a.email)}</span><small>${esc(why)}</small></span></div>`
+          }
+          return `<label class="acc"><input type="checkbox" data-exclude="${a.id}" ${S.excluded.has(a.id) ? '' : 'checked'} ${S.on ? '' : 'tabindex="-1"'}><span><span>${esc(a.email)}</span><small>${esc(a.org)}${a.systemDefault ? ' · also System default' : ''}</small></span></label>`
+        }).join('')
+        return `<div class="grp"><h4 class="gh">${mark(p)}${p}</h4><div class="list">${rows}</div></div>`
+      }).join('')}
+      </div>
+      <p class="foot">All logins in Atlas’s sharing scope are used. Unchecked ones never are. New logins in scope are used automatically.</p>`
+  return `<div class="scrim" data-act="scrim"><div class="sheet" role="dialog" aria-label="Account switching">
+    <header><h3>Account switching</h3><button class="x" data-act="close" aria-label="Close">${I.close}</button></header>${body}</div></div>`
 }
-const note = t => `<div class="anno">${t}</div>`
-function incidentHTML() {
-  const i = S.incident, p = P()
-  if (!i) return ''
-  const checkNow = `<button class="btn" data-act="check">Check now</button>`
-  const checked = i.checked ? ' Checked just now: still limited.' : ''
-  const skipped = i.skipped?.length ? ` Skipped ${i.skipped.map(esc).join(', ')}: same organization limit.` : ''
-  switch (i.kind) {
-    case 'retry':
-      return ev('quiet', I.retry, `<span class="sub">Retrying after a temporary error (HTTP 429)…</span>`, '') +
-        note(`The provider’s own retry line, unchanged. A temporary error is not a usage limit, so Atlas stays on ${esc(i.from || 'its account')} and nothing new appears.`)
-    case 'unknown':
-      return ev('warn', I.pause, `${esc(i.from)} reached a usage limit`, `Orca can’t tell which accounts this limit covers, so this conversation stays here.${checked}`, 'Reset unknown', checkNow) +
-        note('Unknown scope keeps the work in place, even with backups allowed.')
-    case 'wait': {
-      const head = `${i.from ? esc(i.from) : p} reached its usage limit`
-      const pointer = i.why === 'pointer'
-        ? `<button class="link" data-act="${S.placement === 'usage' ? 'openUsageEditor' : 'openSettings'}">Let Atlas continue on another account…</button>` : ''
-      const out = ev('warn', I.pause, head, `This conversation continues here after the reset.${checked}`, `Resets ${i.reset}`, checkNow + pointer)
-      if (i.why === 'today') return out + note('Orca 1.4.272 can’t continue a conversation on a chosen account, so nothing new appears. This is today’s recovery.')
-      if (i.why === 'insufficient') return out + note(p === 'Claude' ? 'Only one distinct login. System default points to this same login, so it isn’t a backup and no prompt appears.' : 'No other distinct account, so no prompt appears.')
-      if (i.why === 'none') return out + note('No managed login to choose from. No prompt.')
-      if (i.why === 'pointer') return out + note(`Backups are off for Atlas. In the ${S.placement === 'usage' ? 'Usage menu' : 'workspace settings'} placement the limit line only links to setup. It doesn’t ask here.`)
-      if (i.why === 'chosen') return out
-      return out
-    }
-    case 'exhausted':
-      return ev('warn', I.pause, i.scoped ? 'Every account Atlas may use is limited' : `Every ${p} account is limited`, `Continues on ${esc(i.earliest)}, the earliest reset.${i.others.length ? ' ' + i.others.map(esc).join(', ') + '.' : ''}${skipped}${checked}`, `Resets ${i.reset}`, checkNow) +
-        note('One waiting state. Each login was tried at most once for this limit. A fresh signal from the host or <b>Check now</b> checks again.')
-    case 'ask': {
-      const opts = i.options.map(id => acct(p, id)).filter(Boolean)
-      const one = opts.length === 1
-      const pick = acct(p, i.pick) || opts[0]
-      const list = one
-        ? `<div class="opts"><div class="opt"><span><b>${esc(pick.email)}</b><small>${esc(detail(p, pick))}</small></span><span class="use">${pick.week}% used this week</span></div></div>`
-        : `<div class="opts" role="radiogroup" aria-label="Account to continue on">${opts.map(a => `<label class="opt"><input type="radio" name="pick" data-pick="${a.id}" data-k="pick-${a.id}" ${a.id === pick.id ? 'checked' : ''}><span><b>${esc(a.email)}</b><small>${esc(detail(p, a))}</small></span><span class="use">${a.week}% used this week</span></label>`).join('')}</div>`
-      return `<div class="ask" role="group" aria-label="Account limit">
-        <h3><span class="ic">${I.pause}</span>${esc(i.from)} reached its usage limit · resets ${i.reset}</h3>
-        <p>Continue this conversation on ${one ? 'another account' : 'one of your other accounts'}? It will receive the conversation’s history.${skipped}</p>
-        ${list}
-        <label class="check"><input type="checkbox" data-act="always" data-k="always" ${i.always ? 'checked' : ''}> Do this automatically for Atlas from now on</label>
-        <div class="row"><button class="btn primary" data-act="continueOnce" data-k="continueOnce">Continue on ${esc(pick.email)}</button><button class="btn" data-act="waitChosen">Wait for reset</button></div>
-      </div>` + note('Shown only when a distinct, unlimited login exists. One click continues once. The checkbox turns it into a standing choice for Atlas, which can be changed in workspace settings.')
-    }
-    case 'askModel':
-      return `<div class="ask" role="group" aria-label="Model not available">
-        <h3><span class="ic">${I.pause}</span>${esc(i.to.email)} can’t run ${esc(FIX[p].model)}</h3>
-        <p>${esc(i.from)} reached its limit (resets ${i.reset}). Continue on ${esc(i.to.email)} with ${esc(FIX[p].fallback)}, or wait?</p>
-        <div class="row"><button class="btn primary" data-act="continueModel">Continue with ${esc(FIX[p].fallback)}</button><button class="btn" data-act="waitChosen">Wait for reset</button></div>
-      </div>` + note('Backups are allowed, but the model and effort the person chose are never changed silently.')
-    case 'moving':
-      return ev('move', I.move, `<span class="pulse" aria-hidden="true"></span>${esc(i.from)} reached its limit. Moving this conversation to ${esc(i.to)}…`, i.failed ? `Couldn’t confirm ${esc(i.failed)}. Trying the next account.` : 'Checking the account, the conversation and the assignment before it continues.')
-    case 'unconfirmed':
-      return ev('warn', I.pause, `Couldn’t confirm the move to ${esc(i.to)}`, `Nothing moved. This conversation stays on ${esc(i.from)} and continues after the reset.${checked}`, `Resets ${i.reset}`, checkNow) +
-        note('The source keeps the conversation until the destination is confirmed. Refusing is safer than ending up with two owners.')
-    case 'continued': {
-      const det = S.details ? `<dl class="details">
-          <dt>Account</dt><dd><span class="ok">✓</span> ${esc(i.to)} (confirmed by Orca)</dd>
-          <dt>Conversation</dt><dd><span class="ok">✓</span> Same session, same pane and worktree</dd>
-          <dt>Model</dt><dd><span class="ok">✓</span> ${esc(i.model || FIX[p].model)}${i.model ? ' (you chose this)' : ''}</dd>
-          <dt>Assignment</dt><dd><span class="ok">✓</span> Lead of Atlas run · questions and gates kept</dd>
-          <dt>Previous</dt><dd>${esc(i.from)} resets ${i.reset}</dd>
-          ${i.failed ? `<dt>Skipped</dt><dd>${esc(i.failed)}: move not confirmed</dd>` : ''}
-          ${i.skipped?.length ? `<dt>Skipped</dt><dd>${i.skipped.map(esc).join(', ')}: same organization limit</dd>` : ''}
-        </dl>` : ''
-      const acts = `<button class="link" data-act="details" aria-expanded="${S.details}">${S.details ? 'Hide details' : 'Details'}</button>` +
-        (ready() ? ` · <button class="link" data-act="${S.placement === 'usage' ? 'openUsageEditor' : 'openSettings'}">${i.remembered ? 'Atlas will do this automatically · Change' : 'Account backups'}</button>` : '')
-      return ev('move quiet', I.move, `Continued on ${esc(i.to)}`, `Same conversation. ${esc(i.from)} reached its limit.`, '', acts, det) +
-        note('The receipt is one line. Trigger the limit again to see what happens when the backup runs out too.')
-    }
-  }
-  return ''
-}
-
-// ---- Status bar and Usage menu
-function statusHTML() {
-  const items = ['Claude', 'Codex'].map(p => {
-    const d = roster(p)[0]
-    const pct = d ? d.week + '%' : '—'
-    return `<button class="sbi" data-usage="${p}" aria-expanded="${S.overlay === 'usage' && P() === p}" aria-label="Open ${p} usage and accounts">${mark(p)}${pct}</button>`
-  })
-  return `<span>Atlas · cyucelen/onboarding</span><span class="sp"></span>${items.join('')}`
-}
-function usageHTML() {
-  const p = P(), list = roster(p), atlas = atlasAcct(p), host = list[0]
-  const sdRow = p === 'Claude'
-    ? `<div class="arow"><span class="tick">${I.tick}</span><span class="who2"><b>System default</b><small>${host ? esc(host.email) : 'Signed in outside Orca'}</small></span></div>` : ''
-  const rows = list.map(a => {
-    const isHost = p !== 'Claude' && a === host
-    const tag = S.incident?.kind === 'continued' && a.id === atlas?.id ? '<span class="tag">Atlas</span>' : ''
-    return `<div class="arow"><span class="tick">${isHost ? I.tick : ''}</span><span class="who2"><b>${esc(a.email)}${tag}</b><small>${esc(a.org)}</small></span><span class="meters">${meter(a.five)}${meter(a.week)}</span></div>`
-  }).join('')
-  let ws = ''
-  if (S.placement === 'usage' && ready() && list.length >= 2) {
-    const on = validMembers(p)
-    const summary = on.length >= 2 ? `${on.length} accounts` : 'Off'
-    ws = `<hr><div class="pop-sec"><span>Atlas workspace</span></div>`
-    if (S.usageDraft) {
-      ws += `<div class="editor"><p>Let Atlas continue on another ${p} account when one reaches its limit. Accounts you check receive this workspace’s conversation history.</p>
-        ${backupList(p, S.usageDraft, 'draft')}
-        <div class="acts">${on.length >= 2 ? '<button class="btn" data-act="usageOff">Turn off</button>' : ''}<button class="btn" data-act="usageCancel">Cancel</button><button class="btn primary" data-act="usageSave" ${S.usageDraft.length < 2 ? 'disabled' : ''}>${on.length >= 2 ? 'Save' : 'Allow'}</button></div></div>`
-    } else {
-      ws += `<button class="wsrow" data-act="openUsageEditor" data-k="wsrow"><span>Account backups</span><span class="v">${summary}</span>${I.chev.replace('<svg', '<svg width="12" height="12"')}</button>`
-    }
-  }
-  return `<div class="pop" role="dialog" aria-label="${p} usage and accounts">
-    <div class="pop-h">${mark(p)}${p}<span class="meta">Updates when ${p} runs</span></div>
-    <div class="pop-sec"><span>Accounts</span><span class="cols"><span>5 hours</span><span>Week</span></span></div>
-    ${sdRow}${rows || `<div class="empty">No managed ${p} accounts.</div>`}
-    <button class="pop-item" data-act="addAccount">${list.length ? 'Add another account…' : 'Add account…'}</button>
-    <button class="pop-item" data-act="addAccount">Manage Accounts…</button>
-    ${ws}
-  </div>`
-}
-
-// ---- Settings
-function settingsHTML() {
-  const ws = S.settingsWs
-  const pages = [['Titles & Summaries', '#0a84ff'], ['Models', '#5e5ce6'], ['Account Backups', '#30b158', true], ['Message Check', '#32ade6'], ['Memory', '#f08c00'], ['Features', '#bf5af2'], ['Advanced', '#8e8e93'], ['About', '#6e6e73']]
-  const nav = pages.map(([n, c, cur]) => `<span class="${cur ? 'cur' : ''}"><i style="background:${c}"></i>${n}</span>`).join('')
-  let body
-  if (!ready()) {
-    body = `<div class="sgrp"><div class="srow">Not available in Orca 1.4.272</div><p class="sfoot">Orca can’t yet continue a conversation on a chosen account. Limited work continues in its conversation after the reset.</p></div>`
-  } else {
-    body = `<div class="srow"><span>Workspace</span><select id="settingsWs" aria-label="Workspace">${WORKSPACES.map(w => `<option ${w === ws ? 'selected' : ''}>${w}</option>`).join('')}</select></div>` +
-      ['Claude', 'Codex'].map(p => `<div class="sgrp"><h4 class="sgh">${mark(p)}${p}</h4>${backupList(p, group(p, ws), 'settings')}</div>`).join('') +
-      `<p class="sfoot">Changes apply at once and only to ${esc(ws)}. System default isn’t listed separately because it points to one of these logins. If a login is signed in again as a different account, it stops being a backup until you check it again.</p>`
-  }
-  return `<div class="scrim" data-act="closeSettingsScrim"><div class="sdlg" role="dialog" aria-label="Orca Flow settings">
-    <div class="shead"><button class="sx" data-act="closeSettings" aria-label="Close settings">${I.close}</button>Settings</div>
-    <div class="sbody"><nav class="snav" aria-hidden="true">${nav}</nav>
-      <div class="spage"><h3>Account Backups</h3>${body}</div></div></div></div>`
-}
-
-// ---- Render
 function render() {
-  const keep = document.activeElement?.dataset?.k
-  document.body.classList.toggle('noNotes', !$('notes').checked)
-  $('tabs').innerHTML = PLACEMENTS.map(x => `<button class="tab" data-place="${x.id}" aria-pressed="${S.placement === x.id}">${x.label}${x.rec ? '<span class="rec">Recommended</span>' : ''}</button>`).join('')
-  $('placementNote').innerHTML = PLACEMENTS.find(x => x.id === S.placement).note
-  $('flow').innerHTML = flowHTML()
-  $('pane').innerHTML = paneHTML()
-  $('statusbar').innerHTML = statusHTML()
-  $('overlay').innerHTML = S.overlay === 'usage' ? usageHTML() : S.overlay === 'settings' ? settingsHTML() : ''
-  if (keep) document.querySelector(`[data-k="${keep}"]`)?.focus()
-}
-function fresh() {
-  clearTimeout(S.timer)
-  S.incident = null; S.tried = new Set(); S.current = {}; S.details = false; S.usageDraft = null
-  S.overlay = S.placement === 'usage' ? 'usage' : S.placement === 'settings' ? 'settings' : null
-  render()
-  if (S.placement === 'limit') trigger()
-}
-function place(id) {
-  S.placement = id
-  const url = new URL(location.href); url.searchParams.set('placement', id); url.searchParams.delete('variant'); history.replaceState(null, '', url)
-  fresh()
-}
-function rosterChanged() {
-  S.roster = $('roster').value; S.reapproved = {}
-  for (const p of ['Claude', 'Codex']) for (const ws of WORKSPACES) {
-    const g = group(p, ws), ids = roster(p).map(a => a.id)
-    S.groups[gkey(ws, p)] = g.filter(id => ids.includes(id))
-  }
-  if (S.roster === 'resigned') for (const p of ['Claude', 'Codex']) {
-    // Simulate an earlier consent that included the login now signed in as someone else.
-    const g = group(p), r = roster(p).find(a => a.changed)
-    if (!g.length) g.push(roster(p)[0].id)
-    if (r && !g.includes(r.id)) g.push(r.id)
-  }
-  fresh()
+  const keep = document.activeElement?.dataset?.exclude ? `[data-exclude="${document.activeElement.dataset.exclude}"]` : document.activeElement?.id === 'onSwitch' ? '#onSwitch' : null
+  const o = outcome()
+  $('flow').innerHTML = flowHTML(o)
+  $('pane').innerHTML = paneHTML(o)
+  $('overlay').innerHTML = S.sheet ? sheetHTML() : ''
+  for (const b of document.querySelectorAll('[data-state]')) b.setAttribute('aria-pressed', b.dataset.state === S.state)
+  for (const b of document.querySelectorAll('[data-provider]')) b.setAttribute('aria-pressed', b.dataset.provider === S.provider)
+  $('host').value = S.host
+  const url = new URL(location.href)
+  url.searchParams.set('state', S.state); url.searchParams.set('provider', S.provider); url.searchParams.set('host', S.host)
+  history.replaceState(null, '', url)
+  if (keep) document.querySelector(keep)?.focus()
 }
 
 // ---- Events
 document.addEventListener('click', e => {
-  const t = e.target.closest('button,[data-act="closeSettingsScrim"]')
+  const t = e.target.closest('button,[data-act="scrim"]')
   if (!t) return
-  const p = P(), i = S.incident
-  if (t.dataset.place) return place(t.dataset.place)
-  if (t.dataset.usage) {
-    const same = S.overlay === 'usage' && P() === t.dataset.usage
-    if (t.dataset.usage !== P()) { S.provider = t.dataset.usage; $('provider').value = S.provider; S.incident = null; S.tried = new Set() }
-    S.overlay = same ? null : 'usage'; S.usageDraft = null; return render()
-  }
-  if (t.dataset.up || t.dataset.down) {
-    e.preventDefault()
-    const id = t.dataset.up || t.dataset.down, prov = t.dataset.p
-    const list = t.dataset.ctx === 'draft' ? S.usageDraft : group(prov, S.settingsWs)
-    const at = list.indexOf(id), to = at + (t.dataset.up ? -1 : 1)
-    if (at >= 0 && to >= 0 && to < list.length) [list[at], list[to]] = [list[to], list[at]]
-    render(); document.querySelector(`[data-${t.dataset.up ? 'up' : 'down'}="${id}"]:not(:disabled)`)?.focus()
-    return
-  }
+  if (t.dataset.state) { S.state = t.dataset.state; S.details = false; S.checked = false; return render() }
+  if (t.dataset.provider) { S.provider = t.dataset.provider; S.details = false; S.checked = false; return render() }
   switch (t.dataset.act) {
-    case 'closeSettingsScrim': if (e.target === t) { S.overlay = null; render() } return
-    case 'closeSettings': S.overlay = null; return render()
-    case 'openSettings': S.overlay = 'settings'; S.settingsWs = 'Atlas'; return render()
-    case 'openUsageEditor': S.overlay = 'usage'; S.usageDraft = validMembers(p).map(a => a.id); if (!S.usageDraft.length && atlasAcct(p)) S.usageDraft = [atlasAcct(p).id]; return render()
-    case 'usageCancel': S.usageDraft = null; return render()
-    case 'usageOff': S.groups[gkey('Atlas', p)] = []; S.usageDraft = null; return render()
-    case 'usageSave':
-      S.groups[gkey('Atlas', p)] = [...S.usageDraft]
-      if (S.usageDraft.some(id => acct(p, id)?.changed)) S.reapproved[p] = true
-      S.usageDraft = null; return render()
-    case 'addAccount': return alert('In Orca this opens Settings → AI Provider Accounts. Not part of this draft.')
-    case 'check': if (i) { i.checked = true; render() } return
     case 'details': S.details = !S.details; return render()
-    case 'waitChosen': return set({ kind: 'wait', from: i.from, reset: i.reset, why: 'chosen' })
-    case 'continueOnce': {
-      const src = atlasAcct(p), target = acct(p, i.pick)
-      if (i.always) { S.groups[gkey('Atlas', p)] = [src.id, target.id]; if (target.changed) S.reapproved[p] = true }
-      if (S.limit === 'model') return set({ kind: 'askModel', from: src.email, to: target, reset: i.reset, skipped: i.skipped, remembered: i.always })
-      return move(src, target, { skipped: i.skipped, remembered: i.always })
-    }
-    case 'continueModel':
-      return move(atlasAcct(p), i.to, { skipped: i.skipped, remembered: i.remembered, model: FIX[p].fallback })
+    case 'check': S.checked = true; return render()
+    case 'sheet': S.sheet = true; return render()
+    case 'close': S.sheet = false; return render()
+    case 'scrim': if (e.target === t) { S.sheet = false; render() } return
   }
 })
 document.addEventListener('change', e => {
-  const t = e.target, p = P(), i = S.incident
-  if (t.id === 'provider') { S.provider = t.value; return fresh() }
-  if (t.id === 'roster') return rosterChanged()
-  if (t.id === 'limit') { S.limit = t.value; return fresh() }
-  if (t.id === 'host') { S.host = t.value; return fresh() }
-  if (t.id === 'notes') return render()
-  if (t.id === 'settingsWs') { S.settingsWs = t.value; return render() }
-  if (t.dataset.pick && i) { i.pick = t.dataset.pick; return render() }
-  if (t.dataset.act === 'always' && i) { i.always = t.checked; return render() }
-  if (t.dataset.toggle) {
-    const id = t.dataset.toggle
-    const prov = t.dataset.p
-    const list = t.dataset.ctx === 'draft' ? S.usageDraft : group(prov, S.settingsWs)
-    const a = acct(prov, id)
-    if (t.checked) {
-      if (!list.includes(id)) list.push(id)
-      if (t.dataset.ctx !== 'draft' && a?.changed) S.reapproved[prov] = true
-    } else {
-      const at = list.indexOf(id); if (at >= 0) list.splice(at, 1)
-      if (a?.changed && t.dataset.ctx !== 'draft') S.reapproved[prov] = false
-    }
-    return render()
-  }
+  const t = e.target
+  if (t.id === 'host') { S.host = t.value; S.checked = false; return render() }
+  if (t.id === 'onSwitch') { S.on = t.checked; return render() }
+  if (t.dataset.exclude) { t.checked ? S.excluded.delete(t.dataset.exclude) : S.excluded.add(t.dataset.exclude); return render() }
 })
-$('trigger').onclick = () => trigger()
-$('reset').onclick = () => { S.groups = {}; S.reapproved = {}; rosterChanged() }
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && S.overlay) { S.overlay = null; S.usageDraft = null; return render() }
-  if (e.target.closest?.('input,select,textarea')) return
-  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-    const n = PLACEMENTS.findIndex(x => x.id === S.placement) + (e.key === 'ArrowLeft' ? -1 : 1)
-    place(PLACEMENTS[(n + PLACEMENTS.length) % PLACEMENTS.length].id)
-  }
-})
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.sheet) { S.sheet = false; render() } })
 
 const q = new URLSearchParams(location.search)
-const legacy = { conversation: 'limit', usage: 'usage', settings: 'settings' }
-const start = q.get('placement') || legacy[q.get('variant')] || 'limit'
-S.placement = PLACEMENTS.some(x => x.id === start) ? start : 'limit'
-fresh()
+if (['normal', 'switched', 'exhausted', 'scope'].includes(q.get('state'))) S.state = q.get('state')
+if (['Claude', 'Codex'].includes(q.get('provider'))) S.provider = q.get('provider')
+if (['ready', 'today'].includes(q.get('host'))) S.host = q.get('host')
+render()
 </script>
 </body>
 </html>
