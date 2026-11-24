@@ -3,7 +3,11 @@
 // (src/goals.ts: edits are "you"), and records every request in window.previewCalls.
 //   node scripts/goals-preview.mjs                   serve; open the printed URL (add ?theme=light, ?open=<goal id>, ?add=1, ?showdone=1, ?fold=1)
 //   node scripts/goals-preview.mjs --shots <dir>     capture the section, an open card, the add box and the done goals, dark and light, 360 px, then exit
-//   node scripts/goals-preview.mjs --selftest        click through add, tick, edit next, mark done, reopen, confirm and "Not yet" in headless Chrome, then exit
+//   node scripts/goals-preview.mjs --selftest        click through add, tick, edit next, mark done, reopen, confirm, "Not yet", Jump to agent and
+//                                                    Assign to coordinator (picker, Assigning…, delivery, then Jump) in headless Chrome, then exit
+// The stub answers sidebar.goalAssign the way the worker does (src/goals.ts assignNext): pending at once, delivered
+// after ?delay= ms (default 500), refused for a step already assigned or a Next text that changed, and a changed Next
+// drops the assignment. sidebar.open answers opened: false for a terminal in window.previewGone.
 import { execFile, execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -25,7 +29,13 @@ const agent = (paneKey, agentType, over = {}) => ({
 const wrow = (id, name, state, over = {}) => ({ id, name, branch: name, repo: 'bounti', path: `/fixture/${name}`, main: false, agents: [agent(`${name} lead`, 'claude', { state })], state, priority: null, card: null, parentId: null, liveTerminals: 1, pinned: false, unread: false, active: false, workspaceStatus: null, lastActivityAt: now - H, createdAt: 1, pr: null, ...over })
 const snapshot = {
   source: 'cli', capacity: null, ready: true, focusedPanes: [], features: { goals: true, linear: true, tokenSpeed: true },
-  coordinators: [{ key: 'home', name: 'bounti', repos: ['bounti'], workspaceId: 'home', session: agent('Coordinator', 'claude', { state: 'done', dispatch: null }) }],
+  coordinators: [
+    { key: 'home', name: 'bounti', repos: ['bounti'], workspaceId: 'folder:home', session: agent('Coordinator', 'claude', { state: 'done', dispatch: null }),
+      sessions: { version: 1, current: 'm-home', members: [{ id: 'm-home', workspaceId: 'folder:home', orcaSession: 'conv-home', agentType: 'claude', title: 'bounti', paneKey: 'Coordinator', terminals: ['term-Coordinator'] }] } },
+    { key: 'mono', name: 'mono', repos: ['mono'], workspaceId: 'folder:mono', session: agent('Mono coordinator', 'codex', { state: 'working', dispatch: null }),
+      sessions: { version: 1, current: 'm-mono', members: [{ id: 'm-mono', workspaceId: 'folder:mono', orcaSession: 'conv-mono', agentType: 'codex', title: 'mono', paneKey: 'Mono coordinator', terminals: ['term-Mono coordinator'] }] } },
+    { key: 'ops', name: 'ops (asleep)', repos: [], workspaceId: 'folder:ops', session: null }
+  ],
   rows: [
     wrow('identity:des-340', 'des-340-super-admin-permissions', 'working', { linearIssue: 'DES-340' }),
     wrow('identity:bou-4206', 'bou-4206-aic-split-lessons', 'waiting', { linearIssue: 'BOU-4206' })
@@ -78,13 +88,34 @@ const apply = (a) => {
   const x = goals.find((y) => y.id === a.id);
   if (a.action === 'add') { if (!a.title.trim()) return 'a goal needs a title'; const n = { id: 'g_' + Math.random().toString(36).slice(2, 8), title: a.title.trim(), steps: [], links: { linear: [], worktrees: [] }, status: 'open', createdAt: Date.now(), workingPanes: [] }; stamp(n, 'created'); goals.push(n); return null; }
   if (!x) return 'no goal ' + a.id;
-  if (a.action === 'update') { const f = []; for (const [k, v] of Object.entries(a.patch)) { if (k === 'title' && !v.trim()) return 'a goal needs a title'; if (v.trim() !== (x[k] ?? '')) { v.trim() ? (x[k] = v.trim()) : delete x[k]; f.push(k); } } if (f.length) stamp(x, f.join(',')); }
+  if (a.action === 'update') { const f = []; for (const [k, v] of Object.entries(a.patch)) { if (k === 'title' && !v.trim()) return 'a goal needs a title'; if (v.trim() !== (x[k] ?? '')) { v.trim() ? (x[k] = v.trim()) : delete x[k]; f.push(k); } } if (f.includes('next')) x.assigned = null; if (f.length) stamp(x, f.join(',')); }
   else if (a.action === 'step') { x.steps[a.step - 1].done = a.done; stamp(x, 'steps'); }
   else if (a.action === 'addStep') { x.steps.push({ text: a.text, done: false }); stamp(x, 'steps'); }
   else if (a.action === 'done' || a.action === 'confirm') { x.status = 'done'; x.doneAt = Date.now(); x.workingPanes = []; stamp(x, 'status'); }
   else if (a.action === 'reopen' || (a.action === 'reject' && x.status === 'proposed')) { x.status = 'open'; delete x.doneAt; stamp(x, 'status'); }
   return null;
 };
+// Assign to coordinator, as the worker does it (src/goals.ts assignNext over goals.mjs beginAssign / finishAssign).
+const delay = Number(q.get('delay') ?? 500);
+const post = () => { const out = JSON.parse(JSON.stringify(goals)); (listeners['sidebar.goalsChanged'] || []).forEach((f) => f(out)); };
+const assign = async ({ id, coordinator, next }) => {
+  const x = goals.find((y) => y.id === id);
+  const c = snapshot.coordinators.find((y) => y.key === coordinator);
+  if (!x || !c?.session) return 'The selected conversation is offline. Choose an open session first.';
+  if (x.next !== next) return 'The next step changed; nothing was sent. Look at the new step and assign it again.';
+  if (x.assigned && x.assigned.next === x.next) return x.assigned.state === 'pending' ? 'This step is already being sent to ' + x.assigned.name + '.' : 'This step is already assigned to ' + x.assigned.name + '.';
+  const token = Math.random().toString(36);
+  x.assigned = { coordinator, name: c.name, next, state: 'pending', at: Date.now(), by: 'you', token, session: { workspaceId: c.workspaceId, terminal: c.session.terminal, paneKey: c.session.paneKey } };
+  previewDelivered.push({ id, coordinator, next, title: x.title });
+  post();
+  await new Promise((r) => setTimeout(r, delay));
+  if (x.assigned?.token !== token || x.next !== next) return 'The next step changed while it was being sent: the coordinator got the old step, and the new one is not assigned.';
+  x.assigned = { ...x.assigned, state: 'delivered', deliveredAt: Date.now() };
+  post();
+  return null;
+};
+window.previewDelivered = [];
+window.previewGone = new Set();
 window.previewCalls = [];
 const errors = [];
 window.addEventListener('error', (e) => errors.push(e.message));
@@ -95,6 +126,8 @@ window.orca = {
       previewCalls.push({ name, data });
       if (name === 'sidebar.list') return snapshot;
       if (name === 'sidebar.goals') return JSON.parse(JSON.stringify(goals));
+      if (name === 'sidebar.open') return { opened: !previewGone.has(data.terminal) };
+      if (name === 'sidebar.goalAssign') { const error = await assign(data); return { ok: !error, ...(error ? { error } : {}), goals: JSON.parse(JSON.stringify(goals)) }; }
       if (name === 'sidebar.goalAction') { const error = apply(data); const out = JSON.parse(JSON.stringify(goals)); if (!error) setTimeout(() => (listeners['sidebar.goalsChanged'] || []).forEach((f) => f(out)), 0); return { ok: !error, ...(error ? { error } : {}), goals: out }; }
       if (name === 'sidebar.settings') return { settings: {}, error: null, version: null, writers: [] };
       if (name === 'sidebar.tokenSpeed') return ${JSON.stringify(speedView(emptyHistory(), now, { ready: true }))};
@@ -200,6 +233,57 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     $('[data-gmore]').click(); await wait();
     ok(titles().length === 40, 'Show more reveals the next batch');
 
+    // ---------- the Next step's button ----------
+    $('[data-gdone]').click(); await wait();
+    const act = (id) => $('[data-gopen="' + id + '"]')?.parentElement?.querySelector(':scope > .gact');
+    ok(act('g_super-admin')?.textContent === 'Jump to agent' && act('g_lesson-splitting')?.textContent === 'Jump to agent', 'Jump to agent for a working agent and for one waiting for the user');
+    ok(act('g_shift-scheduling')?.textContent === 'Assign to coordinator', 'Assign to coordinator when nobody is on the step');
+    ok(!act('g_lawyer-intro') && !row('g_lawyer-intro').closest('.grow'), 'no button for a goal with no Next step');
+    ok(!$('.gact[data-gjump="g_pdf-export"],.gact[data-gassign="g_pdf-export"]'), 'no button for a done goal');
+    // Jump to agent: reads the snapshot again, then focuses the exact pane; the card stays closed.
+    let before = previewCalls.length;
+    act('g_super-admin').click(); await wait(200);
+    let calls = previewCalls.slice(before);
+    const open1 = calls.find((c) => c.name === 'sidebar.open');
+    ok(calls[0]?.name === 'sidebar.list' && open1?.data.workspaceId === 'identity:des-340' && open1?.data.terminal === 'term-des-340-super-admin-permissions lead', 'Jump to agent re-reads the snapshot and focuses the pane of the working agent');
+    ok($('#goalpop').hidden, 'pressing the button does not open the card');
+    // A session that is gone: no dead pane is focused; the toast says so and the button offers Assign.
+    previewGone.add('term-bou-4206-aic-split-lessons lead');
+    act('g_lesson-splitting').click(); await wait(200);
+    ok(/gone/.test($('#toast').textContent) && !$('#toast').hidden && act('g_lesson-splitting')?.textContent === 'Assign to coordinator', 'a gone session: said briefly, button falls back to Assign to coordinator');
+    // Assign to coordinator: the picker lists the coordinators with a live session, with their provider logo.
+    act('g_shift-scheduling').click(); await wait();
+    const items = [...document.querySelectorAll('#ctx .mi')];
+    ok(!$('#ctx').hidden && $('#ctx .mh').textContent === 'Assign next step to' && items.map((b) => b.textContent).join(',') === 'bounti,mono' && items.every((b) => b.querySelector('.provider svg')), 'picker: live coordinators only, name + provider logo');
+    ok($('#goalpop').hidden, 'the picker does not open the card');
+    const step = goals.find((y) => y.id === 'g_shift-scheduling').next;
+    before = previewCalls.length;
+    items[0].click(); await wait(60);
+    const pend = act('g_shift-scheduling');
+    ok(pend?.textContent === 'Assigning…' && pend.disabled, 'Assigning… while it is sent, and it cannot be pressed');
+    const req = previewCalls.slice(before).find((c) => c.name === 'sidebar.goalAssign');
+    ok(req?.data.id === 'g_shift-scheduling' && req.data.coordinator === 'home' && req.data.next === step && previewDelivered.at(-1)?.next === step, 'delivery request carries the exact Next text: ' + JSON.stringify(req?.data));
+    await wait(700);
+    ok(act('g_shift-scheduling')?.textContent === 'Jump to agent', 'after delivery: Jump to agent');
+    row('g_shift-scheduling').click(); await wait();
+    ok(/Assigned to bounti/.test($('#goalpop [data-part="next"]').textContent), 'the card names the coordinator the step went to');
+    key(document.body, 'Escape'); await wait();
+    before = previewCalls.length;
+    act('g_shift-scheduling').click(); await wait(200);
+    const open2 = previewCalls.slice(before).find((c) => c.name === 'sidebar.open');
+    ok(open2?.data.workspaceId === 'folder:home' && open2?.data.terminal === 'term-Coordinator', 'Jump to agent focuses the current session of the coordinator');
+    // A second assign of the same step is refused by the worker (two panels).
+    const dup = await orca.plugin.request('sidebar.goalAssign', { id: 'g_shift-scheduling', coordinator: 'mono', next: step });
+    ok(!dup.ok && /already assigned/.test(dup.error) && previewDelivered.length === 1, 'a second assign of the same step is refused');
+    // The Next text changes: the old assignment does not apply to the new step.
+    row('g_shift-scheduling').click(); await wait(); await edit('next', 'Send both templates to the lawyer', 'enter'); await wait(250);
+    key(document.body, 'Escape'); await wait();
+    ok(act('g_shift-scheduling')?.textContent === 'Assign to coordinator', 'a new Next step goes back to Assign to coordinator');
+    // A late answer for an old step does not mark the new one.
+    act('g_shift-scheduling').click(); await wait(); document.querySelectorAll('#ctx .mi')[1].click(); await wait(60);
+    goals.find((y) => y.id === 'g_shift-scheduling').next = 'Changed meanwhile'; listeners['sidebar.goalsChanged'].forEach((f) => f(JSON.parse(JSON.stringify(goals)))); await wait(800);
+    ok(act('g_shift-scheduling')?.textContent === 'Assign to coordinator' && /changed while it was being sent/.test($('#toast').textContent), 'a late delivery answer for the old text leaves the new step unassigned');
+
   } catch (e) { fail.push('exception ' + e.message); log.push('EXC ' + e.stack); }
   if (errors.length) { fail.push('page errors'); log.push(...errors.map((m) => 'ERR ' + m)); }
   document.title = (fail.length ? 'SELFTEST FAIL ' + fail.length : 'SELFTEST PASS ' + log.length) + '\\n' + log.join('\\n');
@@ -231,7 +315,7 @@ server.listen(0, '127.0.0.1', () => {
   const base = `http://127.0.0.1:${server.address().port}/`
   if (process.argv.includes('--selftest')) {
     const profile = mkdtempSync(join(tmpdir(), 'orca-flow-chrome-'))
-    execFile(chrome, ['--headless=new', '--disable-gpu', `--user-data-dir=${profile}`, '--window-size=600,800', '--virtual-time-budget=8000', '--dump-dom', `${base}?selftest=1`], { timeout: 60_000, maxBuffer: 20e6 }, (e, out) => {
+    execFile(chrome, ['--headless=new', '--disable-gpu', `--user-data-dir=${profile}`, '--window-size=600,800', '--virtual-time-budget=20000', '--dump-dom', `${base}?selftest=1`], { timeout: 60_000, maxBuffer: 20e6 }, (e, out) => {
       const m = /<pre id="selftest">([\s\S]*?)<\/pre>/.exec(out ?? '')
       const text = m ? m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"') : `no result (${e?.message ?? 'page did not finish'})`
       console.log(text)
@@ -253,12 +337,16 @@ server.listen(0, '127.0.0.1', () => {
     jobs.push({ theme, name: 'add', h: 760, click: '[data-gadd]', type: 'Book the lawyer call for next week' })
     jobs.push({ theme, name: 'done-shown', h: 760, showdone: true })
     jobs.push({ theme, name: 'empty', h: 360, empty: true })
+    jobs.push({ theme, name: 'next-buttons', h: 600 })
+    jobs.push({ theme, name: 'assign-picker', h: 600, click: '[data-gassign="g_shift-scheduling"]' })
+    jobs.push({ theme, name: 'assigning', h: 600, click: '[data-gassign="g_shift-scheduling"]|#ctx .mi', delay: 60000 })
+    jobs.push({ theme, name: 'assigned', h: 600, click: '[data-gassign="g_shift-scheduling"]|#ctx .mi', delay: 50 })
   }
   const run = async () => {
     for (const j of jobs) {
       const file = join(out, `goals-${j.name}-${j.theme}-${W}.png`)
       await new Promise((resolve, reject) => {
-        const query = `theme=${j.theme}${j.click ? `&click=${encodeURIComponent(j.click)}` : ''}${j.type ? `&type=${encodeURIComponent(j.type)}` : ''}${j.showdone ? '&showdone=1' : ''}${j.empty ? '&empty=1' : ''}`
+        const query = `theme=${j.theme}${j.click ? `&click=${encodeURIComponent(j.click)}` : ''}${j.type ? `&type=${encodeURIComponent(j.type)}` : ''}${j.showdone ? '&showdone=1' : ''}${j.empty ? '&empty=1' : ''}${j.delay ? `&delay=${j.delay}` : ''}`
         const args = ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--user-data-dir=${profile}`, `--window-size=${W + 240},${j.h + 100}`, '--virtual-time-budget=4000', `--screenshot=${file}`, `${base}frame?${query}&w=${W}&h=${j.h}`]
         execFile(chrome, args, { timeout: 60_000 }, (e, _out, stderr) => {
           if (e && !/bytes written to file/.test(String(stderr))) return reject(e)
