@@ -1889,3 +1889,55 @@ test('usage.open: with a workspace focused it writes the stub in its folder and 
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('Settings → Account switching end to end: on-demand discovery, a per-workspace save, and what never leaves Orca', async () => {
+  const { mkdtempSync, readFileSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { discoverAccounts } = await import('./accounts.ts')
+  const dir = mkdtempSync(join(tmpdir(), 'orca-flow-accounts-'))
+  const beforeDir = main.settingsDir.path, beforeRun = main.accountDiscovery.run
+  const calls: string[][] = []
+  // Synthetic Orca answers in accounts.list's shape, with the fields the projection must drop.
+  const block = (p: string) => p === 'claude'
+    ? { accounts: [{ id: 'acct-c1', email: 'dev@studio.example', managedAuthRuntime: 'host', organizationUuid: 'org-studio', organizationName: 'Studio', home: '/fixture/home/c1' }, { id: 'acct-c2', email: 'qa@studio.example', managedAuthRuntime: 'host', organizationUuid: 'org-studio', home: '/fixture/home/c2' }], systemDefaultHome: '/fixture/home/.claude', systemDefaultEmail: 'dev@studio.example', systemDefaultOrganizationUuid: 'org-studio' }
+    : { accounts: [{ id: 'acct-x1', email: 'ops@studio.example', managedHomeRuntime: 'host', providerAccountId: 'prov-1', workspaceLabel: 'Studio' }], systemDefault: { hasAuth: false } }
+  let fail = false
+  main.settingsDir.path = dir
+  main.accountDiscovery.run = () => discoverAccounts(async (args) => { calls.push(args); if (fail) throw new Error('orca account list timed out'); return block(args[3]) })
+  const host = mockHost({ results: { 'statusBar.update': {}, 'workspace.list': { workspaces: [], truncated: false } } })
+  const worker = await mountWorker(main, { host })
+  try {
+    assert.equal(calls.length, 0, 'nothing is listed until the page asks')
+    const found = await worker.request('sidebar.accounts') as import('./accounts.ts').AccountsState
+    assert.deepEqual(found.claude.accounts.map((a) => [a.id, a.systemDefault]), [['acct-c1', true], ['acct-c2', false]])
+    assert.deepEqual(found.codex.accounts.map((a) => a.label), ['ops@studio.example'])
+    assert.deepEqual([found.enforcement.transfer, found.enforcement.paidUsageStop], [false, false])
+    for (const leak of ['/fixture', 'org-studio', 'prov-1']) assert.equal(JSON.stringify(found).includes(leak), false, `the panel gets no ${leak}`)
+    assert.ok(calls.every((a) => a[0] === 'account' && a[1] === 'list'), 'only lists: no select, add or rm')
+
+    const settings = (await worker.request('sidebar.settings') as import('./protocol.ts').SettingsState).settings
+    assert.deepEqual(settings.accountSwitching, { workspaces: {} }, 'on everywhere by default')
+    const next = { ...settings, accountSwitching: { workspaces: { 'identity:atlas': { enabled: true, exclude: { claude: ['acct-c2'], codex: [] } } } } }
+    const saved = await worker.request('sidebar.saveSettings', { settings: next }) as { ok: boolean; state: import('./protocol.ts').SettingsState }
+    assert.equal(saved.ok, true)
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')), { accountSwitching: { workspaces: { 'identity:atlas': { enabled: true, exclude: { claude: ['acct-c2'], codex: [] } } } } }, 'only the deviation is written')
+    assert.deepEqual((await worker.request('sidebar.settings') as import('./protocol.ts').SettingsState).settings.accountSwitching, next.accountSwitching, 'it reads back')
+
+    fail = true
+    const failed = await worker.request('sidebar.accounts') as import('./accounts.ts').AccountsState
+    assert.deepEqual([failed.claude.error, failed.codex.error], ['Orca took too long to list Claude accounts.', 'Orca took too long to list Codex accounts.'])
+
+    writeFileSync(join(dir, 'config.json'), '{ broken')
+    const refused = await worker.request('sidebar.saveSettings', { settings: next }) as { ok: boolean; error?: string; state: import('./protocol.ts').SettingsState }
+    assert.equal(refused.ok, false)
+    assert.match(refused.error ?? '', /won’t overwrite/)
+    assert.ok(refused.state.error, 'the dialog learns the file is broken')
+    assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), '{ broken')
+  } finally {
+    main.settingsDir.path = beforeDir
+    main.accountDiscovery.run = beforeRun
+    await worker.deactivate()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

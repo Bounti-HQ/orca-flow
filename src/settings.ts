@@ -12,7 +12,18 @@ export type WriterSetting = { provider: WriterProvider; model?: string; enabled:
 export type MessageFormat = 'off' | 'all' | string[]
 /** Parts of Orca Flow that show only when switched on (Settings → Features). Display only: a switch never touches Orca's own data. */
 export type FeatureSettings = { bots: boolean; goals: boolean; linear: boolean; tokenSpeed: boolean }
-export type FlowSettings = { writers: WriterSetting[]; messageFormat: MessageFormat; marginGB: number; warnHeadroomGB: number; linearDryRun: boolean; routing: RoutingSettings; features: FeatureSettings }
+/**
+ * One workspace's deviation from the default (on, every eligible login): switching off, or Orca's ids
+ * of managed logins never to continue on. Exclusions only ever remove destinations.
+ */
+export type AccountOverride = { enabled: boolean; exclude: { claude: string[]; codex: string[] } }
+/**
+ * Settings → Account switching, by workspace (its Orca Flow row id). Only deviations are stored; a
+ * workspace with none is absent. A preference only: it authorizes no sharing (each workspace's scope
+ * is the host's), and nothing enforces it until the host can (src/accounts.ts).
+ */
+export type AccountSwitchingSettings = { workspaces: Record<string, AccountOverride> }
+export type FlowSettings = { writers: WriterSetting[]; messageFormat: MessageFormat; marginGB: number; warnHeadroomGB: number; linearDryRun: boolean; routing: RoutingSettings; features: FeatureSettings; accountSwitching: AccountSwitchingSettings }
 export type SettingsKey = keyof FlowSettings
 
 export const WRITER_PROVIDERS: readonly WriterProvider[] = ['claude', 'codex', 'antigravity']
@@ -37,9 +48,12 @@ export const DEFAULT_SETTINGS: FlowSettings = {
   warnHeadroomGB: 2,
   linearDryRun: false,
   routing: DEFAULT_ROUTING,
-  features: { bots: false, goals: false, linear: true, tokenSpeed: true }
+  features: { bots: false, goals: false, linear: true, tokenSpeed: true },
+  accountSwitching: { workspaces: {} }
 }
-export const SETTINGS_KEYS: readonly SettingsKey[] = ['writers', 'messageFormat', 'marginGB', 'warnHeadroomGB', 'linearDryRun', 'routing', 'features']
+/** What a workspace without an override gets: on, for every eligible login. */
+export const DEFAULT_ACCOUNT_OVERRIDE: AccountOverride = { enabled: true, exclude: { claude: [], codex: [] } }
+export const SETTINGS_KEYS: readonly SettingsKey[] = ['writers', 'messageFormat', 'marginGB', 'warnHeadroomGB', 'linearDryRun', 'routing', 'features', 'accountSwitching']
 
 export const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v))
@@ -83,6 +97,37 @@ export function normalizeFeatures(value: unknown): FeatureSettings {
   return { bots: f.bots === true, goals: f.goals === true, linear: f.linear !== false, tokenSpeed: f.tokenSpeed !== false }
 }
 
+/** One override: on unless exactly false; each provider's exclusions as unique, sorted ids. */
+export function normalizeAccountOverride(value: unknown): AccountOverride {
+  const a = isObject(value) ? value : {}
+  const ex = isObject(a.exclude) ? a.exclude : {}
+  const ids = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && !!x.trim()).map((x) => x.trim()))].sort() : [])
+  return { enabled: a.enabled !== false, exclude: { claude: ids(ex.claude), codex: ids(ex.codex) } }
+}
+
+/**
+ * Account switching: each workspace's override, in id order, dropping any that equal the default. An
+ * older file (no key) or a broken value reads as on for every login everywhere.
+ */
+export function normalizeAccountSwitching(value: unknown): AccountSwitchingSettings {
+  const ws = isObject(value) && isObject(value.workspaces) ? value.workspaces : {}
+  const out: Record<string, AccountOverride> = {}
+  for (const id of Object.keys(ws).filter((k) => k.trim()).sort()) {
+    const o = normalizeAccountOverride(ws[id])
+    if (!same(o, DEFAULT_ACCOUNT_OVERRIDE)) out[id] = o
+  }
+  return { workspaces: out }
+}
+
+/** A workspace's preference: its override, else the default. */
+export const accountOverrideFor = (s: AccountSwitchingSettings, workspace: string): AccountOverride =>
+  clone(s.workspaces[workspace] ?? DEFAULT_ACCOUNT_OVERRIDE)
+
+/** The settings with one workspace's preference set; back at the default, its override is removed. */
+export function withAccountOverride(s: AccountSwitchingSettings, workspace: string, next: AccountOverride): AccountSwitchingSettings {
+  return normalizeAccountSwitching({ workspaces: { ...s.workspaces, [workspace]: next } })
+}
+
 const gb = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback)
 
 /** What a config object means, every key filled in; a missing or unusable value reads as its default. */
@@ -95,7 +140,8 @@ export function normalizeSettings(raw: unknown): FlowSettings {
     warnHeadroomGB: gb(c.warnHeadroomGB, DEFAULT_SETTINGS.warnHeadroomGB),
     linearDryRun: c.linearDryRun === true,
     routing: normalizeRouting(c.routing),
-    features: normalizeFeatures(c.features)
+    features: normalizeFeatures(c.features),
+    accountSwitching: normalizeAccountSwitching(c.accountSwitching)
   }
 }
 
@@ -150,6 +196,20 @@ function mergeRouting(current: RoutingSettings, base: RoutingSettings, want: Rou
 }
 
 /**
+ * Account switching three ways, one workspace at a time: a workspace's override is the dialog's only
+ * where the dialog changed that workspace, so another window's override for any workspace stays.
+ */
+function mergeAccounts(current: AccountSwitchingSettings, base: AccountSwitchingSettings, want: AccountSwitchingSettings): AccountSwitchingSettings {
+  const ids = new Set([...Object.keys(current.workspaces), ...Object.keys(base.workspaces), ...Object.keys(want.workspaces)])
+  const out: Record<string, AccountOverride> = {}
+  for (const id of ids) {
+    const o = pick(current.workspaces[id] ?? DEFAULT_ACCOUNT_OVERRIDE, base.workspaces[id] ?? DEFAULT_ACCOUNT_OVERRIDE, want.workspaces[id] ?? DEFAULT_ACCOUNT_OVERRIDE)
+    if (!same(o, DEFAULT_ACCOUNT_OVERRIDE)) out[id] = clone(o)
+  }
+  return normalizeAccountSwitching({ workspaces: out })
+}
+
+/**
  * What a dialog's save should leave in the file when the dialog was opened (or last saved) with
  * `base` and the file holds `current` now, because another window or a hand edit changed it since:
  * only what the user changed in the dialog (`want` against `base`) is applied; every other setting
@@ -166,7 +226,8 @@ export function mergeSettings(current: FlowSettings, base: FlowSettings, want: F
     warnHeadroomGB: pick(c.warnHeadroomGB, b.warnHeadroomGB, w.warnHeadroomGB),
     linearDryRun: pick(c.linearDryRun, b.linearDryRun, w.linearDryRun),
     routing: mergeRouting(c.routing, b.routing, w.routing),
-    features
+    features,
+    accountSwitching: mergeAccounts(c.accountSwitching, b.accountSwitching, w.accountSwitching)
   })
 }
 
@@ -192,6 +253,7 @@ export type Draft = {
   goals: boolean
   linear: boolean
   tokenSpeed: boolean
+  accountSwitching: AccountSwitchingSettings
 }
 export type DraftKey = keyof Draft
 export const DEFAULT_FOLDERS = ['~/orca/coordinators']
@@ -211,7 +273,8 @@ export function toDraft(s: FlowSettings): Draft {
     writers: writers.map((w) => w.provider), enabled, models,
     format: Array.isArray(format) ? 'folders' : format,
     folders: Array.isArray(format) ? format : [...DEFAULT_FOLDERS],
-    marginGB: s.marginGB, warnHeadroomGB: s.warnHeadroomGB, linearDryRun: s.linearDryRun, routing: clone(normalizeRouting(s.routing)), ...normalizeFeatures(s.features)
+    marginGB: s.marginGB, warnHeadroomGB: s.warnHeadroomGB, linearDryRun: s.linearDryRun, routing: clone(normalizeRouting(s.routing)), ...normalizeFeatures(s.features),
+    accountSwitching: normalizeAccountSwitching(s.accountSwitching)
   }
 }
 
@@ -219,7 +282,8 @@ export function fromDraft(d: Draft): FlowSettings {
   return normalizeSettings({
     writers: d.writers.map((provider) => ({ provider, ...(WRITER_MODELS[provider].length ? { model: d.models[provider] } : {}), enabled: d.enabled[provider] })),
     messageFormat: d.format === 'folders' ? d.folders : d.format,
-    marginGB: d.marginGB, warnHeadroomGB: d.warnHeadroomGB, linearDryRun: d.linearDryRun, routing: d.routing, features: { bots: d.bots, goals: d.goals, linear: d.linear, tokenSpeed: d.tokenSpeed }
+    marginGB: d.marginGB, warnHeadroomGB: d.warnHeadroomGB, linearDryRun: d.linearDryRun, routing: d.routing, features: { bots: d.bots, goals: d.goals, linear: d.linear, tokenSpeed: d.tokenSpeed },
+    accountSwitching: d.accountSwitching
   })
 }
 

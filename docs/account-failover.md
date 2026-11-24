@@ -94,6 +94,42 @@ page in Settings, beside Models, says that every eligible login is used by defau
 usage, and holds the off switch and per-login exclusions. Off means Flow doesn't step in, so the
 provider goes on to paid usage.
 
+## Settings → Account switching (implemented)
+
+Orca Flow ships the preferences, not the enforcement. The page sits next to **Models** in Settings
+and edits the workspace Settings was opened in: the focused Orca Flow row, else the focused
+coordinator's folder workspace. Its name is shown beside the controls. With no focused workspace,
+or two different ones, nothing can be changed and the page says a workspace is needed.
+
+- **Default and storage.** Every workspace is on, for every eligible login. `~/.orca-flow/config.json`
+  holds only deviations, as `accountSwitching.workspaces[<row id>] = { enabled, exclude: { claude,
+  codex } }` with Orca's managed account ids. A workspace back at the default is removed, and an
+  older file without the key reads as on everywhere. A file that can't be read is never overwritten.
+  An exclusion only removes destinations. Nothing on the page grants a workspace access to a login.
+- **Discovery.** It runs only when the page opens (or on **Try Again**), as `orca account list
+  --agent claude --json` and `--agent codex --json`. These read Orca's saved list with
+  `refreshUsage: false`. Plain `orca account list --json` would refresh stale usage readings. It
+  never selects, adds or removes an account or reads a token file. The panel receives only each
+  login's Orca id, its label (email, or a name with the email), its organization or workspace name,
+  whether it needs a new sign-in, and whether it is System default. Home paths, organization and
+  provider account ids stay in the worker, and WSL logins are left out. System default matches a
+  Claude login by email and organization (or Orca's `runsOnSystemDefault`), and a Codex login by
+  email and provider account. A match that would fit two logins is not made.
+- **Failures.** Each provider is read separately, so one failing never hides the other. An Orca
+  without the command, a timeout and an unusable answer each show one short line, with no paths.
+- **What the page keeps apart.** The preference is saved for the workspace. **New launches** keep
+  the account Orca selects (its status-bar picker or `orca account select`), which the page never
+  changes. **Move to another account** and **Stop before paid usage** read "Not supported", each
+  with its reason, because no host status offers them. Orca Flow shows no switch, Moving, Paused
+  or waiting line in the sidebar. Those states
+  remain a proposal in the preview below, for when the host can verify them.
+
+`src/accounts.ts` (discovery and projection), `src/settings.ts` (the stored preference) and
+`src/panel/settings.ts` (`pageAccounts`) hold the code. `scripts/settings-preview.mjs --accounts`
+captures the page in its states. `node scripts/account-failover-preview.mjs --shots <dir>` builds this
+worktree's panel with synthetic data, checks the page's navigation, saves, reset, missing workspace
+and failed reads, and draws the proposed sidebar states.
+
 ## Installed-host evidence
 
 Checked on 2026-11-24 using the installed CLI, generated plugin types and bundled contracts.
@@ -131,9 +167,9 @@ were not exercised.
    that scope. Defaulting to all never sends private work to an unrelated identity. When Orca cannot
    establish the scope, leave the work in place and say why. Reauthentication under a different
    identity makes a login a new candidate that has to be checked again. Offer a quiet override,
-   reached only when the user looks for it, to exclude logins or turn switching off. It lives on its
-   own **Account switching** Settings page. Healthy work shows no account chrome. A successful switch
-   leaves one inline record.
+   reached only when the user looks for it, to exclude logins or turn switching off for one
+   workspace. It lives on its own **Account switching** Settings page, implemented in Orca Flow
+   (see above). Healthy work shows no account chrome. A successful switch leaves one inline record.
    `docs/account-failover-prototype.html` previews this in the released Orca Flow 0.2.98 panel with
    synthetic data (`node scripts/account-failover-preview.mjs` rebuilds it).
 2. **Require a confirmed trigger.** The primary trigger is a fresh, attributable reading at 100% or

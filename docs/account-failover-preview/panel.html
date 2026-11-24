@@ -729,6 +729,11 @@ html.light #settings {
 .s-warn svg { width: 13px; height: 13px; }
 .s-value.s-bad { color: var(--danger); }
 .s-checking { font-style: normal; color: var(--faint); }
+/* Account switching (src/panel/settings.ts pageAccounts): the one visible sentence under its switch, and what this Orca can enforce. */
+.s-note { margin: -8px 10px 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.s-note.s-need { margin-top: -10px; color: var(--warn); }
+.s-value.s-warnv { color: var(--warn); }
+.s-label.s-muted { color: var(--muted); white-space: normal; }
 .s-page { container-type: inline-size; }
 #settings { --t-violet: #c4b5fd; --t-blue: #7cc0ff; --t-pink: #ff9fc0; --t-teal: #5eead4; --t-amber: #f5d76e; --t-green: #7ee2a8; --t-red: #ff9f8a; --t-gray: #a1a1a6; }
 html.light #settings { --t-violet: #6d4fd1; --t-blue: #1668c4; --t-pink: #c2185b; --t-teal: #0f766e; --t-amber: #9a6208; --t-green: #15803d; --t-red: #c2410c; --t-gray: #6b6b73; }
@@ -1215,7 +1220,6 @@ html.light { --c3: #eda100; --c4: #e87ba4; --c5: #008300; }
 .r > .acct{align-self:baseline;display:inline-flex;align-items:center;gap:3px;color:var(--faint);font-size:11px;white-space:nowrap}
 .r > .acct svg{width:11px;height:11px;flex:none;align-self:center}
 .acct-line .act{margin-left:auto;font-size:11px}
-.acct-note{margin:0;padding:0 10px;font-size:11.5px;color:var(--muted)}
 </style><script>
 'use strict';
 const q = new URLSearchParams(location.search);
@@ -1223,7 +1227,7 @@ const q = new URLSearchParams(location.search);
 document.documentElement.style.setProperty('--orca-background', '#000');
 const NOW = 1795527000000;
 Date.now = () => NOW;
-const snapshot = {"source":"cli","ready":true,"focusedPanes":["term_hours"],"handoverProviders":["claude","codex"],"coordinatorProviders":[{"id":"claude","name":"Claude"},{"id":"codex","name":"Codex"}],"capacity":{"verdict":"ok","freeGB":11.4,"marginGB":2,"diskFreeGB":312,"agentGB":0.5,"envGB":1.5,"pressure":"normal","finishedOpen":2},"features":{"goals":true,"linear":true,"tokenSpeed":true},"skillReload":[{"pane":"intake","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"courts","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"deeplink","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"atlas-main","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"lab-main","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"usage","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000}],"coordinators":[{"key":"atlas","name":"atlas","repos":[],"workspaceId":"folder:atlas","session":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"sessions":{"version":1,"current":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","members":[{"id":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","workspaceId":"folder:atlas","orcaSession":"session-atlas-main","agentType":"codex","title":"Atlas coordination","paneKey":"atlas-main","terminals":["term_atlas-main"],"resumeSessionId":"provider-atlas-main","lastAgent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}]},"members":[{"id":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","workspaceId":"folder:atlas","orcaSession":"session-atlas-main","agentType":"codex","title":"Atlas coordination","paneKey":"atlas-main","terminals":["term_atlas-main"],"resumeSessionId":"provider-atlas-main","lastAgent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}],"look":{"color":"#e8774a","shape":"pentagon"}},{"key":"flow-lab","name":"flow-lab","repos":["flow-lab"],"workspaceId":"folder:flow-lab","session":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"sessions":{"version":1,"current":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","members":[{"id":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","workspaceId":"folder:flow-lab","orcaSession":"session-lab-main","agentType":"codex","title":"Flow lab coordination","paneKey":"lab-main","terminals":["term_lab-main"],"resumeSessionId":"provider-lab-main","lastAgent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}]},"members":[{"id":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","workspaceId":"folder:flow-lab","orcaSession":"session-lab-main","agentType":"codex","title":"Flow lab coordination","paneKey":"lab-main","terminals":["term_lab-main"],"resumeSessionId":"provider-lab-main","lastAgent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}],"look":{"color":"#a66bf2","shape":"shield"}},{"key":"harbor","name":"harbor","repos":[],"workspaceId":"folder:harbor","session":null,"sessions":{"version":1,"current":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","members":[{"id":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","workspaceId":"folder:harbor","orcaSession":"session-harbor-main","agentType":"codex","title":"Harbor coordination","paneKey":"harbor-main","terminals":["term_harbor-main"],"resumeSessionId":"provider-harbor-main","lastAgent":{"paneKey":"harbor-main","agentType":"codex","title":"Harbor coordination","live":false,"state":"done","workingMode":null,"coordinator":"harbor","leadPane":null,"parentPane":null,"orcaSession":"session-harbor-main","dispatch":null,"terminal":"term_harbor-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":null}]},"members":[{"id":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","workspaceId":"folder:harbor","orcaSession":"session-harbor-main","agentType":"codex","title":"Harbor coordination","paneKey":"harbor-main","terminals":["term_harbor-main"],"resumeSessionId":"provider-harbor-main","lastAgent":{"paneKey":"harbor-main","agentType":"codex","title":"Harbor coordination","live":false,"state":"done","workingMode":null,"coordinator":"harbor","leadPane":null,"parentPane":null,"orcaSession":"session-harbor-main","dispatch":null,"terminal":"term_harbor-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":null}],"look":{"color":"#1f6f78","shape":"hex"}}],"rows":[{"id":"folder:atlas","name":"atlas","branch":null,"repo":"atlas","path":"/fixture/folder:atlas","main":true,"agents":[{"paneKey":"intake","agentType":"codex","title":"Harbor rota import feedback","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-intake","dispatch":"open","terminal":"term_intake","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795509000000,"createdAt":1,"pr":null,"folderOf":"atlas"},{"id":"folder:atlas","name":"atlas","branch":null,"repo":"atlas","path":"/fixture/folder:atlas","main":true,"agents":[{"paneKey":"courts","agentType":"codex","title":"Courtside booking blocker","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-courts","dispatch":"open","terminal":"term_courts","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795509000000,"createdAt":1,"pr":null,"folderOf":"atlas"},{"id":"mono:onboarding","name":"Onboarding form validation","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"onboarding","agentType":"claude","title":"Onboarding form validation","live":true,"state":"working","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-onboarding","dispatch":"open","terminal":"term_onboarding","question":null,"summary":null,"model":{"name":"Opus 5.5","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":{"number":4180,"state":"open","url":"https://example.com/pr/4180","checks":"success"},"linearIssue":"ATL-212"},{"id":"mono:onboarding","name":"PR 4180 web fixes","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"webfix","agentType":"codex","title":"PR 4180 web fixes","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":"onboarding","parentPane":"onboarding","orcaSession":"session-webfix","dispatch":"settled","terminal":"term_webfix","question":null,"summary":{"role":"worker","title":"Done","glance":"","goal":"","since":"","needs":{"type":"none","ask":"","options":[]},"effort":"quick","priority":"P2"},"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"mono:onboarding","name":"Android deep-link fix","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"deeplink","agentType":"codex","title":"Android deep-link fix","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":"onboarding","parentPane":"onboarding","orcaSession":"session-deeplink","dispatch":"settled","terminal":"term_deeplink","question":null,"summary":{"role":"worker","title":"Done","glance":"","goal":"","since":"","needs":{"type":"none","ask":"","options":[]},"effort":"quick","priority":"P2"},"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"mono:hours","name":"Weekly hours target","branch":"atl-219-weekly-hours","repo":"mono","path":"/fixture/mono:hours","main":false,"agents":[{"paneKey":"hours","agentType":"codex","title":"Weekly hours target","live":true,"state":"working","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-hours","dispatch":"open","terminal":"term_hours","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526280000,"createdAt":1,"pr":null,"linearIssue":"ATL-219"},{"id":"flow:usage","name":"Usage report export","branch":"usage-report-export","repo":"flow-lab","path":"/fixture/flow:usage","main":false,"agents":[{"paneKey":"usage","agentType":"codex","title":"Usage report export","live":true,"state":"working","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":"lab-main","orcaSession":"session-usage","dispatch":"open","terminal":"term_usage","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526760000,"createdAt":1,"pr":null},{"id":"idle:0","name":"fixture-branch-1","branch":"feature","repo":"mono","path":"/fixture/idle:0","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":0,"pr":null},{"id":"idle:1","name":"fixture-branch-2","branch":"feature","repo":"mono","path":"/fixture/idle:1","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"idle:2","name":"fixture-branch-3","branch":"feature","repo":"mono","path":"/fixture/idle:2","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":2,"pr":null},{"id":"idle:3","name":"fixture-branch-4","branch":"feature","repo":"mono","path":"/fixture/idle:3","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":3,"pr":null},{"id":"idle:4","name":"fixture-branch-5","branch":"feature","repo":"mono","path":"/fixture/idle:4","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":4,"pr":null},{"id":"idle:5","name":"fixture-branch-6","branch":"feature","repo":"mono","path":"/fixture/idle:5","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":5,"pr":null},{"id":"idle:6","name":"fixture-branch-7","branch":"feature","repo":"mono","path":"/fixture/idle:6","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":6,"pr":null},{"id":"idle:7","name":"fixture-branch-8","branch":"feature","repo":"mono","path":"/fixture/idle:7","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":7,"pr":null},{"id":"idle:8","name":"fixture-branch-9","branch":"feature","repo":"mono","path":"/fixture/idle:8","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":8,"pr":null},{"id":"idle:9","name":"fixture-branch-10","branch":"feature","repo":"mono","path":"/fixture/idle:9","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":9,"pr":null},{"id":"idle:10","name":"fixture-branch-11","branch":"feature","repo":"mono","path":"/fixture/idle:10","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":10,"pr":null},{"id":"idle:11","name":"fixture-branch-12","branch":"feature","repo":"mono","path":"/fixture/idle:11","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":11,"pr":null}]};
+const snapshot = {"source":"cli","ready":true,"focusedPanes":["term_hours"],"handoverProviders":["claude","codex"],"coordinatorProviders":[{"id":"claude","name":"Claude"},{"id":"codex","name":"Codex"}],"capacity":{"verdict":"ok","freeGB":11.4,"marginGB":2,"diskFreeGB":312,"agentGB":0.5,"envGB":1.5,"pressure":"normal","finishedOpen":2},"features":{"goals":true,"linear":true,"tokenSpeed":true},"skillReload":[{"pane":"intake","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"courts","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"deeplink","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"atlas-main","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"lab-main","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"usage","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000}],"coordinators":[{"key":"atlas","name":"atlas","repos":[],"workspaceId":"folder:atlas","session":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"sessions":{"version":1,"current":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","members":[{"id":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","workspaceId":"folder:atlas","orcaSession":"session-atlas-main","agentType":"codex","title":"Atlas coordination","paneKey":"atlas-main","terminals":["term_atlas-main"],"resumeSessionId":"provider-atlas-main","lastAgent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}]},"members":[{"id":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","workspaceId":"folder:atlas","orcaSession":"session-atlas-main","agentType":"codex","title":"Atlas coordination","paneKey":"atlas-main","terminals":["term_atlas-main"],"resumeSessionId":"provider-atlas-main","lastAgent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}],"look":{"color":"#e8774a","shape":"pentagon"}},{"key":"flow-lab","name":"flow-lab","repos":["flow-lab"],"workspaceId":"folder:flow-lab","session":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"sessions":{"version":1,"current":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","members":[{"id":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","workspaceId":"folder:flow-lab","orcaSession":"session-lab-main","agentType":"codex","title":"Flow lab coordination","paneKey":"lab-main","terminals":["term_lab-main"],"resumeSessionId":"provider-lab-main","lastAgent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}]},"members":[{"id":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","workspaceId":"folder:flow-lab","orcaSession":"session-lab-main","agentType":"codex","title":"Flow lab coordination","paneKey":"lab-main","terminals":["term_lab-main"],"resumeSessionId":"provider-lab-main","lastAgent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}],"look":{"color":"#a66bf2","shape":"shield"}},{"key":"harbor","name":"harbor","repos":[],"workspaceId":"folder:harbor","session":null,"sessions":{"version":1,"current":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","members":[{"id":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","workspaceId":"folder:harbor","orcaSession":"session-harbor-main","agentType":"codex","title":"Harbor coordination","paneKey":"harbor-main","terminals":["term_harbor-main"],"resumeSessionId":"provider-harbor-main","lastAgent":{"paneKey":"harbor-main","agentType":"codex","title":"Harbor coordination","live":false,"state":"done","workingMode":null,"coordinator":"harbor","leadPane":null,"parentPane":null,"orcaSession":"session-harbor-main","dispatch":null,"terminal":"term_harbor-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":null}]},"members":[{"id":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","workspaceId":"folder:harbor","orcaSession":"session-harbor-main","agentType":"codex","title":"Harbor coordination","paneKey":"harbor-main","terminals":["term_harbor-main"],"resumeSessionId":"provider-harbor-main","lastAgent":{"paneKey":"harbor-main","agentType":"codex","title":"Harbor coordination","live":false,"state":"done","workingMode":null,"coordinator":"harbor","leadPane":null,"parentPane":null,"orcaSession":"session-harbor-main","dispatch":null,"terminal":"term_harbor-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":null}],"look":{"color":"#1f6f78","shape":"hex"}}],"rows":[{"id":"folder:atlas","name":"atlas","branch":null,"repo":"atlas","path":"/fixture/folder:atlas","main":true,"agents":[{"paneKey":"intake","agentType":"codex","title":"Harbor rota import feedback","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-intake","dispatch":"open","terminal":"term_intake","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795509000000,"createdAt":1,"pr":null,"folderOf":"atlas"},{"id":"folder:atlas","name":"atlas","branch":null,"repo":"atlas","path":"/fixture/folder:atlas","main":true,"agents":[{"paneKey":"courts","agentType":"codex","title":"Courtside booking blocker","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-courts","dispatch":"open","terminal":"term_courts","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795509000000,"createdAt":1,"pr":null,"folderOf":"atlas"},{"id":"mono:onboarding","name":"Onboarding form validation","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"onboarding","agentType":"claude","title":"Onboarding form validation","live":true,"state":"working","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-onboarding","dispatch":"open","terminal":"term_onboarding","question":null,"summary":null,"model":{"name":"Opus 5.5","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":{"number":4180,"state":"open","url":"https://example.com/pr/4180","checks":"success"},"linearIssue":"ATL-212"},{"id":"mono:onboarding","name":"PR 4180 web fixes","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"webfix","agentType":"codex","title":"PR 4180 web fixes","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":"onboarding","parentPane":"onboarding","orcaSession":"session-webfix","dispatch":"settled","terminal":"term_webfix","question":null,"summary":{"role":"worker","title":"Done","glance":"","goal":"","since":"","needs":{"type":"none","ask":"","options":[]},"effort":"quick","priority":"P2"},"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"mono:onboarding","name":"Android deep-link fix","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"deeplink","agentType":"codex","title":"Android deep-link fix","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":"onboarding","parentPane":"onboarding","orcaSession":"session-deeplink","dispatch":"settled","terminal":"term_deeplink","question":null,"summary":{"role":"worker","title":"Done","glance":"","goal":"","since":"","needs":{"type":"none","ask":"","options":[]},"effort":"quick","priority":"P2"},"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"mono:hours","name":"Weekly hours target","branch":"atl-219-weekly-hours","repo":"mono","path":"/fixture/mono:hours","main":false,"agents":[{"paneKey":"hours","agentType":"codex","title":"Weekly hours target","live":true,"state":"working","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-hours","dispatch":"open","terminal":"term_hours","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":true,"workspaceStatus":null,"lastActivityAt":1795526280000,"createdAt":1,"pr":null,"linearIssue":"ATL-219"},{"id":"flow:usage","name":"Usage report export","branch":"usage-report-export","repo":"flow-lab","path":"/fixture/flow:usage","main":false,"agents":[{"paneKey":"usage","agentType":"codex","title":"Usage report export","live":true,"state":"working","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":"lab-main","orcaSession":"session-usage","dispatch":"open","terminal":"term_usage","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526760000,"createdAt":1,"pr":null},{"id":"idle:0","name":"fixture-branch-1","branch":"feature","repo":"mono","path":"/fixture/idle:0","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":0,"pr":null},{"id":"idle:1","name":"fixture-branch-2","branch":"feature","repo":"mono","path":"/fixture/idle:1","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"idle:2","name":"fixture-branch-3","branch":"feature","repo":"mono","path":"/fixture/idle:2","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":2,"pr":null},{"id":"idle:3","name":"fixture-branch-4","branch":"feature","repo":"mono","path":"/fixture/idle:3","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":3,"pr":null},{"id":"idle:4","name":"fixture-branch-5","branch":"feature","repo":"mono","path":"/fixture/idle:4","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":4,"pr":null},{"id":"idle:5","name":"fixture-branch-6","branch":"feature","repo":"mono","path":"/fixture/idle:5","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":5,"pr":null},{"id":"idle:6","name":"fixture-branch-7","branch":"feature","repo":"mono","path":"/fixture/idle:6","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":6,"pr":null},{"id":"idle:7","name":"fixture-branch-8","branch":"feature","repo":"mono","path":"/fixture/idle:7","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":7,"pr":null},{"id":"idle:8","name":"fixture-branch-9","branch":"feature","repo":"mono","path":"/fixture/idle:8","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":8,"pr":null},{"id":"idle:9","name":"fixture-branch-10","branch":"feature","repo":"mono","path":"/fixture/idle:9","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":9,"pr":null},{"id":"idle:10","name":"fixture-branch-11","branch":"feature","repo":"mono","path":"/fixture/idle:10","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":10,"pr":null},{"id":"idle:11","name":"fixture-branch-12","branch":"feature","repo":"mono","path":"/fixture/idle:11","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":11,"pr":null}]};
 const goals = [{"id":"g1","title":"Ship role-based workspace access","next":"Check where the ATL-212 lead is","steps":[{"text":"Access matrix","done":false},{"text":"Moderation rights","done":false},{"text":"Audit log","done":false},{"text":"Review","done":false}],"links":{"linear":[],"worktrees":[]},"status":"open","createdAt":1795095000000,"updatedAt":1795519800000,"lastChange":{"by":"you","field":"next","at":1795519800000},"workingPanes":[]},{"id":"g2","title":"Finish splitting long lessons into short ones","next":"Check CI for PR #4180 after the review fixes.","steps":[],"links":{"linear":[],"worktrees":[]},"status":"open","createdAt":1795095000000,"updatedAt":1795519800000,"lastChange":{"by":"you","field":"next","at":1795519800000},"workingPanes":[]},{"id":"g3","title":"Rota templates for two regions, ready for legal review","next":"Draft the first template","steps":[{"text":"First template","done":false},{"text":"Second template","done":false},{"text":"Sent for review","done":false},{"text":"Feedback in","done":false}],"links":{"linear":[],"worktrees":[]},"status":"open","createdAt":1795095000000,"updatedAt":1795519800000,"lastChange":{"by":"you","field":"next","at":1795519800000},"workingPanes":[]},{"id":"g4","title":"Compare other products before planning auto-fill for rotas","next":"List the products to analyze","steps":[],"links":{"linear":[],"worktrees":[]},"status":"open","createdAt":1795095000000,"updatedAt":1795519800000,"lastChange":{"by":"you","field":"next","at":1795519800000},"workingPanes":[]}];
 const settings = {"version":"0.2.98","error":null,"writers":[{"provider":"claude","lastSuccessAt":1795526880000,"failure":null,"installed":true},{"provider":"codex","lastSuccessAt":null,"failure":null,"installed":true}],"availability":{"agents":["claude","codex"],"models":{"claude":null,"codex":null}},"settings":{"writers":[{"provider":"claude","model":"haiku","enabled":true},{"provider":"codex","model":"gpt-6-luna","enabled":true}],"messageFormat":[],"marginGB":2,"warnHeadroomGB":2,"linearDryRun":false,"features":{"bots":false,"goals":true,"linear":true,"tokenSpeed":true},"routing":{"coordinator":{"agent":"codex","model":"gpt-6-astra","effort":"high"},"lead":null,"workers":{"simple":{"model":{"agent":"claude","model":"haiku"},"fallback":null},"normal":{"model":{"agent":"codex","model":"gpt-6-astra","effort":"medium"},"fallback":null},"hard":{"model":{"agent":"claude","model":"opus","effort":"high"},"fallback":null}},"types":[],"presets":[]}}};
 // ---- Account fixture (made-up identities and readings). Atlas may share context within the Studio organization.
@@ -1256,6 +1260,11 @@ const TARGET = PROVIDER === 'claude' ? 'onboarding' : 'usage';
 const NAME = { claude: 'Claude', codex: 'Codex' };
 const logins = (p) => { const d = DISCOVERED[p]; return d.filter((a) => !a.alias).map((a) => ({ ...a, systemDefault: d.some((x) => x.alias === a.id) })); };
 const excluded = new Set(JSON.parse(q.get('exclude') || '[]'));
+// What sidebar.accounts answers for a discovered login (src/accounts.ts DiscoveredAccount): every managed
+// login is listed; whether a workspace may share with it stays the host's to decide.
+const view = (a) => ({ id: a.id, label: a.email, organization: a.org, systemDefault: a.systemDefault, needsSignIn: false });
+const ENFORCEMENT = {"transfer":false,"paidUsageStop":false,"transferReason":"This Orca has no supported way to move a running conversation to another account. Orca Flow never switches one, and shows no switch, until Orca can.","paidUsageReason":"This Orca has no supported way to stop a conversation before a paid request. An account at 100% of its included usage goes on to paid usage as the provider allows."};
+if (q.get('workspace') === 'none') for (const r of snapshot.rows) r.active = false;
 let switching = q.get('switching') !== 'off';
 const eligible = (p) => logins(p).filter((a) => a.org === SCOPE && !excluded.has(a.id));
 const short = (email) => email.replace(/\.example$/, '');
@@ -1280,6 +1289,10 @@ window.orca = {
       if (name === 'sidebar.linear') return {"wire":1,"urlBase":"https://linear.example/issue/","me":"u1","teams":["ATL","OPS"],"cycles":[],"sent":{},"lastSent":{},"at":1795527000000,"states":[["In Progress","started","#f2c94c"],["Todo","unstarted","#e2e2e2"]],"projects":[["Access","#5e6ad2"]],"people":[["u1","You"]],"cycleIds":[],"issues":[["ATL-230","Fixture issue 1",2,0,0,0,-1,1795527000],["ATL-231","Fixture issue 2",2,1,0,0,-1,1795527000],["ATL-232","Fixture issue 3",2,0,0,0,-1,1795527000],["ATL-233","Fixture issue 4",2,1,0,0,-1,1795527000],["ATL-234","Fixture issue 5",2,0,0,0,-1,1795527000],["ATL-235","Fixture issue 6",2,1,0,0,-1,1795527000],["ATL-236","Fixture issue 7",2,0,0,0,-1,1795527000],["ATL-237","Fixture issue 8",2,1,0,0,-1,1795527000],["ATL-238","Fixture issue 9",2,0,0,0,-1,1795527000],["ATL-239","Fixture issue 10",2,1,0,0,-1,1795527000],["ATL-240","Fixture issue 11",2,0,0,0,-1,1795527000],["ATL-241","Fixture issue 12",2,1,0,0,-1,1795527000],["ATL-242","Fixture issue 13",2,0,0,0,-1,1795527000]]};
       if (name === 'sidebar.tokenSpeed') return {"now":1795527000000,"ready":true,"tokPerSec":21.9,"net":null,"internet":null,"models":[{"id":"claude-opus-5-5","label":"Opus 5.5","slot":0,"median1h":41,"median24h":41,"count1h":50,"count24h":50,"tokens24h":61625}],"series":{"1h":{"start":1795523400000,"step":60000,"tok":{"claude-opus-5-5":[0,0,0,0,0,0,0,0,0,0,15,17.3,19.6,21.9,24.1,26.4,17,19.3,21.6,23.9,26.2,16.8,19.1,21.4,23.6,25.9,16.5,18.8,21.1,23.4,25.7,16.3,18.6,20.9,23.1,25.4,16,18.3,20.6,22.9,25.2,15.8,18.1,20.4,22.6,24.9,15.5,17.8,20.1,22.4,24.7,15.3,17.6,19.9,22.1,24.4,15,17.3,19.6,21.9]},"up":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],"down":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],"netSecs":0},"24h":{"start":1795440600000,"step":900000,"tok":{"claude-opus-5-5":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,6.5,21.4,20.7,19.9]},"up":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],"down":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],"netSecs":0}}};
       if (name === 'sidebar.settings') return structuredClone(settings);
+      if (name === 'sidebar.accounts') return q.get('accounts') === 'fail'
+        ? { claude: { accounts: [], error: 'Orca took too long to list Claude accounts.' }, codex: { accounts: [], error: 'This Orca can’t list Codex accounts. Update Orca to see them here.' }, enforcement: ENFORCEMENT }
+        : { claude: { accounts: logins('claude').map(view), error: null }, codex: { accounts: logins('codex').map(view), error: null }, enforcement: ENFORCEMENT };
+      if (name === 'sidebar.saveSettings') { settings.settings = data.settings; return { ok: true, state: structuredClone(settings) }; }
       if (name === 'sidebar.checkUpdates') return { kind: 'current', current: '0.2.98', latest: '0.2.98', at: NOW };
       return { ok: true };
     },
@@ -1345,73 +1358,17 @@ function applyLine(o) {
   after.after(div);
 }
 
-// ---- Settings: Account switching, its own page beside Models in the released dialog.
-const NAV_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5.5h8.5M9 3l2.5 2.5L9 8M13 10.5H4.5M7 8l-2.5 2.5L7 13"/></svg>';
-let acctOpen = false;
-const atDefault = () => switching && excluded.size === 0;
-function navButton() {
-  const nav = document.getElementById('s-nav');
-  const models = nav?.querySelector('[data-page="models"]');
-  if (!models || nav.querySelector('[data-acct-page]')) return;
-  const narrow = window.innerWidth <= 520;
-  const b = document.createElement('button');
-  b.className = 's-nav-btn'; b.type = 'button'; b.dataset.acctPage = ''; b.setAttribute('aria-label', 'Account switching');
-  if (narrow) b.dataset.tip = 'Account switching';
-  b.innerHTML = '<span class="s-tile" style="background:#0f9d8a">' + NAV_ICON + '</span><span class="s-nav-label">Account switching</span>';
-  models.after(b);
-}
-function accountsPage() {
-  const tip = (t) => ' data-tip="' + esc(t) + '"';
-  const sw = (id, on, name, dis) => '<label class="s-switch"><input type="checkbox" role="switch" data-acct="' + id + '" ' + (on ? 'checked' : '') + (dis ? ' disabled' : '') + ' aria-label="' + esc(name) + '"><span></span></label>';
-  const rowHtml = (p, a) => {
-    const inScope = a.org === SCOPE;
-    const detail = inScope ? (a.systemDefault ? 'System default' : '') : 'Not shared';
-    const t = inScope ? a.org + (a.systemDefault ? ', also System default' : '') + '. Used when another ' + NAME[p] + ' login has used 100% of its included usage. Off: never used.' : 'Discovered, but no workspace here may share context with ' + a.org + ', so it is never used.';
-    return '<div class="s-row"><span class="s-label"' + tip(t) + '>' + esc(a.email) + '</span><div class="s-ctl">' + (detail ? '<span class="s-value">' + esc(detail) + '</span>' : '') + sw(a.id, inScope && !excluded.has(a.id), a.email, !inScope || !switching) + '</div></div>';
-  };
-  return '<div class="acct-page" style="display:contents"><h3 class="s-ptitle"><span class="s-label"' + tip('Which logins a conversation may continue on when its account has used its included usage.') + '>Account switching</span></h3>' +
-    '<section class="s-group"><div class="s-card"><div class="s-row"><span class="s-label"' + tip('Off: Orca Flow doesn’t step in, so an account at 100% goes on to paid usage as the provider allows.') + '>Continue on another account</span><div class="s-ctl">' + sw('all', switching, 'Continue on another account') + '</div></div></div>' +
-    '<p class="acct-note">On by default for every eligible Claude and Codex login. When a login has used 100% of its included usage, work moves to another login of the same provider that still has included usage, before its next paid request. When none has any, work pauses until a reset.</p></section>' +
-    ['claude', 'codex'].map((p) => '<section class="s-group"><h4 class="s-gh"><span class="s-label">' + NAME[p] + '</span></h4><div class="s-card">' + logins(p).map((a) => rowHtml(p, a)).join('') + '</div></section>').join('') +
-    (atDefault() ? '' : '<div class="s-foot"><button type="button" class="s-push" data-acct-reset>Reset to Defaults</button></div>') + '</div>';
-}
-function showAccounts() {
-  const page = document.getElementById('s-page'), nav = document.getElementById('s-nav');
-  if (!page || !nav) return;
-  navButton();
-  for (const b of nav.querySelectorAll('.s-nav-btn')) b.removeAttribute('aria-current');
-  nav.querySelector('[data-acct-page]')?.setAttribute('aria-current', 'page');
-  page.innerHTML = accountsPage();
-  page.scrollTop = 0;
-}
-function applySettings() {
-  if (document.getElementById('settings')?.hidden) return;
-  navButton();
-  const page = document.getElementById('s-page');
-  if (acctOpen && page && !page.querySelector('.acct-page')) showAccounts();
-}
 function apply() {
   const o = outcome();
   if (o) { applyRow(o); applyLine(o); }
-  applySettings();
 }
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-acct-check]')) { e.stopPropagation(); checked = true; document.querySelector('#main .acct-line')?.remove(); apply(); return; }
-  if (e.target.closest('[data-acct-page]')) { e.stopPropagation(); acctOpen = true; showAccounts(); return; }
-  if (e.target.closest('[data-acct-reset]')) { e.stopPropagation(); switching = true; excluded.clear(); showAccounts(); return; }
-  if (e.target.closest('#s-nav [data-page], #s-x')) acctOpen = false;
-}, true);
-document.addEventListener('change', (e) => {
-  const t = e.target.closest('[data-acct]');
-  if (!t) return;
-  e.stopPropagation();
-  if (t.dataset.acct === 'all') switching = t.checked; else t.checked ? excluded.delete(t.dataset.acct) : excluded.add(t.dataset.acct);
-  showAccounts(); document.querySelector('[data-acct="' + t.dataset.acct + '"]')?.focus();
 }, true);
 new MutationObserver(apply).observe(document.documentElement, { childList: true, subtree: true });
 if (STATE === 'settings') window.addEventListener('load', () => setTimeout(() => {
   document.getElementById('settings-open').click();
-  setTimeout(() => q.get('page') === 'models' ? document.querySelector('[data-page="models"]')?.click() : document.querySelector('[data-acct-page]')?.click(), 150);
+  setTimeout(() => document.querySelector('[data-page="' + (q.get('page') === 'models' ? 'models' : 'accounts') + '"]')?.click(), 150);
 }, 200));
 </script><script type="module">
 // src/handover-providers.ts
@@ -3476,6 +3433,26 @@ function findByKey(root2, selector, key) {
   return null;
 }
 
+// src/accounts.ts
+var SWITCH_PROVIDERS = ["claude", "codex"];
+var PROVIDER_NAME2 = { claude: "Claude", codex: "Codex" };
+var ENFORCEMENT = {
+  transfer: false,
+  paidUsageStop: false,
+  transferReason: "This Orca has no supported way to move a running conversation to another account. Orca Flow never switches one, and shows no switch, until Orca can.",
+  paidUsageReason: "This Orca has no supported way to stop a conversation before a paid request. An account at 100% of its included usage goes on to paid usage as the provider allows."
+};
+var NEW_LAUNCHES = "Orca picks the account each new agent launches with (its status bar account picker, or Settings \u2192 AI Provider Accounts). Account switching never changes that choice.";
+function currentWorkspace(snap2) {
+  if (!snap2) return null;
+  const rows = snap2.rows.filter((r2) => r2.active && !r2.historical && r2.id.trim());
+  const ids = new Set(rows.map((r2) => r2.id));
+  if (ids.size === 1) return { id: rows[0].id, name: rows[0].name || rows[0].id };
+  if (ids.size > 1) return null;
+  const coords = snap2.coordinators.filter((c) => c.active && c.workspaceId);
+  return coords.length === 1 ? { id: coords[0].workspaceId, name: coords[0].name } : null;
+}
+
 // src/routing.ts
 var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 var TASK_KINDS = ["simple", "normal", "hard"];
@@ -3947,8 +3924,10 @@ var DEFAULT_SETTINGS = {
   warnHeadroomGB: 2,
   linearDryRun: false,
   routing: DEFAULT_ROUTING,
-  features: { bots: false, goals: false, linear: true, tokenSpeed: true }
+  features: { bots: false, goals: false, linear: true, tokenSpeed: true },
+  accountSwitching: { workspaces: {} }
 };
+var DEFAULT_ACCOUNT_OVERRIDE = { enabled: true, exclude: { claude: [], codex: [] } };
 var same2 = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 var clone2 = (v) => JSON.parse(JSON.stringify(v));
 var isObject2 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
@@ -3979,6 +3958,25 @@ function normalizeFeatures(value) {
   const f = isObject2(value) ? value : {};
   return { bots: f.bots === true, goals: f.goals === true, linear: f.linear !== false, tokenSpeed: f.tokenSpeed !== false };
 }
+function normalizeAccountOverride(value) {
+  const a = isObject2(value) ? value : {};
+  const ex = isObject2(a.exclude) ? a.exclude : {};
+  const ids = (v) => Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === "string" && !!x.trim()).map((x) => x.trim()))].sort() : [];
+  return { enabled: a.enabled !== false, exclude: { claude: ids(ex.claude), codex: ids(ex.codex) } };
+}
+function normalizeAccountSwitching(value) {
+  const ws = isObject2(value) && isObject2(value.workspaces) ? value.workspaces : {};
+  const out = {};
+  for (const id of Object.keys(ws).filter((k) => k.trim()).sort()) {
+    const o = normalizeAccountOverride(ws[id]);
+    if (!same2(o, DEFAULT_ACCOUNT_OVERRIDE)) out[id] = o;
+  }
+  return { workspaces: out };
+}
+var accountOverrideFor = (s, workspace2) => clone2(s.workspaces[workspace2] ?? DEFAULT_ACCOUNT_OVERRIDE);
+function withAccountOverride(s, workspace2, next) {
+  return normalizeAccountSwitching({ workspaces: { ...s.workspaces, [workspace2]: next } });
+}
 var gb = (value, fallback) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
 function normalizeSettings(raw) {
   const c = isObject2(raw) ? raw : {};
@@ -3989,7 +3987,8 @@ function normalizeSettings(raw) {
     warnHeadroomGB: gb(c.warnHeadroomGB, DEFAULT_SETTINGS.warnHeadroomGB),
     linearDryRun: c.linearDryRun === true,
     routing: normalizeRouting(c.routing),
-    features: normalizeFeatures(c.features)
+    features: normalizeFeatures(c.features),
+    accountSwitching: normalizeAccountSwitching(c.accountSwitching)
   };
 }
 var DEFAULT_FOLDERS = ["~/orca/coordinators"];
@@ -4013,7 +4012,8 @@ function toDraft(s) {
     warnHeadroomGB: s.warnHeadroomGB,
     linearDryRun: s.linearDryRun,
     routing: clone2(normalizeRouting(s.routing)),
-    ...normalizeFeatures(s.features)
+    ...normalizeFeatures(s.features),
+    accountSwitching: normalizeAccountSwitching(s.accountSwitching)
   };
 }
 function fromDraft(d2) {
@@ -4024,7 +4024,8 @@ function fromDraft(d2) {
     warnHeadroomGB: d2.warnHeadroomGB,
     linearDryRun: d2.linearDryRun,
     routing: d2.routing,
-    features: { bots: d2.bots, goals: d2.goals, linear: d2.linear, tokenSpeed: d2.tokenSpeed }
+    features: { bots: d2.bots, goals: d2.goals, linear: d2.linear, tokenSpeed: d2.tokenSpeed },
+    accountSwitching: d2.accountSwitching
   });
 }
 var DEFAULT_DRAFT = toDraft(DEFAULT_SETTINGS);
@@ -4142,6 +4143,7 @@ var ICON2 = {
   models: glyph('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 2v2M9.5 2v2M6.5 12v2M9.5 12v2M2 6.5h2M2 9.5h2M12 6.5h2M12 9.5h2"/>'),
   features: glyph('<rect x="3" y="5" width="10" height="7" rx="2"/><path d="M8 5V3M6 8.2v.1M10 8.2v.1"/>'),
   about: glyph('<circle cx="8" cy="8" r="5.6"/><path d="M8 7.2v3.6M8 5.1v.1"/>'),
+  accounts: glyph('<path d="M3 5.5h8.5M9 3l2.5 2.5L9 8M13 10.5H4.5M7 8l-2.5 2.5L7 13"/>'),
   advanced: glyph('<path d="M2.5 5h6M11.5 5h2M2.5 11h2M7.5 11h6"/><circle cx="10" cy="5" r="1.5"/><circle cx="6" cy="11" r="1.5"/>'),
   grip: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/></svg>',
   minus: glyph('<path d="M4.5 8h7"/>'),
@@ -4188,6 +4190,13 @@ var PAGES = [
     tip: "The model each coordinator, lead and worker starts with. Applies to new launches only: running and resumed sessions keep their model."
   },
   {
+    id: "accounts",
+    label: "Account switching",
+    tint: "#0f9d8a",
+    keys: ["accountSwitching"],
+    tip: "Which Orca-managed Claude and Codex logins this workspace\u2019s work may continue on when its account has used its included usage. Finding a login never lets a workspace share with it: that stays the host\u2019s to decide."
+  },
+  {
     id: "format",
     label: "Message Check",
     tint: "#30b158",
@@ -4216,6 +4225,10 @@ var pageId = "summaries";
 var newFolder = "";
 var focusAfter = null;
 var opener = null;
+var workspace = null;
+var accounts = null;
+var accountsLoading = false;
+var accountsError = null;
 var session = settingsSession(async (settings) => {
   const r2 = await orca.plugin.request("sidebar.saveSettings", { settings });
   state = r2.state;
@@ -4300,6 +4313,49 @@ function pageAdvanced() {
     row(label("Linear test mode", "Log the Linear comments and status changes Orca Flow would send, and send nothing."), toggle("s-linear", d().linearDryRun, "Linear test mode", "Log the Linear comments and status changes Orca Flow would send, and send nothing.")),
     row(label("Settings file", "Saved in ~/.orca-flow/config.json. Settings you never change stay out of the file."), '<button type="button" class="s-push" id="s-reveal">Show in Finder</button>')
   ]);
+}
+var NEED_WORKSPACE = "Open a workspace in Orca, then Settings, to change its account switching.";
+var ON_TIP = "Off: Orca Flow never moves this workspace\u2019s work to another account. Other workspaces keep their own choice.";
+function loadAccounts() {
+  accountsLoading = true;
+  accountsError = null;
+  render2();
+  orca.plugin.request("sidebar.accounts").then((a) => {
+    accounts = a;
+  }).catch((e) => {
+    accountsError = e.message;
+  }).finally(() => {
+    accountsLoading = false;
+    if (pageId === "accounts") render2();
+  });
+}
+function accountRows(p, o) {
+  const name = PROVIDER_NAME2[p];
+  const plain = (text2) => `<span class="s-label">${esc5(text2)}</span>`;
+  if (accountsLoading && !accounts) return [row(plain(`Looking for ${name} accounts\u2026`), "")];
+  const failed = accountsError ?? accounts?.[p].error;
+  if (failed) return [row(`<span class="s-label s-muted" data-tip="${esc5(failed)}">${esc5(failed)}</span>`, '<button type="button" class="s-push" data-acct-retry>Try Again</button>')];
+  const list = accounts?.[p].accounts ?? [];
+  if (!list.length) return [row(plain(`No ${name} accounts in Orca`), "")];
+  return list.map((a, i) => {
+    const tip2 = `${a.organization ? `${a.organization}. ` : ""}${a.systemDefault ? "Also the provider\u2019s own sign-in (System default). " : ""}${a.needsSignIn ? "Orca needs a new sign-in for it. " : ""}Used when another ${name} login has used its included usage, if this workspace may share with it. Off: never used in this workspace.`;
+    const value = a.systemDefault ? "System default" : a.needsSignIn ? "Sign in again" : "";
+    const on = !o.exclude[p].includes(a.id);
+    return row(label(a.label, tip2), `${value ? `<span class="s-value">${esc5(value)}</span>` : ""}${toggle(`s-acct-${p}-${i}`, on, `Use ${a.label} in this workspace`, workspace ? tip2 : NEED_WORKSPACE, !workspace || !o.enabled, `data-acct="${p}" data-acct-id="${esc5(a.id)}"`)}`);
+  });
+}
+function pageAccounts() {
+  const o = workspace ? accountOverrideFor(d().accountSwitching, workspace.id) : DEFAULT_ACCOUNT_OVERRIDE;
+  const enforcement = accounts?.enforcement ?? ENFORCEMENT;
+  const state2 = (supported, tip2) => supported ? `<span class="s-value">Supported</span>` : `<span class="s-value s-warnv" tabindex="0" data-tip="${esc5(tip2)}" aria-description="${esc5(tip2)}">Not supported</span>`;
+  return group([
+    row(label("Workspace", "Changes here apply only to the workspace Settings was opened in. Every other workspace keeps its own choice, by default on for every eligible login."), `<span class="s-value" id="s-acct-ws">${esc5(workspace ? workspace.name : "None open")}</span>`),
+    row(label("Continue on another account", ON_TIP), toggle("s-acct-on", o.enabled, "Continue on another account", workspace ? ON_TIP : NEED_WORKSPACE, !workspace))
+  ]) + `<p class="s-note">A saved preference for this workspace. Every workspace starts on, for every eligible Claude and Codex login: when a login has used 100% of its included usage, work is to move to another login of the same provider that this workspace may share with and that still has included usage, before its next paid request, and to pause until a reset when none has any.</p>` + (workspace ? "" : `<p class="s-note s-need" role="note">${esc5(NEED_WORKSPACE)}</p>`) + group([
+    row(label("New launches", NEW_LAUNCHES), `<span class="s-value">Orca\u2019s selected account</span>`),
+    row(label("Move to another account", enforcement.transferReason), state2(enforcement.transfer, enforcement.transferReason)),
+    row(label("Stop before paid usage", enforcement.paidUsageReason), state2(enforcement.paidUsageStop, enforcement.paidUsageReason))
+  ], { text: "On this Orca", tip: "What this Orca does today. The preference above is saved either way." }) + SWITCH_PROVIDERS.map((p) => group(accountRows(p, o), { text: PROVIDER_NAME2[p], tip: `Orca-managed ${PROVIDER_NAME2[p]} logins on this host. System default is one of them, never a second account.` })).join("");
 }
 var avail = () => state?.availability ?? UNKNOWN;
 var lookingUp = () => !state?.availability;
@@ -4607,8 +4663,8 @@ function render2() {
   const narrow = window.innerWidth <= 520;
   $("s-title").dataset.tip = state?.version ? `Orca Flow ${state.version}` : "Orca Flow";
   $("s-nav").innerHTML = PAGES.map((p) => `<button class="s-nav-btn" type="button" data-page="${p.id}" ${p.id === pageId ? 'aria-current="page"' : ""} aria-label="${esc5(p.label)}"${narrow ? ` data-tip="${esc5(p.label)}"` : ""}><span class="s-tile" style="background:${p.tint}">${ICON2[p.id]}</span><span class="s-nav-label">${esc5(p.label)}</span></button>`).join("");
-  const body = !state && !loadError ? '<p class="s-loading">Loading\u2026</p>' : { summaries: pageSummaries, models: pageModels, format: pageFormat, capacity: pageCapacity, features: pageFeatures, advanced: pageAdvanced, about: pageAbout }[pageId]();
-  const atDefault = page.id === "models" ? modelsAtDefault() : session.isDefault(page.keys);
+  const body = !state && !loadError ? '<p class="s-loading">Loading\u2026</p>' : { summaries: pageSummaries, models: pageModels, accounts: pageAccounts, format: pageFormat, capacity: pageCapacity, features: pageFeatures, advanced: pageAdvanced, about: pageAbout }[pageId]();
+  const atDefault = page.id === "models" ? modelsAtDefault() : page.id === "accounts" ? !workspace || !d().accountSwitching.workspaces[workspace.id] : session.isDefault(page.keys);
   const reset = state && !locked() && !atDefault ? `<div class="s-foot"><button type="button" class="s-push" data-reset="${page.id}">Reset to Defaults</button></div>` : "";
   $("s-page").innerHTML = `<h3 class="s-ptitle">${label(page.label, page.tip)}</h3>${errorLine()}${body}${reset}`;
   if (focusAfter) {
@@ -4625,7 +4681,10 @@ orca.plugin.on("sidebar.settingsChanged", (s) => {
   state = { ...state, availability: next.availability, writers: next.writers };
   render2();
 });
-function openSettings() {
+function openSettings(current = null) {
+  workspace = current;
+  accounts = null;
+  accountsError = null;
   opener = document.activeElement;
   state = null;
   loadError = null;
@@ -4726,6 +4785,18 @@ function onClick(e) {
     popover = null;
     typeForm = null;
     render2();
+    if (pageId === "accounts" && !accounts && !accountsLoading) loadAccounts();
+    return;
+  }
+  if (ds.acctRetry !== void 0) {
+    loadAccounts();
+    return;
+  }
+  if (ds.reset === "accounts") {
+    const ws = workspace?.id;
+    if (ws) void session.change((x) => {
+      x.accountSwitching = withAccountOverride(x.accountSwitching, ws, DEFAULT_ACCOUNT_OVERRIDE);
+    });
     return;
   }
   if (ds.reset === "models") {
@@ -4840,6 +4911,19 @@ function onChange(e) {
   else if (t.id === "s-linear") void session.change((x) => {
     x.linearDryRun = t.checked;
   });
+  else if (t.id === "s-acct-on" && workspace) {
+    const ws = workspace.id;
+    void session.change((x) => {
+      x.accountSwitching = withAccountOverride(x.accountSwitching, ws, { ...accountOverrideFor(x.accountSwitching, ws), enabled: t.checked });
+    });
+  } else if (t.dataset.acct && workspace) {
+    const ws = workspace.id, p = t.dataset.acct, id = t.dataset.acctId;
+    void session.change((x) => {
+      const o = accountOverrideFor(x.accountSwitching, ws);
+      o.exclude[p] = t.checked ? o.exclude[p].filter((e2) => e2 !== id) : [...o.exclude[p], id];
+      x.accountSwitching = withAccountOverride(x.accountSwitching, ws, o);
+    });
+  }
 }
 function onKey(e) {
   const t = e.target;
@@ -5416,7 +5500,7 @@ function setSearching(on) {
 }
 searchOpen.addEventListener("click", () => setSearching(true));
 var settingsBtn = $2("settings-open");
-settingsBtn.addEventListener("click", () => openSettings());
+settingsBtn.addEventListener("click", () => openSettings(currentWorkspace(snap)));
 settingsHooks.update = (state2) => void updateClick(state2);
 $2("search-close").addEventListener("click", () => setSearching(false));
 searchEl.addEventListener("input", () => {

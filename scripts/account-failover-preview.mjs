@@ -1,11 +1,12 @@
-// Preview-only: the account-switching UX drawn by the released Orca Flow 0.2.98 panel (read only)
-// with synthetic data and a stub `orca`. Nothing here is shipped: src/ is untouched, and the
-// proposal is a small preview script that adds to what the released renderer drew.
+// Preview-only: Orca Flow's panel (this worktree's production renderer, HTML and CSS) with synthetic
+// data and a stub `orca`. Settings → Account switching is the production page. The sidebar states
+// for a host that can switch or pause (the account label, Moving/Paused statuses and the waiting
+// line) are a proposal drawn by a small preview script: no Orca release can do either yet.
 //   node scripts/account-failover-preview.mjs                         write docs/account-failover-preview/panel.html
-// States (URL): healthy, included, switched, spent, notproof (&reason=), scope, settings (&page=accounts|models); &trigger=error, &host=today, &provider=codex.
+// States (URL): healthy, included, switched, spent, notproof (&reason=), scope, settings (&page=accounts|models,
+//   &workspace=none, &accounts=fail); &trigger=error, &host=today, &provider=codex.
 //   node scripts/account-failover-preview.mjs --shots <dir> [--reference <png>]
 //                                                                     also capture every state and run the checks
-// ORCA_FLOW_RELEASE overrides where the released 0.2.98 source is read from.
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, copyFileSync, existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -13,21 +14,17 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
-const RELEASE = process.env.ORCA_FLOW_RELEASE ||
-  join(homedir(), 'Library/Application Support/orca/plugins/bounti-hq.flow/9fca522a4b2153137b3ecc6342d8710708ed2d94d11543aefc8d6aed0ccaabdc')
-const manifest = JSON.parse(readFileSync(join(RELEASE, 'orca-plugin.json'), 'utf8'))
-if (manifest.version !== '0.2.98') throw new Error(`Expected the released Orca Flow 0.2.98 at ${RELEASE}, found ${manifest.version}`)
+const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8'))
 
-// ---- Build the released panel, unmodified, into a temp dir (the release folder is only read).
+// ---- Build the panel into a temp dir from a copy of src, so the bundle's path comments name src/...
 const build = mkdtempSync(join(tmpdir(), 'orca-flow-account-preview-'))
-// A copy of the released src, so the bundle's path comments name src/... and never a local home folder.
-cpSync(join(RELEASE, 'src'), join(build, 'src'), { recursive: true })
+cpSync(join(root, 'src'), join(build, 'src'), { recursive: true })
 execFileSync('npx', ['-y', 'esbuild', 'src/panel/app.ts', '--bundle', '--format=esm', '--tsconfig-raw={}', '--log-level=warning', `--outfile=${join(build, 'app.js')}`], { cwd: build, stdio: 'inherit' })
 const appJs = readFileSync(join(build, 'app.js'), 'utf8')
 rmSync(build, { recursive: true, force: true })
-const css = readFileSync(join(RELEASE, 'src/panel/panel.css'), 'utf8')
-const indexHtml = readFileSync(join(RELEASE, 'src/panel/index.html'), 'utf8')
-const { speedView, emptyHistory, addResponse } = await import(pathToFileURL(join(RELEASE, 'src/token-speed.ts')).href)
+const css = readFileSync(join(root, 'src/panel/panel.css'), 'utf8')
+const indexHtml = readFileSync(join(root, 'src/panel/index.html'), 'utf8')
+const { speedView, emptyHistory, addResponse } = await import(pathToFileURL(join(root, 'src/token-speed.ts')).href)
 
 // ---- Synthetic fixture, shaped like the live sidebar (density, tree, sections) with made-up names.
 const T = Date.UTC(2026, 10, 24, 13, 30), MIN = 60_000, H = 60 * MIN
@@ -56,7 +53,7 @@ const rows = [
   row('mono:onboarding', onboarding, { branch: 'atl-212-onboarding-validation', linearIssue: 'ATL-212', pr: { number: 4180, state: 'open', url: 'https://example.com/pr/4180', checks: 'success' } }),
   row('mono:onboarding', webfix, { branch: 'atl-212-onboarding-validation' }),
   row('mono:onboarding', deeplink, { branch: 'atl-212-onboarding-validation' }),
-  row('mono:hours', hours, { branch: 'atl-219-weekly-hours', linearIssue: 'ATL-219', lastActivityAt: T - 12 * MIN }),
+  row('mono:hours', hours, { branch: 'atl-219-weekly-hours', linearIssue: 'ATL-219', lastActivityAt: T - 12 * MIN, active: true }),
   row('flow:usage', usage, { repo: 'flow-lab', branch: 'usage-report-export', lastActivityAt: T - 4 * MIN }),
   ...Array.from({ length: 12 }, (_, i) => ({ ...row(`idle:${i}`, agent(`idle-${i}`, 'codex', `idle ${i}`)), agents: [], name: `fixture-branch-${i + 1}`, repo: 'mono', createdAt: i }))
 ]
@@ -104,12 +101,12 @@ const settings = {
 
 // ---- The bridge: a stub `orca` (never live state), then the proposal for the state in the URL.
 const json = (v) => JSON.stringify(v).replaceAll('<', '\\u003c')
+const { ENFORCEMENT } = await import(pathToFileURL(join(root, 'src/accounts.ts')).href)
 const bridge = `<style>.tip{transition:none!important}
 /* Proposal: the only CSS this draft adds. It reuses the panel's tokens. */
 .r > .acct{align-self:baseline;display:inline-flex;align-items:center;gap:3px;color:var(--faint);font-size:11px;white-space:nowrap}
 .r > .acct svg{width:11px;height:11px;flex:none;align-self:center}
 .acct-line .act{margin-left:auto;font-size:11px}
-.acct-note{margin:0;padding:0 10px;font-size:11.5px;color:var(--muted)}
 </style><script>
 'use strict';
 const q = new URLSearchParams(location.search);
@@ -150,6 +147,11 @@ const TARGET = PROVIDER === 'claude' ? 'onboarding' : 'usage';
 const NAME = { claude: 'Claude', codex: 'Codex' };
 const logins = (p) => { const d = DISCOVERED[p]; return d.filter((a) => !a.alias).map((a) => ({ ...a, systemDefault: d.some((x) => x.alias === a.id) })); };
 const excluded = new Set(JSON.parse(q.get('exclude') || '[]'));
+// What sidebar.accounts answers for a discovered login (src/accounts.ts DiscoveredAccount): every managed
+// login is listed; whether a workspace may share with it stays the host's to decide.
+const view = (a) => ({ id: a.id, label: a.email, organization: a.org, systemDefault: a.systemDefault, needsSignIn: false });
+const ENFORCEMENT = ${json(ENFORCEMENT)};
+if (q.get('workspace') === 'none') for (const r of snapshot.rows) r.active = false;
 let switching = q.get('switching') !== 'off';
 const eligible = (p) => logins(p).filter((a) => a.org === SCOPE && !excluded.has(a.id));
 const short = (email) => email.replace(/\\.example$/, '');
@@ -174,6 +176,10 @@ window.orca = {
       if (name === 'sidebar.linear') return ${json(linearWire)};
       if (name === 'sidebar.tokenSpeed') return ${json(speedWire)};
       if (name === 'sidebar.settings') return structuredClone(settings);
+      if (name === 'sidebar.accounts') return q.get('accounts') === 'fail'
+        ? { claude: { accounts: [], error: 'Orca took too long to list Claude accounts.' }, codex: { accounts: [], error: 'This Orca can’t list Codex accounts. Update Orca to see them here.' }, enforcement: ENFORCEMENT }
+        : { claude: { accounts: logins('claude').map(view), error: null }, codex: { accounts: logins('codex').map(view), error: null }, enforcement: ENFORCEMENT };
+      if (name === 'sidebar.saveSettings') { settings.settings = data.settings; return { ok: true, state: structuredClone(settings) }; }
       if (name === 'sidebar.checkUpdates') return { kind: 'current', current: '0.2.98', latest: '0.2.98', at: NOW };
       return { ok: true };
     },
@@ -239,73 +245,17 @@ function applyLine(o) {
   after.after(div);
 }
 
-// ---- Settings: Account switching, its own page beside Models in the released dialog.
-const NAV_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5.5h8.5M9 3l2.5 2.5L9 8M13 10.5H4.5M7 8l-2.5 2.5L7 13"/></svg>';
-let acctOpen = false;
-const atDefault = () => switching && excluded.size === 0;
-function navButton() {
-  const nav = document.getElementById('s-nav');
-  const models = nav?.querySelector('[data-page="models"]');
-  if (!models || nav.querySelector('[data-acct-page]')) return;
-  const narrow = window.innerWidth <= 520;
-  const b = document.createElement('button');
-  b.className = 's-nav-btn'; b.type = 'button'; b.dataset.acctPage = ''; b.setAttribute('aria-label', 'Account switching');
-  if (narrow) b.dataset.tip = 'Account switching';
-  b.innerHTML = '<span class="s-tile" style="background:#0f9d8a">' + NAV_ICON + '</span><span class="s-nav-label">Account switching</span>';
-  models.after(b);
-}
-function accountsPage() {
-  const tip = (t) => ' data-tip="' + esc(t) + '"';
-  const sw = (id, on, name, dis) => '<label class="s-switch"><input type="checkbox" role="switch" data-acct="' + id + '" ' + (on ? 'checked' : '') + (dis ? ' disabled' : '') + ' aria-label="' + esc(name) + '"><span></span></label>';
-  const rowHtml = (p, a) => {
-    const inScope = a.org === SCOPE;
-    const detail = inScope ? (a.systemDefault ? 'System default' : '') : 'Not shared';
-    const t = inScope ? a.org + (a.systemDefault ? ', also System default' : '') + '. Used when another ' + NAME[p] + ' login has used 100% of its included usage. Off: never used.' : 'Discovered, but no workspace here may share context with ' + a.org + ', so it is never used.';
-    return '<div class="s-row"><span class="s-label"' + tip(t) + '>' + esc(a.email) + '</span><div class="s-ctl">' + (detail ? '<span class="s-value">' + esc(detail) + '</span>' : '') + sw(a.id, inScope && !excluded.has(a.id), a.email, !inScope || !switching) + '</div></div>';
-  };
-  return '<div class="acct-page" style="display:contents"><h3 class="s-ptitle"><span class="s-label"' + tip('Which logins a conversation may continue on when its account has used its included usage.') + '>Account switching</span></h3>' +
-    '<section class="s-group"><div class="s-card"><div class="s-row"><span class="s-label"' + tip('Off: Orca Flow doesn’t step in, so an account at 100% goes on to paid usage as the provider allows.') + '>Continue on another account</span><div class="s-ctl">' + sw('all', switching, 'Continue on another account') + '</div></div></div>' +
-    '<p class="acct-note">On by default for every eligible Claude and Codex login. When a login has used 100% of its included usage, work moves to another login of the same provider that still has included usage, before its next paid request. When none has any, work pauses until a reset.</p></section>' +
-    ['claude', 'codex'].map((p) => '<section class="s-group"><h4 class="s-gh"><span class="s-label">' + NAME[p] + '</span></h4><div class="s-card">' + logins(p).map((a) => rowHtml(p, a)).join('') + '</div></section>').join('') +
-    (atDefault() ? '' : '<div class="s-foot"><button type="button" class="s-push" data-acct-reset>Reset to Defaults</button></div>') + '</div>';
-}
-function showAccounts() {
-  const page = document.getElementById('s-page'), nav = document.getElementById('s-nav');
-  if (!page || !nav) return;
-  navButton();
-  for (const b of nav.querySelectorAll('.s-nav-btn')) b.removeAttribute('aria-current');
-  nav.querySelector('[data-acct-page]')?.setAttribute('aria-current', 'page');
-  page.innerHTML = accountsPage();
-  page.scrollTop = 0;
-}
-function applySettings() {
-  if (document.getElementById('settings')?.hidden) return;
-  navButton();
-  const page = document.getElementById('s-page');
-  if (acctOpen && page && !page.querySelector('.acct-page')) showAccounts();
-}
 function apply() {
   const o = outcome();
   if (o) { applyRow(o); applyLine(o); }
-  applySettings();
 }
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-acct-check]')) { e.stopPropagation(); checked = true; document.querySelector('#main .acct-line')?.remove(); apply(); return; }
-  if (e.target.closest('[data-acct-page]')) { e.stopPropagation(); acctOpen = true; showAccounts(); return; }
-  if (e.target.closest('[data-acct-reset]')) { e.stopPropagation(); switching = true; excluded.clear(); showAccounts(); return; }
-  if (e.target.closest('#s-nav [data-page], #s-x')) acctOpen = false;
-}, true);
-document.addEventListener('change', (e) => {
-  const t = e.target.closest('[data-acct]');
-  if (!t) return;
-  e.stopPropagation();
-  if (t.dataset.acct === 'all') switching = t.checked; else t.checked ? excluded.delete(t.dataset.acct) : excluded.add(t.dataset.acct);
-  showAccounts(); document.querySelector('[data-acct="' + t.dataset.acct + '"]')?.focus();
 }, true);
 new MutationObserver(apply).observe(document.documentElement, { childList: true, subtree: true });
 if (STATE === 'settings') window.addEventListener('load', () => setTimeout(() => {
   document.getElementById('settings-open').click();
-  setTimeout(() => q.get('page') === 'models' ? document.querySelector('[data-page="models"]')?.click() : document.querySelector('[data-acct-page]')?.click(), 150);
+  setTimeout(() => document.querySelector('[data-page="' + (q.get('page') === 'models' ? 'models' : 'accounts') + '"]')?.click(), 150);
 }, 200));
 </script>`
 
@@ -318,7 +268,7 @@ if (html === indexHtml || !html.includes('Account fixture')) throw new Error('in
 const outDir = join(root, 'docs/account-failover-preview')
 mkdirSync(outDir, { recursive: true })
 writeFileSync(join(outDir, 'panel.html'), html)
-console.log(`Wrote docs/account-failover-preview/panel.html from the released Orca Flow ${manifest.version}`)
+console.log(`Wrote docs/account-failover-preview/panel.html from this worktree's Orca Flow ${manifest.version}`)
 if (html.includes(homedir())) throw new Error('The preview would embed a local home path')
 
 // ---- Optional: capture every state at the live capture's size and run the checks.
@@ -357,7 +307,7 @@ async function shoot(out, reference) {
   const count = (sel) => ev(`document.querySelectorAll(${JSON.stringify(sel)}).length`)
   const text = (sel) => ev(`document.querySelector(${JSON.stringify(sel)})?.textContent ?? ''`)
   const tipOf = (sel) => ev(`document.querySelector(${JSON.stringify(sel)})?.dataset.tip ?? ''`)
-  check('healthy: no proposal element', (await count('.acct,.acct-status,.acct-line,.acct-page')) === 0)
+  check('healthy: no proposal element', (await count('.acct,.acct-status,.acct-line')) === 0)
   check('healthy: Goals, Coordinators tree, Linear, Analytics and Idle drawn by the released panel', await ev(`['#goals-rows .g','#main .tlabel','#main .coord','#linear','#tokenspeed','#footer'].every(s => document.querySelector(s))`))
   check('healthy: no page errors', (await ev('previewErrors.length')) === 0, await ev('previewErrors'))
 
@@ -405,35 +355,51 @@ async function shoot(out, reference) {
   check('host today, usage-limit error: only the row status', (await count('.acct-line,.acct')) === 0 && (await text('.acct-status')).startsWith('Limited · 3:45 PM'))
   await load('state=included&switching=off')
   check('switching off, 100% included: nothing changes', (await ev(regions)) === healthy)
-  // Settings: Account switching is its own page beside Models; Models has no account section.
-  await load('state=settings'); await sleep(500)
+  // Settings → Account switching: the production page beside Models, scoped to the focused workspace.
+  const saves = () => ev(`previewCalls.filter(c => c.name === 'sidebar.saveSettings').map(c => c.data.settings.accountSwitching)`)
+  const lastSave = async () => (await saves()).at(-1)
+  await load('state=settings'); await sleep(600)
   files.push(await shot('10-settings-account-switching'))
   check('settings: Account switching is the nav item right after Models', (await ev(`[...document.querySelectorAll('#s-nav .s-nav-btn')].map(b => b.getAttribute('aria-label')).join('|')`)) === 'Titles & Summaries|Models|Account switching|Message Check|Memory|Features|Advanced|About')
-  check('settings: the deep link opens Account switching', (await ev(`document.querySelector('#s-nav [aria-current="page"]').getAttribute('aria-label')`)) === 'Account switching' && (await text('#s-page .s-ptitle')) === 'Account switching')
-  check('settings: the page says all eligible logins are used by default at 100% included usage', (await text('.acct-note')).startsWith('On by default for every eligible Claude and Codex login. When a login has used 100% of its included usage'))
-  check('settings: one master switch, on', (await ev(`document.querySelector('[data-acct="all"]').checked`)) === true)
-  check('settings: two Claude rows (System default collapsed), three Codex rows', (await ev(`[...document.querySelectorAll('.acct-page .s-card')].slice(1).map(c => c.querySelectorAll('.s-row').length).join()`)) === '2,3')
-  check('settings: System default and Not shared only as notes', (await ev(`[...document.querySelectorAll('.acct-page .s-value')].map(e => e.textContent).join()`)) === 'System default,Not shared')
-  check('settings: every in-scope login on, Acme disabled', (await ev(`[...document.querySelectorAll('[data-acct]:not([data-acct=all])')].map(i => i.dataset.acct + (i.checked ? '1' : '0') + (i.disabled ? 'd' : '')).join()`)) === 'c11,c21,x11,x21,x30d')
-  check('settings: no usage or cost figures on the page', !/\d+%|\$|credit/i.test(await text('.acct-page')) || (await text('.acct-page')).replace('100% of its included usage', '').match(/\d+%|\$|credit/i) === null)
-  check('settings: no Reset to Defaults at the defaults', (await count('[data-acct-reset]')) === 0)
+  check('settings: the deep link opens Account switching', (await ev(`document.querySelector('#s-nav [aria-current="page"]').dataset.page`)) === 'accounts' && (await text('#s-page .s-ptitle')) === 'Account switching')
+  check('settings: the workspace Settings was opened in, beside the controls', (await text('#s-acct-ws')) === 'Weekly hours target')
+  check('settings: a saved preference, on by default for every eligible login at 100% included usage', (await text('#s-page .s-note')).startsWith('A saved preference for this workspace. Every workspace starts on, for every eligible Claude and Codex login: when a login has used 100% of its included usage'))
+  check('settings: new launches keep Orca’s own account choice', (await ev(`[...document.querySelectorAll('#s-page .s-row')].find(r => r.textContent.startsWith('New launches'))?.textContent`)) === 'New launchesOrca’s selected account')
+  check('settings: no supported transfer or paid-usage stop on this Orca, each said plainly', (await ev(`[...document.querySelectorAll('#s-page .s-warnv')].map(e => e.closest('.s-row').querySelector('.s-label').textContent + '=' + e.textContent).join('|')`)) === 'Move to another account=Not supported|Stop before paid usage=Not supported')
+  check('settings: their reasons say what happens instead', (await ev(`[...document.querySelectorAll('#s-page .s-warnv')].map(e => e.dataset.tip).join(' ')`)).includes('goes on to paid usage as the provider allows'))
+  check('settings: on by default', (await ev(`document.getElementById('s-acct-on').checked`)) === true)
+  check('settings: two Claude logins (System default collapsed), three Codex logins, all on', (await ev(`[...document.querySelectorAll('[data-acct]')].map(i => i.dataset.acct + ':' + i.dataset.acctId + (i.checked ? '1' : '0')).join()`)) === 'claude:c11,claude:c21,codex:x11,codex:x21,codex:x31')
+  check('settings: System default only as a note on its login', (await ev(`[...document.querySelectorAll('#s-page .s-value')].map(e => e.textContent).join('|')`)) === 'Weekly hours target|Orca’s selected account|Not supported|Not supported|System default')
+  check('settings: discovery was asked for once, on opening the page', (await ev(`previewCalls.filter(c => c.name === 'sidebar.accounts').length`)) === 1)
+  check('settings: no usage or cost figures on the page', ((await text('#s-page')).replace('100% of its included usage', '').match(/\d+%|\$|credit/i)) === null)
+  check('settings: no Reset to Defaults at the defaults', (await count('[data-reset="accounts"]')) === 0)
+  await ev(`document.querySelector('[data-acct-id="c2"]').click()`); await sleep(200)
+  check('settings: excluding a login saves only this workspace’s deviation', JSON.stringify(await lastSave()) === JSON.stringify({ workspaces: { 'mono:hours': { enabled: true, exclude: { claude: ['c2'], codex: [] } } } }))
+  check('settings: Reset to Defaults appears', (await count('[data-reset="accounts"]')) === 1)
   await ev(`document.querySelector('[data-page="models"]').click()`); await sleep(300)
   files.push(await shot('11-settings-models'))
-  check('settings: Models opens the released Models page', (await ev(`document.querySelector('#s-nav [aria-current="page"]').dataset.page`)) === 'models')
-  check('settings: Models has no account-switching section', (await count('#s-page .acct-page,#s-page [data-acct]')) === 0 && !(await text('#s-page')).includes('Account switching'))
-  check('settings: the nav keeps Account switching while on Models', (await count('#s-nav [data-acct-page]')) === 1)
-  await ev(`document.querySelector('[data-acct-page]').click()`); await sleep(200)
-  check('settings: back to Account switching', (await text('#s-page .s-ptitle')) === 'Account switching' && (await count('#s-nav [aria-current="page"]')) === 1)
-  await ev(`document.querySelector('[data-acct="c2"]').click()`); await sleep(100)
-  check('settings: excluding a login shows Reset to Defaults', (await count('[data-acct-reset]')) === 1 && (await ev(`document.querySelector('[data-acct="c2"]').checked`)) === false)
-  await ev(`document.querySelector('[data-acct="all"]').click()`); await sleep(100)
-  check('settings: turning it off disables the logins', (await ev(`[...document.querySelectorAll('[data-acct]:not([data-acct=all])')].every(i => i.disabled)`)) === true)
-  await ev(`document.querySelector('[data-acct-reset]').click()`); await sleep(100)
-  check('settings: Reset to Defaults turns it back on for every in-scope login', (await ev(`[...document.querySelectorAll('[data-acct]')].filter(i => !i.disabled && i.checked).length`)) === 5 && (await count('[data-acct-reset]')) === 0)
-  await load('state=settings&page=models'); await sleep(500)
-  check('settings: the Models deep link has no account section', (await ev(`document.querySelector('#s-nav [aria-current="page"]').dataset.page`)) === 'models' && (await count('#s-page [data-acct]')) === 0)
-  check('settings: the panel saved nothing', (await ev(`previewCalls.filter(c => c.name === 'sidebar.saveSettings').length`)) === 0)
+  check('settings: Models opens the Models page', (await ev(`document.querySelector('#s-nav [aria-current="page"]').dataset.page`)) === 'models')
+  check('settings: Models has no account-switching control', (await count('#s-page [data-acct], #s-acct-on')) === 0 && !(await text('#s-page')).includes('Account switching'))
+  await ev(`document.querySelector('[data-page="accounts"]').click()`); await sleep(300)
+  check('settings: back on Account switching, the exclusion is still there', (await ev(`document.querySelector('[data-acct-id="c2"]').checked`)) === false)
+  await ev(`document.getElementById('s-acct-on').click()`); await sleep(200)
+  check('settings: switching off saves enabled: false for this workspace', JSON.stringify(await lastSave()) === JSON.stringify({ workspaces: { 'mono:hours': { enabled: false, exclude: { claude: ['c2'], codex: [] } } } }))
+  check('settings: switched off, the logins can’t be changed', (await ev(`[...document.querySelectorAll('[data-acct]')].every(i => i.disabled)`)) === true)
+  await ev(`document.querySelector('[data-reset="accounts"]').click()`); await sleep(200)
+  check('settings: Reset to Defaults removes this workspace’s override', JSON.stringify(await lastSave()) === JSON.stringify({ workspaces: {} }) && (await ev(`document.getElementById('s-acct-on').checked`)) === true)
   check('settings: no page errors', (await ev('previewErrors.length')) === 0, await ev('previewErrors'))
+  await load('state=settings&workspace=none'); await sleep(600)
+  files.push(await shot('12-settings-no-workspace'))
+  check('settings: no focused workspace: says one is needed, and nothing can be changed', (await text('#s-acct-ws')) === 'None open' && (await text('#s-page .s-need')).startsWith('Open a workspace in Orca') && (await ev(`[...document.querySelectorAll('#s-acct-on, [data-acct]')].every(i => i.disabled)`)) === true)
+  await load('state=settings&accounts=fail'); await sleep(600)
+  check('settings: a failed read says why, per provider, with Try Again', (await count('[data-acct-retry]')) === 2 && (await text('#s-page')).includes('Orca took too long to list Claude accounts.'))
+  await ev(`document.querySelector('[data-acct-retry]').click()`); await sleep(300)
+  check('settings: Try Again reads again', (await ev(`previewCalls.filter(c => c.name === 'sidebar.accounts').length`)) === 2)
+  await load('state=settings&page=models'); await sleep(600)
+  check('settings: the Models deep link has no account section', (await ev(`document.querySelector('#s-nav [aria-current="page"]').dataset.page`)) === 'models' && (await count('#s-page [data-acct]')) === 0)
+  check('settings: nothing saved without a change', (await ev(`previewCalls.filter(c => c.name === 'sidebar.saveSettings').length`)) === 0)
+  check('settings: no page errors (failure paths)', (await ev('previewErrors.length')) === 0, await ev('previewErrors'))
+
 
   // The review page at the previous URL: controls outside the product, the panel in a frame.
   const review = (query) => pathToFileURL(join(root, "docs/account-failover-prototype.html")).href + query

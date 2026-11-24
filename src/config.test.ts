@@ -156,3 +156,23 @@ test('a dialog opened before another change: its save keeps that change and adds
     assert.deepEqual(readSettings(dir).settings.routing.workers.normal.model, DEFAULT_SETTINGS.routing.workers.normal.model)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+test('account switching persists per workspace next to an older file’s keys, and a broken file is never overwritten', async () => {
+  const { withAccountOverride } = await import('./settings.ts')
+  const dir = temp()
+  try {
+    writeFileSync(configFile(dir), JSON.stringify({ marginGB: 3, futureKey: { a: 1 } }))
+    assert.deepEqual(readSettings(dir).settings.accountSwitching, { workspaces: {} }, 'an older file: on everywhere')
+    const off = withAccountOverride({ workspaces: {} }, 'identity:a', { enabled: false, exclude: { claude: [], codex: [] } })
+    writeSettings(withSettings({ marginGB: 3, accountSwitching: off }), dir)
+    assert.deepEqual(fileOf(dir), { marginGB: 3, futureKey: { a: 1 }, accountSwitching: { workspaces: { 'identity:a': { enabled: false, exclude: { claude: [], codex: [] } } } } })
+    assert.deepEqual(readSettings(dir).settings.accountSwitching, off)
+    writeSettings(withSettings({ marginGB: 3 }), dir)
+    assert.deepEqual(fileOf(dir), { marginGB: 3, futureKey: { a: 1 } }, 'back at the default: removed')
+    writeFileSync(configFile(dir), '{ broken')
+    assert.throws(() => writeSettings(withSettings({ accountSwitching: off }), dir), /won’t overwrite/)
+    assert.equal(readFileSync(configFile(dir), 'utf8'), '{ broken')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
