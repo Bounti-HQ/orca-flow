@@ -1215,6 +1215,7 @@ html.light { --c3: #eda100; --c4: #e87ba4; --c5: #008300; }
 .r > .acct{align-self:baseline;display:inline-flex;align-items:center;gap:3px;color:var(--faint);font-size:11px;white-space:nowrap}
 .r > .acct svg{width:11px;height:11px;flex:none;align-self:center}
 .acct-line .act{margin-left:auto;font-size:11px}
+.acct-note{margin:0;padding:0 10px;font-size:11.5px;color:var(--muted)}
 </style><script>
 'use strict';
 const q = new URLSearchParams(location.search);
@@ -1225,15 +1226,32 @@ Date.now = () => NOW;
 const snapshot = {"source":"cli","ready":true,"focusedPanes":["term_hours"],"handoverProviders":["claude","codex"],"coordinatorProviders":[{"id":"claude","name":"Claude"},{"id":"codex","name":"Codex"}],"capacity":{"verdict":"ok","freeGB":11.4,"marginGB":2,"diskFreeGB":312,"agentGB":0.5,"envGB":1.5,"pressure":"normal","finishedOpen":2},"features":{"goals":true,"linear":true,"tokenSpeed":true},"skillReload":[{"pane":"intake","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"courts","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"deeplink","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"atlas-main","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"lab-main","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000},{"pane":"usage","state":"waiting","role":"lead","provider":"claude","at":1795526880000,"expiresAt":1795530600000}],"coordinators":[{"key":"atlas","name":"atlas","repos":[],"workspaceId":"folder:atlas","session":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"sessions":{"version":1,"current":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","members":[{"id":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","workspaceId":"folder:atlas","orcaSession":"session-atlas-main","agentType":"codex","title":"Atlas coordination","paneKey":"atlas-main","terminals":["term_atlas-main"],"resumeSessionId":"provider-atlas-main","lastAgent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}]},"members":[{"id":"[\"folder:atlas\",\"session\",\"session-atlas-main\"]","workspaceId":"folder:atlas","orcaSession":"session-atlas-main","agentType":"codex","title":"Atlas coordination","paneKey":"atlas-main","terminals":["term_atlas-main"],"resumeSessionId":"provider-atlas-main","lastAgent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"atlas-main","agentType":"codex","title":"Atlas coordination","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":null,"orcaSession":"session-atlas-main","dispatch":null,"terminal":"term_atlas-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}],"look":{"color":"#e8774a","shape":"pentagon"}},{"key":"flow-lab","name":"flow-lab","repos":["flow-lab"],"workspaceId":"folder:flow-lab","session":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"sessions":{"version":1,"current":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","members":[{"id":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","workspaceId":"folder:flow-lab","orcaSession":"session-lab-main","agentType":"codex","title":"Flow lab coordination","paneKey":"lab-main","terminals":["term_lab-main"],"resumeSessionId":"provider-lab-main","lastAgent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}]},"members":[{"id":"[\"folder:flow-lab\",\"session\",\"session-lab-main\"]","workspaceId":"folder:flow-lab","orcaSession":"session-lab-main","agentType":"codex","title":"Flow lab coordination","paneKey":"lab-main","terminals":["term_lab-main"],"resumeSessionId":"provider-lab-main","lastAgent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":{"paneKey":"lab-main","agentType":"codex","title":"Flow lab coordination","live":true,"state":"done","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":null,"orcaSession":"session-lab-main","dispatch":null,"terminal":"term_lab-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}}],"look":{"color":"#a66bf2","shape":"shield"}},{"key":"harbor","name":"harbor","repos":[],"workspaceId":"folder:harbor","session":null,"sessions":{"version":1,"current":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","members":[{"id":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","workspaceId":"folder:harbor","orcaSession":"session-harbor-main","agentType":"codex","title":"Harbor coordination","paneKey":"harbor-main","terminals":["term_harbor-main"],"resumeSessionId":"provider-harbor-main","lastAgent":{"paneKey":"harbor-main","agentType":"codex","title":"Harbor coordination","live":false,"state":"done","workingMode":null,"coordinator":"harbor","leadPane":null,"parentPane":null,"orcaSession":"session-harbor-main","dispatch":null,"terminal":"term_harbor-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":null}]},"members":[{"id":"[\"folder:harbor\",\"session\",\"session-harbor-main\"]","workspaceId":"folder:harbor","orcaSession":"session-harbor-main","agentType":"codex","title":"Harbor coordination","paneKey":"harbor-main","terminals":["term_harbor-main"],"resumeSessionId":"provider-harbor-main","lastAgent":{"paneKey":"harbor-main","agentType":"codex","title":"Harbor coordination","live":false,"state":"done","workingMode":null,"coordinator":"harbor","leadPane":null,"parentPane":null,"orcaSession":"session-harbor-main","dispatch":null,"terminal":"term_harbor-main","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}},"agent":null}],"look":{"color":"#1f6f78","shape":"hex"}}],"rows":[{"id":"folder:atlas","name":"atlas","branch":null,"repo":"atlas","path":"/fixture/folder:atlas","main":true,"agents":[{"paneKey":"intake","agentType":"codex","title":"Harbor rota import feedback","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-intake","dispatch":"open","terminal":"term_intake","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795509000000,"createdAt":1,"pr":null,"folderOf":"atlas"},{"id":"folder:atlas","name":"atlas","branch":null,"repo":"atlas","path":"/fixture/folder:atlas","main":true,"agents":[{"paneKey":"courts","agentType":"codex","title":"Courtside booking blocker","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-courts","dispatch":"open","terminal":"term_courts","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795509000000,"createdAt":1,"pr":null,"folderOf":"atlas"},{"id":"mono:onboarding","name":"Onboarding form validation","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"onboarding","agentType":"claude","title":"Onboarding form validation","live":true,"state":"working","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-onboarding","dispatch":"open","terminal":"term_onboarding","question":null,"summary":null,"model":{"name":"Opus 5.5","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":{"number":4180,"state":"open","url":"https://example.com/pr/4180","checks":"success"},"linearIssue":"ATL-212"},{"id":"mono:onboarding","name":"PR 4180 web fixes","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"webfix","agentType":"codex","title":"PR 4180 web fixes","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":"onboarding","parentPane":"onboarding","orcaSession":"session-webfix","dispatch":"settled","terminal":"term_webfix","question":null,"summary":{"role":"worker","title":"Done","glance":"","goal":"","since":"","needs":{"type":"none","ask":"","options":[]},"effort":"quick","priority":"P2"},"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"mono:onboarding","name":"Android deep-link fix","branch":"atl-212-onboarding-validation","repo":"mono","path":"/fixture/mono:onboarding","main":false,"agents":[{"paneKey":"deeplink","agentType":"codex","title":"Android deep-link fix","live":true,"state":"done","workingMode":null,"coordinator":"atlas","leadPane":"onboarding","parentPane":"onboarding","orcaSession":"session-deeplink","dispatch":"settled","terminal":"term_deeplink","question":null,"summary":{"role":"worker","title":"Done","glance":"","goal":"","since":"","needs":{"type":"none","ask":"","options":[]},"effort":"quick","priority":"P2"},"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"mono:hours","name":"Weekly hours target","branch":"atl-219-weekly-hours","repo":"mono","path":"/fixture/mono:hours","main":false,"agents":[{"paneKey":"hours","agentType":"codex","title":"Weekly hours target","live":true,"state":"working","workingMode":null,"coordinator":"atlas","leadPane":null,"parentPane":"atlas-main","orcaSession":"session-hours","dispatch":"open","terminal":"term_hours","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526280000,"createdAt":1,"pr":null,"linearIssue":"ATL-219"},{"id":"flow:usage","name":"Usage report export","branch":"usage-report-export","repo":"flow-lab","path":"/fixture/flow:usage","main":false,"agents":[{"paneKey":"usage","agentType":"codex","title":"Usage report export","live":true,"state":"working","workingMode":null,"coordinator":"flow-lab","leadPane":null,"parentPane":"lab-main","orcaSession":"session-usage","dispatch":"open","terminal":"term_usage","question":null,"summary":null,"model":{"name":"GPT-6.2-Astra","source":"seen"}}],"state":"working","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526760000,"createdAt":1,"pr":null},{"id":"idle:0","name":"fixture-branch-1","branch":"feature","repo":"mono","path":"/fixture/idle:0","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":0,"pr":null},{"id":"idle:1","name":"fixture-branch-2","branch":"feature","repo":"mono","path":"/fixture/idle:1","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":1,"pr":null},{"id":"idle:2","name":"fixture-branch-3","branch":"feature","repo":"mono","path":"/fixture/idle:2","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":2,"pr":null},{"id":"idle:3","name":"fixture-branch-4","branch":"feature","repo":"mono","path":"/fixture/idle:3","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":3,"pr":null},{"id":"idle:4","name":"fixture-branch-5","branch":"feature","repo":"mono","path":"/fixture/idle:4","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":4,"pr":null},{"id":"idle:5","name":"fixture-branch-6","branch":"feature","repo":"mono","path":"/fixture/idle:5","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":5,"pr":null},{"id":"idle:6","name":"fixture-branch-7","branch":"feature","repo":"mono","path":"/fixture/idle:6","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":6,"pr":null},{"id":"idle:7","name":"fixture-branch-8","branch":"feature","repo":"mono","path":"/fixture/idle:7","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":7,"pr":null},{"id":"idle:8","name":"fixture-branch-9","branch":"feature","repo":"mono","path":"/fixture/idle:8","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":8,"pr":null},{"id":"idle:9","name":"fixture-branch-10","branch":"feature","repo":"mono","path":"/fixture/idle:9","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":9,"pr":null},{"id":"idle:10","name":"fixture-branch-11","branch":"feature","repo":"mono","path":"/fixture/idle:10","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":10,"pr":null},{"id":"idle:11","name":"fixture-branch-12","branch":"feature","repo":"mono","path":"/fixture/idle:11","main":false,"agents":[],"state":"done","priority":null,"card":null,"parentId":null,"liveTerminals":1,"pinned":false,"unread":false,"active":false,"workspaceStatus":null,"lastActivityAt":1795526640000,"createdAt":11,"pr":null}]};
 const goals = [{"id":"g1","title":"Ship role-based workspace access","next":"Check where the ATL-212 lead is","steps":[{"text":"Access matrix","done":false},{"text":"Moderation rights","done":false},{"text":"Audit log","done":false},{"text":"Review","done":false}],"links":{"linear":[],"worktrees":[]},"status":"open","createdAt":1795095000000,"updatedAt":1795519800000,"lastChange":{"by":"you","field":"next","at":1795519800000},"workingPanes":[]},{"id":"g2","title":"Finish splitting long lessons into short ones","next":"Check CI for PR #4180 after the review fixes.","steps":[],"links":{"linear":[],"worktrees":[]},"status":"open","createdAt":1795095000000,"updatedAt":1795519800000,"lastChange":{"by":"you","field":"next","at":1795519800000},"workingPanes":[]},{"id":"g3","title":"Rota templates for two regions, ready for legal review","next":"Draft the first template","steps":[{"text":"First template","done":false},{"text":"Second template","done":false},{"text":"Sent for review","done":false},{"text":"Feedback in","done":false}],"links":{"linear":[],"worktrees":[]},"status":"open","createdAt":1795095000000,"updatedAt":1795519800000,"lastChange":{"by":"you","field":"next","at":1795519800000},"workingPanes":[]},{"id":"g4","title":"Compare other products before planning auto-fill for rotas","next":"List the products to analyze","steps":[],"links":{"linear":[],"worktrees":[]},"status":"open","createdAt":1795095000000,"updatedAt":1795519800000,"lastChange":{"by":"you","field":"next","at":1795519800000},"workingPanes":[]}];
 const settings = {"version":"0.2.98","error":null,"writers":[{"provider":"claude","lastSuccessAt":1795526880000,"failure":null,"installed":true},{"provider":"codex","lastSuccessAt":null,"failure":null,"installed":true}],"availability":{"agents":["claude","codex"],"models":{"claude":null,"codex":null}},"settings":{"writers":[{"provider":"claude","model":"haiku","enabled":true},{"provider":"codex","model":"gpt-6-luna","enabled":true}],"messageFormat":[],"marginGB":2,"warnHeadroomGB":2,"linearDryRun":false,"features":{"bots":false,"goals":true,"linear":true,"tokenSpeed":true},"routing":{"coordinator":{"agent":"codex","model":"gpt-6-astra","effort":"high"},"lead":null,"workers":{"simple":{"model":{"agent":"claude","model":"haiku"},"fallback":null},"normal":{"model":{"agent":"codex","model":"gpt-6-astra","effort":"medium"},"fallback":null},"hard":{"model":{"agent":"claude","model":"opus","effort":"high"},"fallback":null}},"types":[],"presets":[]}}};
-// ---- Account fixture (made-up identities). Atlas may share context within the Studio organization.
-const STATE = ['healthy','switched','exhausted','scope','settings'].includes(q.get('state')) ? q.get('state') : 'healthy';
+// ---- Account fixture (made-up identities and readings). Atlas may share context within the Studio organization.
+//   state=healthy | included (fresh 100% included reading, paid capacity left, no error) | switched (destination
+//   verified) | spent (every eligible login's included usage used up) | notproof (&reason=rounded|stale|othermodel|retry)
+//   | scope (sharing scope unknown) | settings (&page=accounts|models)
+//   trigger=included (default) | error (a hard usage-limit error, the fallback)
+const STATE = ['healthy','included','switched','spent','notproof','scope','settings'].includes(q.get('state')) ? q.get('state') : 'healthy';
+const TRIGGER = q.get('trigger') === 'error' ? 'error' : 'included';
 const PROVIDER = q.get('provider') === 'codex' ? 'codex' : 'claude';
 const HOST = q.get('host') === 'today' ? 'today' : 'ready';
 const SCOPE = 'Studio';
+// included: the fresh, attributable reading of the included window that applies to this model and login.
 const DISCOVERED = {
-  claude: [{ id: 'sd', alias: 'c1', label: 'System default' }, { id: 'c1', email: 'dev@studio.example', org: 'Studio', reset: '3:45 PM', at: 945 }, { id: 'c2', email: 'qa@studio.example', org: 'Studio', reset: '6:10 PM', at: 1090 }],
-  codex: [{ id: 'x1', email: 'dev@studio.example', org: 'Studio', reset: '4:20 PM', at: 980 }, { id: 'x2', email: 'ops@studio.example', org: 'Studio', reset: '5:05 PM', at: 1025 }, { id: 'x3', email: 'contractor@acme.example', org: 'Acme', reset: '2:30 PM', at: 870 }]
+  claude: [{ id: 'sd', alias: 'c1', label: 'System default' },
+    { id: 'c1', email: 'dev@studio.example', org: 'Studio', included: 100, window: '5-hour', reset: '3:45 PM', at: 945, paid: true },
+    { id: 'c2', email: 'qa@studio.example', org: 'Studio', included: 38, window: '5-hour', reset: '6:10 PM', at: 1090, paid: true }],
+  codex: [{ id: 'x1', email: 'dev@studio.example', org: 'Studio', included: 100, window: '5-hour', reset: '4:20 PM', at: 980, paid: true },
+    { id: 'x2', email: 'ops@studio.example', org: 'Studio', included: 31, window: '5-hour', reset: '5:05 PM', at: 1025, paid: true },
+    { id: 'x3', email: 'contractor@acme.example', org: 'Acme', included: 0, window: '5-hour', reset: '2:30 PM', at: 870, paid: true }]
 };
+const NOT_PROOF = {
+  rounded: 'The window shows 100%, but the reading is 99.6%: a rounded display is not proof.',
+  stale: 'The last reading is 41 minutes old: stale or unknown usage is not proof.',
+  othermodel: 'Only a window for another model is at 100%; this conversation’s model still has included usage.',
+  retry: 'A temporary error (HTTP 429) is being retried: not a usage signal.'
+};
+const REASON = Object.keys(NOT_PROOF).includes(q.get('reason')) ? q.get('reason') : 'rounded';
 const TARGET = PROVIDER === 'claude' ? 'onboarding' : 'usage';
 const NAME = { claude: 'Claude', codex: 'Codex' };
 const logins = (p) => { const d = DISCOVERED[p]; return d.filter((a) => !a.alias).map((a) => ({ ...a, systemDefault: d.some((x) => x.alias === a.id) })); };
@@ -1241,10 +1259,13 @@ const excluded = new Set(JSON.parse(q.get('exclude') || '[]'));
 let switching = q.get('switching') !== 'off';
 const eligible = (p) => logins(p).filter((a) => a.org === SCOPE && !excluded.has(a.id));
 const short = (email) => email.replace(/\.example$/, '');
-// The limited row: the turn ended, so the host reports it done; a switched row keeps working.
-if (STATE === 'exhausted' || STATE === 'scope' || (STATE === 'switched' && (HOST === 'today' || !switching || eligible(PROVIDER).length < 2))) {
-  for (const r of snapshot.rows) for (const a of r.agents) if (a.paneKey === TARGET) { a.state = 'done'; r.state = 'done'; }
+// What the host does with the conversation, for its face: paused or limited turns end (done), others keep working.
+function paused() {
+  if (HOST === 'today') return TRIGGER === 'error' && ['included','switched','spent','scope'].includes(STATE);
+  if (!switching) return TRIGGER === 'error' && ['included','switched','spent','scope'].includes(STATE);
+  return STATE === 'spent' || STATE === 'scope' || (['included','switched'].includes(STATE) && eligible(PROVIDER).length < 2);
 }
+if (paused()) for (const r of snapshot.rows) for (const a of r.agents) if (a.paneKey === TARGET) { a.state = 'done'; r.state = 'done'; }
 const stored = { 'linear': { folded: true }, 'speed-ui': { folded: true }, 'goals-ui': { folded: false }, 'folded': ['idle'] };
 window.previewCalls = [];
 window.previewErrors = [];
@@ -1274,23 +1295,28 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 let checked = false;
 function outcome() {
   const p = PROVIDER, src = logins(p)[0], name = NAME[p];
-  if (STATE === 'healthy' || STATE === 'settings') return null;
-  const limited = { status: 'Limited · ' + src.reset };
-  if (HOST === 'today') return { ...limited, tip: src.email + ' reached its usage limit. This conversation continues here after the reset at ' + src.reset + '. Orca 1.4.272 can’t continue it on another account.' };
-  if (STATE === 'scope') return { ...limited, tip: src.email + ' reached its usage limit. Orca couldn’t confirm which accounts may receive this workspace’s work, so the conversation stays here.',
-    line: name + ': couldn’t confirm which accounts may receive this work · stays on ' + short(src.email) };
+  if (STATE === 'healthy' || STATE === 'settings' || STATE === 'notproof') return null;
+  const used = src.email + ' has used 100% of its included ' + src.window + ' usage (resets ' + src.reset + ')';
+  const limited = { status: 'Limited · ' + src.reset, tip: src.email + ' reached its usage limit. The conversation continues here after the reset at ' + src.reset + '.' };
+  // Orca 1.4.272, or switching turned off: Orca Flow doesn't act. At 100% included the provider keeps going on
+  // paid usage, so nothing changes; a hard usage-limit error shows only as the row's status.
+  if (HOST === 'today' || !switching) return TRIGGER === 'error' ? limited : null;
+  const pausedLine = (why) => ({ status: 'Paused · ' + src.reset, tip: (TRIGGER === 'error' ? src.email + ' reached its usage limit' : used) + '. ' + why + ' Work paused before its next request so it doesn’t run on paid usage.' });
+  if (STATE === 'scope') return { ...pausedLine('Orca couldn’t confirm which accounts may receive this workspace’s work.'), line: name + ': couldn’t confirm which accounts may receive this work · paused before paid usage' };
   const others = eligible(p).filter((a) => a.id !== src.id);
-  if (STATE === 'switched' && switching && others.length) {
+  if ((STATE === 'included' || STATE === 'switched') && others.length) {
     const to = others[0];
-    return { acct: short(to.email), tip: 'Continued on ' + to.email + '. ' + src.email + ' reached its limit (resets ' + src.reset + '). Same conversation, model and assignment.' };
+    if (STATE === 'included') return { moving: 'Moving to ' + short(to.email), tip: used + '. It could go on paid usage, but this work moves to ' + to.email + ', which has included usage left, before its next request.' };
+    return { acct: short(to.email), tip: 'Continued on ' + to.email + (TRIGGER === 'error' ? ': ' + src.email + ' reached its usage limit (resets ' + src.reset + ').' : ' before paid usage: ' + used + '.') + ' Same conversation, model and assignment.' };
   }
-  if (STATE === 'switched') {
-    const why = !switching ? 'Account switching is off' : 'No other ' + name + ' account can take this work';
-    return { ...limited, tip: src.email + ' reached its usage limit. ' + why + ', so the conversation continues here after the reset.', line: name + ': ' + why.charAt(0).toLowerCase() + why.slice(1) + ' · resumes ' + src.reset };
-  }
+  if (STATE === 'included' || STATE === 'switched') return { ...pausedLine('No other ' + name + ' login this work may use has included usage left.'), line: name + ': no other account has included usage · paused before paid usage · ' + src.reset };
+  // spent: every eligible login is at 100% of its included usage. One line, the earliest known reset, no cycling.
   const pool = [src, ...others], first = [...pool].sort((a, b) => a.at - b.at)[0];
-  return { status: 'Limited · ' + first.reset, tip: 'All ' + pool.length + ' ' + name + ' accounts for this work are limited. It continues on ' + first.email + ' at ' + first.reset + ', the earliest reset.',
-    line: name + ': all ' + pool.length + ' accounts limited · resumes ' + first.reset + ' on ' + short(first.email) };
+  const tip = TRIGGER === 'error'
+    ? 'All ' + pool.length + ' ' + name + ' accounts for this work are limited. It continues on ' + first.email + ' at ' + first.reset + ', the earliest reset.'
+    : pool.map((a) => a.email).join(' and ') + ' have used all of their included usage. Work paused before its next request so it doesn’t run on paid usage. It continues on ' + first.email + ' at ' + first.reset + ', the earliest reset.';
+  return { status: (TRIGGER === 'error' ? 'Limited · ' : 'Paused · ') + first.reset, tip,
+    line: TRIGGER === 'error' ? name + ': all ' + pool.length + ' accounts limited · resumes ' + first.reset + ' on ' + short(first.email) : name + ': included usage used up · paused before paid usage · ' + first.reset };
 }
 function applyRow(o) {
   const el = document.querySelector('#main [data-menu="agent:' + TARGET + '"]');
@@ -1302,6 +1328,8 @@ function applyRow(o) {
     span.className = 'acct'; span.setAttribute('role', 'img'); span.setAttribute('aria-label', o.tip); span.dataset.tip = o.tip;
     span.innerHTML = SWAP + esc(o.acct);
     r.insertBefore(span, r.querySelector('.age'));
+  } else if (o.moving) {
+    r.innerHTML = '<span class="rstatus pending acct-status" data-tip="' + esc(o.tip) + '"><span class="refreshing"></span>' + esc(o.moving) + '<span class="sr-only">: ' + esc(o.tip) + '</span></span>';
   } else {
     r.innerHTML = '<span class="rstatus warn acct-status" data-tone="warn" data-tip="' + esc(o.tip) + '">' + esc(o.status) + '<span class="sr-only">: ' + esc(o.tip) + '</span></span>';
   }
@@ -1313,49 +1341,77 @@ function applyLine(o) {
   const after = label.nextElementSibling?.classList.contains('reload-sum') ? label.nextElementSibling : label;
   const div = document.createElement('div');
   div.className = 'reload-sum acct-line'; div.setAttribute('role', 'status'); div.dataset.tip = o.tip;
-  div.innerHTML = PAUSE + '<span>' + esc(o.line + (checked ? ' · still limited' : '')) + '</span><button class="act" data-acct-check>Check now</button>';
+  div.innerHTML = PAUSE + '<span>' + esc(o.line + (checked ? ' · checked just now' : '')) + '</span><button class="act" data-acct-check>Check now</button>';
   after.after(div);
 }
-function applySettings() {
-  const page = document.getElementById('s-page');
-  if (!page || page.querySelector('.acct-settings') || !page.querySelector('.s-ptitle')) return;
-  if (document.querySelector('#s-nav [aria-current="page"]')?.dataset.page !== 'models') return;
+
+// ---- Settings: Account switching, its own page beside Models in the released dialog.
+const NAV_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5.5h8.5M9 3l2.5 2.5L9 8M13 10.5H4.5M7 8l-2.5 2.5L7 13"/></svg>';
+let acctOpen = false;
+const atDefault = () => switching && excluded.size === 0;
+function navButton() {
+  const nav = document.getElementById('s-nav');
+  const models = nav?.querySelector('[data-page="models"]');
+  if (!models || nav.querySelector('[data-acct-page]')) return;
+  const narrow = window.innerWidth <= 520;
+  const b = document.createElement('button');
+  b.className = 's-nav-btn'; b.type = 'button'; b.dataset.acctPage = ''; b.setAttribute('aria-label', 'Account switching');
+  if (narrow) b.dataset.tip = 'Account switching';
+  b.innerHTML = '<span class="s-tile" style="background:#0f9d8a">' + NAV_ICON + '</span><span class="s-nav-label">Account switching</span>';
+  models.after(b);
+}
+function accountsPage() {
   const tip = (t) => ' data-tip="' + esc(t) + '"';
   const sw = (id, on, name, dis) => '<label class="s-switch"><input type="checkbox" role="switch" data-acct="' + id + '" ' + (on ? 'checked' : '') + (dis ? ' disabled' : '') + ' aria-label="' + esc(name) + '"><span></span></label>';
   const rowHtml = (p, a) => {
     const inScope = a.org === SCOPE;
     const detail = inScope ? (a.systemDefault ? 'System default' : '') : 'Not shared';
-    const t = inScope ? a.org + (a.systemDefault ? ', also System default' : '') + '. Used when another ' + NAME[p] + ' login is limited. Turn off to never use it.' : 'Discovered, but no workspace here is authorized to share context with ' + a.org + ', so it is never used.';
-    return '<div class="s-row' + (inScope ? '' : ' acct-out') + '"><span class="s-label"' + tip(t) + '>' + esc(a.email) + '</span><div class="s-ctl">' + (detail ? '<span class="s-value">' + esc(detail) + '</span>' : '') + sw(a.id, inScope && !excluded.has(a.id), a.email, !inScope || !switching) + '</div></div>';
+    const t = inScope ? a.org + (a.systemDefault ? ', also System default' : '') + '. Used when another ' + NAME[p] + ' login has used 100% of its included usage. Off: never used.' : 'Discovered, but no workspace here may share context with ' + a.org + ', so it is never used.';
+    return '<div class="s-row"><span class="s-label"' + tip(t) + '>' + esc(a.email) + '</span><div class="s-ctl">' + (detail ? '<span class="s-value">' + esc(detail) + '</span>' : '') + sw(a.id, inScope && !excluded.has(a.id), a.email, !inScope || !switching) + '</div></div>';
   };
-  const section = document.createElement('div');
-  section.className = 'acct-settings';
-  section.style.display = 'grid'; section.style.gap = '14px';
-  section.innerHTML = '<section class="s-group"><h4 class="s-gh"><span class="s-label"' + tip('When a conversation’s account reaches its usage limit, Orca Flow continues it on another login of the same provider that its workspace may share context with. On by default, for every such login.') + '>Usage limits</span></h4><div class="s-card">' +
-    '<div class="s-row"><span class="s-label"' + tip('Off: a limited conversation waits for its reset.') + '>Continue on another account</span><div class="s-ctl">' + sw('all', switching, 'Continue on another account') + '</div></div></div></section>' +
-    ['claude', 'codex'].map((p) => '<section class="s-group' + (switching ? '' : ' acct-dim') + '"><h4 class="s-gh"><span class="s-label">' + NAME[p] + ' accounts</span></h4><div class="s-card">' + logins(p).map((a) => rowHtml(p, a)).join('') + '</div></section>').join('');
-  page.append(section);
+  return '<div class="acct-page" style="display:contents"><h3 class="s-ptitle"><span class="s-label"' + tip('Which logins a conversation may continue on when its account has used its included usage.') + '>Account switching</span></h3>' +
+    '<section class="s-group"><div class="s-card"><div class="s-row"><span class="s-label"' + tip('Off: Orca Flow doesn’t step in, so an account at 100% goes on to paid usage as the provider allows.') + '>Continue on another account</span><div class="s-ctl">' + sw('all', switching, 'Continue on another account') + '</div></div></div>' +
+    '<p class="acct-note">On by default for every eligible Claude and Codex login. When a login has used 100% of its included usage, work moves to another login of the same provider that still has included usage, before its next paid request. When none has any, work pauses until a reset.</p></section>' +
+    ['claude', 'codex'].map((p) => '<section class="s-group"><h4 class="s-gh"><span class="s-label">' + NAME[p] + '</span></h4><div class="s-card">' + logins(p).map((a) => rowHtml(p, a)).join('') + '</div></section>').join('') +
+    (atDefault() ? '' : '<div class="s-foot"><button type="button" class="s-push" data-acct-reset>Reset to Defaults</button></div>') + '</div>';
+}
+function showAccounts() {
+  const page = document.getElementById('s-page'), nav = document.getElementById('s-nav');
+  if (!page || !nav) return;
+  navButton();
+  for (const b of nav.querySelectorAll('.s-nav-btn')) b.removeAttribute('aria-current');
+  nav.querySelector('[data-acct-page]')?.setAttribute('aria-current', 'page');
+  page.innerHTML = accountsPage();
+  page.scrollTop = 0;
+}
+function applySettings() {
+  if (document.getElementById('settings')?.hidden) return;
+  navButton();
+  const page = document.getElementById('s-page');
+  if (acctOpen && page && !page.querySelector('.acct-page')) showAccounts();
 }
 function apply() {
   const o = outcome();
   if (o) { applyRow(o); applyLine(o); }
-  if (STATE === 'settings') applySettings();
+  applySettings();
 }
 document.addEventListener('click', (e) => {
-  if (e.target.closest('[data-acct-check]')) { e.stopPropagation(); checked = true; document.querySelector('#main .acct-line')?.remove(); apply(); }
+  if (e.target.closest('[data-acct-check]')) { e.stopPropagation(); checked = true; document.querySelector('#main .acct-line')?.remove(); apply(); return; }
+  if (e.target.closest('[data-acct-page]')) { e.stopPropagation(); acctOpen = true; showAccounts(); return; }
+  if (e.target.closest('[data-acct-reset]')) { e.stopPropagation(); switching = true; excluded.clear(); showAccounts(); return; }
+  if (e.target.closest('#s-nav [data-page], #s-x')) acctOpen = false;
 }, true);
 document.addEventListener('change', (e) => {
   const t = e.target.closest('[data-acct]');
   if (!t) return;
   e.stopPropagation();
   if (t.dataset.acct === 'all') switching = t.checked; else t.checked ? excluded.delete(t.dataset.acct) : excluded.add(t.dataset.acct);
-  document.querySelector('.acct-settings')?.remove(); applySettings();
+  showAccounts(); document.querySelector('[data-acct="' + t.dataset.acct + '"]')?.focus();
 }, true);
 new MutationObserver(apply).observe(document.documentElement, { childList: true, subtree: true });
 if (STATE === 'settings') window.addEventListener('load', () => setTimeout(() => {
   document.getElementById('settings-open').click();
-  setTimeout(() => document.querySelector('[data-page="models"]')?.click(), 100);
-  setTimeout(() => { const p = document.getElementById('s-page'); if (p) p.scrollTop = p.scrollHeight; }, 400);
+  setTimeout(() => q.get('page') === 'models' ? document.querySelector('[data-page="models"]')?.click() : document.querySelector('[data-acct-page]')?.click(), 150);
 }, 200));
 </script><script type="module">
 // src/handover-providers.ts
