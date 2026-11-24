@@ -80,20 +80,20 @@ function installWorker(args) {
   const user = (g, field) => { g.updatedAt = Date.now(); g.lastChange = { by: 'you', field, at: Date.now() } }
   const reopen = (g) => { g.status = 'open'; delete g.doneAt; delete g.doneBy; delete g.proposedBy; user(g, 'status') }
   const finish = (g, extra = {}) => { const prop = g.proposedBy; g.status = 'done'; g.doneAt = extra.doneAt ?? Date.now(); g.doneBy = 'you'; if (extra.proposedBy || prop) g.proposedBy = extra.proposedBy || prop; user(g, 'status') }
-  W.changed = () => { post('sidebar.goalsChanged', ordered().map((g) => ({ ...g, workingPanes: [] }))); post('goals.changed') }
+  W.changed = () => { post('sidebar.goalsChanged', ordered().map((g) => ({ ...g, livePanes: [] }))); post('goals.changed') }
   W.request = async (name, d) => {
     W.calls.push({ name, d: clone(d ?? null) })
     if (W.hang && name === 'goals.completed') return new Promise(() => {})
     if (W.latency) await new Promise((r) => setTimeout(r, W.latency))
     if (name === 'sidebar.list') return args.snapshot
-    if (name === 'sidebar.goals') return ordered().map((g) => ({ ...g, workingPanes: [] }))
+    if (name === 'sidebar.goals') return ordered().map((g) => ({ ...g, livePanes: [] }))
     if (name === 'sidebar.goalAction') {
       const g = W.goals.find((x) => x.id === d.id)
       if (d.action === 'add') W.goals.push({ id: 'n' + W.goals.length, title: d.title, status: 'open', steps: [], links: { linear: [], worktrees: [] }, createdAt: Date.now(), updatedAt: Date.now(), lastChange: { by: 'you', field: 'created', at: Date.now() } })
       else if (g && (d.action === 'done' || d.action === 'confirm')) finish(g)
       else if (g && d.action === 'reopen') reopen(g)
       W.changed()
-      return { ok: true, goals: ordered().map((x) => ({ ...x, workingPanes: [] })) }
+      return { ok: true, goals: ordered().map((x) => ({ ...x, livePanes: [] })) }
     }
     if (name === 'goals.completed') {
       if (W.fail) throw new Error(W.fail)

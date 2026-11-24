@@ -279,6 +279,8 @@ test('CLI: show and list name the coordinator the current next step was assigned
   assert.equal(JSON.parse(cli(dir, bin, 'goal', 'show', id, '--json').out).assignment.coordinator, 'home')
   cli(dir, bin, 'goal', 'set', id, '--next', 'Something else')
   assert.doesNotMatch(cli(dir, bin, 'goal', 'show', id).out, /assigned/, 'goal set --next: the new step is not assigned')
+})
+
 // ---------- completed goals: who completed it, and Undo keeping the date ----------
 
 test('done records who completed it; the agent that proposed it is kept; reopen clears all three', () => {

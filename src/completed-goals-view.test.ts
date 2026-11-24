@@ -295,3 +295,10 @@ test('a goal in the format of the previous version loads, lists, opens in the pa
   assert.deepEqual([r.status, r.title, r.note, r.links], ['open', 'Old finished goal', 'kept', old.links])
   assert.equal(readFileSync(join(dir, 'goals', 'g_older-3c4d.json'), 'utf8'), texts.get(join(dir, 'goals', 'g_older-3c4d.json')), 'the other goal is untouched')
 }))
+
+test('the tab is read-only: no Next step button (Jump or Assign), even for a goal whose step was assigned before it was completed', () => {
+  const assigned = { ...goal({ id: 'as' }), assignment: { coordinator: 'home', name: 'bounti', next: 'Tell finance it is live', state: 'delivered', at: 1, by: 'you', token: 't' } } as CompletedGoal
+  const p = completedParts(ready([assigned, ...GOALS]), ui({ sel: 'as' }), NOW)
+  noMatch(p.body, /data-gjump|data-gassign|class="gact|class="gline|contenteditable|data-gedit|data-gfinish/)
+  noMatch(detailHtml(assigned, true, NOW), /data-gjump|data-gassign|gact|Assign|Jump/)
+})

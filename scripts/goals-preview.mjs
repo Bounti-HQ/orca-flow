@@ -221,8 +221,11 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     ok($('#goalpop').hidden && !row('g_planning-assistance'), 'Mark done removes the goal from the active list');
     ok(!!$('[data-gcompleted]') && $('[data-gcompleted]').dataset.tip === '2 completed goals · opens a tab', 'a goal marked done is counted in the Completed › tooltip');
     $('[data-gcompleted]').click(); await wait(); ok(previewCalls.some((c) => c.name === 'goals.openCompleted'), 'Completed › opens the tab (no in-sidebar history)');
+    // Reopened elsewhere (the Completed goals tab, or the CLI): back in the active list, in its place.
+    { const g = goals.find((x) => x.id === 'g_lawyer-intro'); g.status = 'open'; delete g.doneAt; listeners['sidebar.goalsChanged'].forEach((f) => f(JSON.parse(JSON.stringify(goals)))); await wait(); }
+    ok(!!row('g_lawyer-intro').querySelector('.nx') && $('[data-gcompleted]').dataset.tip === '1 completed goal · opens a tab', 'a goal reopened elsewhere is back in the active list');
     row('g_pdf-export').click(); await wait(); ok(!!$('#goalpop [data-gconfirm]') && !!$('#goalpop [data-gnot]') && !$('#goalpop [data-gfinish]'), 'proposed card offers Confirm done / Not yet');
-    $('#goalpop [data-gconfirm]').click(); await wait(300); ok(!row('g_pdf-export') && $('[data-gcompleted]').dataset.tip === '3 completed goals · opens a tab', 'Confirm done moves the goal out of active goals');
+    $('#goalpop [data-gconfirm]').click(); await wait(300); ok(!row('g_pdf-export') && $('[data-gcompleted]').dataset.tip === '2 completed goals · opens a tab', 'Confirm done moves the goal out of active goals');
     // not yet on a fresh proposal
     goals.find((x) => x.id === 'g_lesson-splitting').status = 'proposed'; listeners['sidebar.goalsChanged'].forEach((f) => f(JSON.parse(JSON.stringify(goals)))); await wait();
     row('g_lesson-splitting').click(); await wait(); $('#goalpop [data-gnot]').click(); await wait(300);
@@ -231,6 +234,7 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     row('g_lesson-splitting').click(); await wait(); await edit('title', '   '); await wait(); ok($('#goalpop [data-gedit="title"]').textContent.startsWith('Finish lesson splitting'), 'an emptied title reverts');
     key(document.body, 'Escape'); await wait();
     // ---------- the Next step's button ----------
+    document.activeElement?.blur(); await wait(); // Esc above gave a row keyboard focus (which shows its button); start the checks at rest
     const act = (id) => $('[data-gopen="' + id + '"]')?.parentElement?.querySelector(':scope > .gact');
     const word = (id) => act(id)?.textContent.trim();
     const shown = (id) => !!act(id) && getComputedStyle(act(id)).display !== 'none';
