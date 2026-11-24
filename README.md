@@ -7,6 +7,10 @@ to a lead and workers, and keep you out of the details.
 
 macOS only for now.
 
+When a Claude or Codex account reaches its usage limit, keep the affected conversation open.
+Eligible native chats can continue after reset. Automatic same-provider account substitution
+needs a session-scoped Orca API. [Recovery options and host evidence](docs/account-failover.md)
+
 **Antigravity CLI** sessions show their host-reported title, state and worker relationships.
 The Antigravity mark appears beside the role avatar in mixed-provider sidebars. Terminal
 coordination and exact-session resume have fixture coverage. Live sign-in, dispatch and resume
