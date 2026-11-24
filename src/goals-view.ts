@@ -31,7 +31,7 @@ const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '
 // ---------- which agents are on a goal ----------
 
 /** Does the goal's worktree link point at this row? By Orca identity key, Orca id or path. */
-const linkedTo = (w: Goal['links']['worktrees'][number], row: Pick<WorkspaceRow, 'id' | 'path'>) =>
+export const linkedTo = (w: Goal['links']['worktrees'][number], row: Pick<WorkspaceRow, 'id' | 'path'>) =>
   (!!w.key && row.id === `identity:${w.key}`) || (!!w.worktreeId && row.id === w.worktreeId) || (!!w.path && row.path === w.path)
 
 /** Waiting for the user: a question, or a permission prompt. */
