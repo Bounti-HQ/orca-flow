@@ -211,7 +211,7 @@ square. The face and the badge at the bottom right show what Orca reports:
 not be a Linear issue: it can span several, or have no issue, worktree or agent at all (a document for
 a lawyer, product research). Each row is two lines: the title with its todo count (`2/4`) on the right,
 and under it the next step. Avatars show who is working on linked worktrees. Hover over them for the agent names. Hovering (or
-keyboard-focusing) an open goal shows one pill at the end of its next step, like a Linear row's **Send →**: **Jump →** focuses the session of an agent on a linked worktree
+keyboard-focusing) an open goal shows one pill at the end of its title line, after the avatars and progress, like a Linear row's **Send →**: **Jump →** focuses the session of an agent on a linked worktree
 that is working or waiting for you, or of the coordinator the step was assigned to (checked against a fresh snapshot first: a
 session that is gone is never focused). With nobody on it, **Assign →** picks one of your coordinators with a live
 session and types the exact step (the row shows "Assigning…" until it lands), with the goal's title, id and `orca-flow goal` commands, into its current session; the goal

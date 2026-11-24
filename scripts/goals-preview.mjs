@@ -241,14 +241,32 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     const act = (id) => $('[data-gopen="' + id + '"]')?.parentElement?.querySelector(':scope > .gact');
     const word = (id) => act(id)?.textContent.trim();
     const shown = (id) => !!act(id) && getComputedStyle(act(id)).display !== 'none';
-    const room = (id) => parseFloat(getComputedStyle(row(id).querySelector('.nx')).paddingRight);
+    // The room the title line keeps for the pill (its spacer), and whether the pill shares that one line with the
+    // avatars and the progress ring: the same vertical center, after them, the title ending before them, and the Next
+    // text on its own full-width line below.
+    const room = (id) => parseFloat(getComputedStyle(row(id), '::after').width) || 0;
+    const oneLine = (id) => {
+      const r = (el) => el.getBoundingClientRect(), mid = (b) => b.top + b.height / 2;
+      const p = r(act(id)), ring = r(row(id).querySelector('.gprogress')), ti = r(row(id).querySelector('.ti')), nx = r(row(id).querySelector('.nx'));
+      const who = row(id).querySelector('.who') && r(row(id).querySelector('.who'));
+      const checks = { pillOnRingLine: Math.abs(mid(p) - mid(ring)) <= 1, avatarOnRingLine: !who || Math.abs(mid(who) - mid(ring)) <= 1.5, pillAfterRing: p.left >= ring.right + 2,
+        titleBeforeCluster: ti.right <= (who || ring).left, nextBelow: nx.top >= Math.max(p.bottom, ring.bottom) - 1, nextFullWidth: Math.abs(nx.right - p.right) <= 1 && Math.abs(nx.left - ti.left) <= 1 };
+      const bad = Object.keys(checks).filter((k) => !checks[k]);
+      return bad.length ? 'not one line: ' + bad.join(', ') + ' ' + JSON.stringify({ p: [p.left, p.top, p.right, p.bottom], ring: [ring.left, ring.top, ring.right, ring.bottom], nx: [nx.left, nx.top, nx.right] }) : '';
+    };
     ok(word('g_super-admin') === 'Jump' && word('g_lesson-splitting') === 'Jump' && !!act('g_super-admin').querySelector('svg'), 'Jump → for a working agent and for one waiting for the user');
     ok(word('g_shift-scheduling') === 'Assign', 'Assign → when nobody is on the step');
     ok(act('g_super-admin').classList.contains('send') && act('g_super-admin').classList.contains('pill') && act('g_super-admin').getAttribute('aria-label').startsWith('Jump to ') && act('g_shift-scheduling').getAttribute('aria-label') === 'Assign the next step to a coordinator', 'the Linear Send pill, the full meaning in the label');
     ok(!shown('g_super-admin') && !shown('g_shift-scheduling') && room('g_super-admin') === 0 && room('g_shift-scheduling') === 0, 'at rest: no buttons, the Next text has the whole width');
     row('g_shift-scheduling').focus({ focusVisible: true }); await wait();
     ok(shown('g_shift-scheduling') && room('g_shift-scheduling') > 0 && !shown('g_super-admin'), 'keyboard focus on a row shows its button and makes room for it');
+    let line = oneLine('g_shift-scheduling');
+    ok(!line, 'Assign → shares one line with the progress ring; the Next line keeps the full width ' + line);
     row('g_shift-scheduling').blur(); await wait();
+    row('g_super-admin').focus({ focusVisible: true }); await wait();
+    line = oneLine('g_super-admin');
+    ok(shown('g_super-admin') && !line, 'Jump → after the avatar and the progress ring, all on the title line ' + line);
+    row('g_super-admin').blur(); await wait();
     ok(!act('g_lawyer-intro') && !row('g_lawyer-intro').closest('.gline'), 'no button for a goal with no Next step');
     ok(!$('.gact[data-gjump="g_pdf-export"],.gact[data-gassign="g_pdf-export"]'), 'no button for a done goal');
     // Jump to agent: reads the snapshot again, then focuses the exact pane; the card stays closed.
@@ -269,12 +287,12 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     ok($('#goalpop').hidden, 'the picker does not open the card');
     const menuAt = $('#ctx').getBoundingClientRect(), rowAt = act('g_shift-scheduling').parentElement.getBoundingClientRect();
     ok(menuAt.top >= rowAt.bottom - 1 || menuAt.bottom <= rowAt.top + 1, 'the picker opens next to the goal row');
-    ok(act('g_shift-scheduling').parentElement.classList.contains('menu-open') && shown('g_shift-scheduling') && act('g_shift-scheduling').getAttribute('aria-expanded') === 'true', 'the button stays shown while its picker is open');
+    ok(act('g_shift-scheduling').parentElement.classList.contains('menu-open') && shown('g_shift-scheduling') && !oneLine('g_shift-scheduling') && act('g_shift-scheduling').getAttribute('aria-expanded') === 'true', 'the button stays shown while its picker is open');
     const step = goals.find((y) => y.id === 'g_shift-scheduling').next;
     before = previewCalls.length;
     items[0].click(); await wait(60);
     const pend = act('g_shift-scheduling');
-    ok(pend?.textContent === 'Assigning…' && pend.tagName === 'SPAN' && shown('g_shift-scheduling') && room('g_shift-scheduling') > 0, 'Assigning… shows without hover while it is sent, and there is nothing to press');
+    ok(pend?.textContent === 'Assigning…' && pend.tagName === 'SPAN' && shown('g_shift-scheduling') && room('g_shift-scheduling') > 0 && !oneLine('g_shift-scheduling'), 'Assigning… shows without hover, on the title line, while it is sent, and there is nothing to press ' + oneLine('g_shift-scheduling'));
     const req = previewCalls.slice(before).find((c) => c.name === 'sidebar.goalAssign');
     ok(req?.data.id === 'g_shift-scheduling' && req.data.coordinator === 'home' && req.data.next === step && previewDelivered.at(-1)?.next === step, 'delivery request carries the exact Next text: ' + JSON.stringify(req?.data));
     await wait(700);

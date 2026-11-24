@@ -1069,18 +1069,25 @@ html.light { --c3: #eda100; --c4: #e87ba4; --c5: #008300; }
 .gprogress svg { fill: none; stroke: var(--action); stroke-width: 2; }
 .gprogress .track { stroke: var(--faint); }
 .g.fin .ti { color: var(--ink); }
-/* A goal's Next step pill (the Linear row's "Send →" pill above) sits at the end of the Next line, beside the row's
-   button (a button cannot hold another). At rest it is hidden and the Next text has the whole width; on hover, keyboard
-   focus or an open picker the text makes room. Progress and avatars sit on the title line, so the pill never covers them.
-   "Assigning…" is a row status, shown without hover. */
+/* A goal's Next step pill (the Linear row's "Send →" pill above) ends the row's title line, after the avatars and the
+   progress ring, as Send → ends a Linear row's one line. It is a sibling of the row's button (a button cannot hold
+   another), so the row keeps a spacer at the end of its title line that takes the pill's width while it shows (hover,
+   keyboard focus, an open picker, Assigning…): the title ellipsizes and the cluster moves left, staying one row. The
+   title line's items wrap the Next text onto its own full-width line, with no pill. */
 .gline { position: relative; display: grid; }
 .gline:is(:hover, .menu-open) > .g { background: var(--hover); }
-.gline > .g { align-items: flex-start; }
-.gline > .g .who, .gline > .g .gprogress { margin-top: 1px; }
-.gline.gk-jump:is(:hover, :has(:focus-visible), .menu-open) > .g .nx { padding-right: 64px; }
-.gline.gk-assign:is(:hover, :has(:focus-visible), .menu-open) > .g .nx { padding-right: 72px; }
-.gline.gk-pending > .g .nx { padding-right: 84px; }
-.gact { position: absolute; right: 0; bottom: 4px; }
+.gline > .g { flex-wrap: wrap; column-gap: 8px; row-gap: 0; text-align: left; }
+.gline > .g > .m { display: contents; }
+.gline > .g .ti { flex: 1 1 0; text-align: left; }
+.gline > .g .who { order: 1; }
+.gline > .g .gprogress { order: 2; }
+.gline > .g::after { content: ""; order: 3; flex: none; width: 0; height: 18px; margin-left: -8px; }
+.gline > .g .nx { order: 4; flex: 1 0 100%; text-align: left; }
+.gline.gk-jump:is(:hover, :has(:focus-visible), .menu-open) > .g::after { width: 56px; margin-left: 0; }
+.gline.gk-assign:is(:hover, :has(:focus-visible), .menu-open) > .g::after { width: 66px; margin-left: 0; }
+.gline.gk-pending > .g::after { width: 76px; margin-left: 0; }
+/* Centered on the title line: the row's 5px padding, then the line (13px × 1.45) less the 18px pill, halved. */
+.gact { position: absolute; right: 0; top: calc(5px + (13px * 1.45 - 18px) / 2); }
 .gline .gact.rstatus { height: 18px; font-size: 11px; }
 .gsec .add { margin: 2px 0 4px; }
 .gsec .add input { all: unset; box-sizing: border-box; width: 100%; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--ask); user-select: text; -webkit-user-select: text; }

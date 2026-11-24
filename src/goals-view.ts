@@ -90,7 +90,7 @@ export function jumpTarget(g: GoalView, snap: SnapLike, gone: ReadonlySet<string
 export type NextButton = { kind: 'jump'; target: JumpTarget } | { kind: 'assign' } | { kind: 'pending' }
 
 /**
- * The one button on an open goal's Next line; null for a done or proposed goal, or one with no Next
+ * The one button for an open goal's Next step; null for a done or proposed goal, or one with no Next
  * step. Pending while this panel sends it (`assigning`) or the store says a send is under way.
  */
 export function nextButton(g: GoalView, snap: SnapLike, opts: { assigning?: ReadonlySet<string>; gone?: ReadonlySet<string> } = {}): NextButton | null {
@@ -178,7 +178,7 @@ const completedDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 
 
 /**
  * One goal: its title and step count, and under it the next step (or "lead says done" while an agent proposes it).
- * `button` (nextButton) sits at the end of the Next line, beside the row's button, not inside it.
+ * `button` (nextButton) ends the title line, after the avatars and progress, beside the row's button (not inside it).
  */
 export function goalRow(g: GoalView, open: string | null, avatars = '', button: NextButton | null = null): string {
   const done = g.status === 'done'
