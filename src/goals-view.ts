@@ -245,7 +245,7 @@ export function goalCard(g: GoalView, now: number): string {
     ? `<button class="gbtn quiet" data-gnot="${esc(g.id)}">Not yet</button><button class="gbtn" data-gconfirm="${esc(g.id)}">Confirm done</button>`
     : g.status === 'done'
       ? `<button class="gbtn quiet" data-greopen="${esc(g.id)}">Reopen</button>`
-      : `<button class="gbtn" data-gfinish="${esc(g.id)}">Mark done</button>`
+      : `<button class="gbtn calm" data-gfinish="${esc(g.id)}">Mark done</button>`
   return [
     `<div class="gpart" data-part="title">${editable('title', g.id, g.title, 'Goal', 'ed ph')}</div>`,
     `<div class="gpart f" data-part="note"><span class="k">Description</span>${editable('note', g.id, g.note, 'Add a description', 'ed note')}</div>`,

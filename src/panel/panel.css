@@ -1120,5 +1120,8 @@ html.light { --c3: #eda100; --c4: #e87ba4; --c5: #008300; }
 .gbtn:hover { background: color-mix(in srgb, var(--action) 24%, transparent); }
 .gbtn.quiet { color: var(--muted); background: var(--card); }
 .gbtn.quiet:hover { color: var(--ink); background: var(--card-hover); }
+/* Mark done: the Up next "Jump to session" button's look (.jump). */
+.gbtn.calm { height: auto; padding: 5px 10px; border-radius: 6px; font-size: 12.5px; font-weight: 500; color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.gbtn.calm:hover { background: color-mix(in srgb, var(--ink) 14%, transparent); }
 .gpop .pfoot.wrap { flex-wrap: wrap; }
 .gpop .pfoot.wrap .gbtn:first-of-type { margin-left: auto; }
