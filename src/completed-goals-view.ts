@@ -258,7 +258,7 @@ export function detailHtml(g: CompletedGoal | null, screen: boolean, now: number
 
 // ---------- the toast ----------
 
-export type Undo = { id: string; title: string; doneAt: number | null; proposedBy: string | null }
+export type Undo = { id: string; title: string; doneAt: number; proposedBy: string | null }
 export type Toast = { kind: 'reopened'; title: string; undo: Undo } | { kind: 'undone'; title: string } | { kind: 'error'; text: string }
 export const toastHtml = (t: Toast): string => {
   const text = t.kind === 'reopened' ? `Reopened <b>“${esc(t.title)}”</b>. It’s back in Goals.` : t.kind === 'undone' ? `<b>“${esc(t.title)}”</b> is completed again.` : esc(t.text)
