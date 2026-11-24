@@ -681,7 +681,7 @@ declare module 'orca' {
      * the panel asks every few seconds while it is visible. A change is posted as sidebar.changed.
      */
     'sidebar.focus': { output: { changed: boolean } }
-    /** The Goals section's goals, each with whether an agent on a linked worktree is working. */
+    /** The Goals section's goals, each with the live agents on its linked worktrees (goalAgents). */
     'sidebar.goals': { output: import('./goals-view.ts').GoalView[] }
     /** One edit by the user from the Goals section; answers the goals after it, or why it was refused. */
     'sidebar.goalAction': { input: import('./goals.ts').GoalAction; output: { ok: boolean; error?: string; goals: import('./goals-view.ts').GoalView[] } }

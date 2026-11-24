@@ -1,4 +1,4 @@
-// The Goals section's HTML and rules, shared by the worker (which attaches the working agents) and the
+// The Goals section's HTML and rules, shared by the worker (which attaches the live agents on each goal) and the
 // panel (which draws it). Goals are read by skills/orca-flow/scripts/goals.mjs (worker side only); this
 // file has no Node imports, so the panel bundles it. Every goal text is untrusted: escaped when drawn.
 import type { Goal, GoalAssignment } from '../skills/orca-flow/scripts/goals.d.mts'
@@ -7,11 +7,11 @@ import { ARROW } from './icons.ts'
 import { worktreeLead } from './rank.ts'
 
 /**
- * A goal as the panel gets it: the stored goal, the agents working on its linked worktrees, and the
+ * A goal as the panel gets it: the stored goal, the live agents on its linked worktrees (goalAgents), and the
  * assignment of its Next step when it is for the current Next text (goals.mjs currentAssignment; the
  * worker fills it, absent on older views).
  */
-export type GoalView = Goal & { workingPanes: string[]; assigned?: GoalAssignment | null }
+export type GoalView = Goal & { livePanes: string[]; assigned?: GoalAssignment | null }
 
 export const COMPLETED_BATCH = 20
 
@@ -28,29 +28,48 @@ export type GoalsState = { folded: boolean; showDone: boolean; open: string | nu
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
 
-// ---------- which goals an agent is working on ----------
+// ---------- which agents are on a goal ----------
 
 /** Does the goal's worktree link point at this row? By Orca identity key, Orca id or path. */
 const linkedTo = (w: Goal['links']['worktrees'][number], row: Pick<WorkspaceRow, 'id' | 'path'>) =>
   (!!w.key && row.id === `identity:${w.key}`) || (!!w.worktreeId && row.id === w.worktreeId) || (!!w.path && row.path === w.path)
 
-const isWorking = (a: Pick<AgentInfo, 'state'>) => a.state === 'working'
+/** Waiting for the user: a question, or a permission prompt. */
+const ASKING: AgentInfo['state'][] = ['waiting', 'blocked']
 
-/** Identify each working pane once, even when a goal has multiple links to its worktree. */
-export function goalViews(goals: Goal[], rows: Pick<WorkspaceRow, 'id' | 'path' | 'agents'>[], assignedOf: (g: Goal) => GoalAssignment | null = () => null): GoalView[] {
+type Row = Pick<WorkspaceRow, 'id' | 'path' | 'agents'> & Partial<Pick<WorkspaceRow, 'name' | 'historical' | 'lastActivityAt'>>
+
+/**
+ * The one rule for who is on a goal, used by its avatars and by Jump →: the agents on its linked worktrees that still
+ * have a live session, in any state, until they sleep (their session closes) or are removed (the worktree or terminal is
+ * gone). Working and asking agents count unless Orca says their session is closed; a done or idle one only with positive
+ * evidence that it is live. Terminals in `gone` (seen dead) are left out. In Jump →'s order: working, else waiting for
+ * the user, else a worktree's lead, else the others, most recently active first. A done goal has none.
+ */
+export function goalAgents<R extends Row>(g: Pick<Goal, 'status' | 'links'>, rows: R[], gone: ReadonlySet<string> = new Set()): { row: R; a: AgentInfo }[] {
+  if (g.status === 'done') return []
+  const live = (a: AgentInfo) => !!a.terminal && !gone.has(a.terminal) && (a.state === 'working' || ASKING.includes(a.state) ? a.live !== false : a.live === true)
+  const placed = rows
+    .filter((row) => !row.historical && g.links.worktrees.some((w) => linkedTo(w, row)))
+    .sort((x, y) => (y.lastActivityAt ?? 0) - (x.lastActivityAt ?? 0))
+    .flatMap((row) => row.agents.filter(live).map((a) => ({ row, a })))
+  const rank = ({ row, a }: (typeof placed)[number]) => (a.state === 'working' ? 0 : ASKING.includes(a.state) ? 1 : worktreeLead(row)?.paneKey === a.paneKey ? 2 : 3)
+  const seen = new Set<string>()
+  return placed
+    .filter(({ a }) => !seen.has(a.paneKey) && !!seen.add(a.paneKey))
+    .sort((x, y) => rank(x) - rank(y) || (rank(x) === 3 ? (y.a.summary?.updatedAt ?? 0) - (x.a.summary?.updatedAt ?? 0) : 0))
+}
+
+/** Each goal with the panes of the agents on it (goalAgents), once each, even when a goal links its worktree twice. */
+export function goalViews(goals: Goal[], rows: Row[], assignedOf: (g: Goal) => GoalAssignment | null = () => null): GoalView[] {
   return goals.map((g) => ({
     ...g,
     assigned: g.status === 'done' ? null : assignedOf(g),
-    workingPanes: g.status === 'done' ? [] : [...new Set(rows
-      .filter((row) => g.links.worktrees.some((w) => linkedTo(w, row)))
-      .flatMap((row) => row.agents.filter(isWorking).map((a) => a.paneKey)))]
+    livePanes: goalAgents(g, rows).map(({ a }) => a.paneKey)
   }))
 }
 
 // ---------- the Next step's button: Jump to agent, or Assign to coordinator ----------
-
-/** Waiting for the user: a question, or a permission prompt. */
-const ASKING: AgentInfo['state'][] = ['waiting', 'blocked']
 
 /** Where Jump to agent goes: an exact live session (its workspace and terminal), checked against a snapshot. */
 export type JumpTarget = { workspaceId: string; terminal: string; paneKey: string; name: string; coordinator?: string }
@@ -73,27 +92,14 @@ export function coordinatorTarget(c: Coordinator | undefined, gone: ReadonlySet<
 export const liveCoordinators = (snap: SnapLike): Coordinator[] => snap.coordinators.filter((c) => coordinatorTarget(c))
 
 /**
- * Who is on the goal's Next step right now, by the given snapshot. Among the agents on its linked worktrees that still
- * have a live session (never a closed one): one working; else one waiting for the user; else a worktree's lead in any
- * other state (it worked on the step and is done, waiting for review); else any other live agent there, most recently
- * active first. Else the coordinator the current step was assigned to, at its current live session. Sessions in `gone`
- * (seen dead) are skipped. Null (Assign →): no linked worktree, none that still exists, or no live agent on one.
- * Working and asking agents count unless Orca says their session is closed; a done or idle one only with positive
- * evidence that it is live.
+ * Who Jump → goes to, by the given snapshot: the first of goalAgents (the live agents on its linked worktrees, working
+ * first). Else the coordinator the current step was assigned to, at its current live session. Sessions in `gone` (seen
+ * dead) are skipped. Null (Assign →): no linked worktree, none that still exists, or no live agent on one, and no live
+ * assigned coordinator.
  */
 export function jumpTarget(g: GoalView, snap: SnapLike, gone: ReadonlySet<string> = new Set()): JumpTarget | null {
   if (g.status === 'done') return null
-  const linked = snap.rows
-    .filter((row) => !row.historical && g.links.worktrees.some((w) => linkedTo(w, row)))
-    .sort((x, y) => (y.lastActivityAt ?? 0) - (x.lastActivityAt ?? 0))
-  const open = (a: AgentInfo) => !!a.terminal && !gone.has(a.terminal) && (a.state === 'working' || ASKING.includes(a.state) ? a.live !== false : a.live === true)
-  const placed = linked.flatMap((row) => row.agents.filter(open).map((a) => ({ row, a })))
-  const recent = (x: (typeof placed)[number], y: (typeof placed)[number]) => (y.a.summary?.updatedAt ?? 0) - (x.a.summary?.updatedAt ?? 0)
-  const pick =
-    placed.find(({ a }) => a.state === 'working') ??
-    placed.find(({ a }) => ASKING.includes(a.state)) ??
-    placed.find(({ row, a }) => worktreeLead(row)?.paneKey === a.paneKey) ??
-    [...placed].sort(recent)[0]
+  const pick = goalAgents(g, snap.rows, gone)[0]
   if (pick) return { workspaceId: pick.row.id, terminal: pick.a.terminal!, paneKey: pick.a.paneKey, name: pick.a.title || pick.row.name }
   const a = g.assigned
   if (!a || a.state === 'pending' || a.next !== g.next) return null

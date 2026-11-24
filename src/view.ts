@@ -1411,12 +1411,13 @@ export function render(given: Snapshot, state: UiState, linearData: LinearData |
   const placed = snap.rows.flatMap((row) => row.agents.map((a) => ({ a, row })))
   const all = placed.map((p) => p.a)
   const byPane = new Map(placed.map((p) => [p.a.paneKey, p]))
+  // The live agents on the goal (goalAgents, the rule Jump → uses), whatever their state: each face shows it.
   const avatars = (g: GoalView): string => {
-    const working = g.workingPanes.flatMap((key) => byPane.get(key) ?? [])
-    if (!working.length) return ''
-    const names = working.map(({ a, row }) => nameOf(a, row)).join(', ')
-    const label = esc(`Working: ${names}`)
-    return `<span class="who" role="img" aria-label="${label}">${avatarStack(working, all, 3)}</span>`
+    const on = g.livePanes.flatMap((key) => byPane.get(key) ?? []).filter(({ a }) => !a.terminal || !ui.goalGone?.has(a.terminal))
+    if (!on.length) return ''
+    const names = on.map(({ a, row }) => nameOf(a, row)).join(', ')
+    const label = esc(`Agents on this goal: ${names}`)
+    return `<span class="who" role="img" aria-label="${label}">${avatarStack(on, all, 3)}</span>`
   }
   const button = (g: GoalView) => nextButton(g, given, { assigning: ui.goalAssigning, gone: ui.goalGone })
   const goalsOut = { goalsHead: goalsHead(goalsData ?? [], gs, !!ui.query || !goalsData), goalsRows: goalsRows(goalsData ?? [], gs, !!ui.query || !goalsData, avatars, button) }

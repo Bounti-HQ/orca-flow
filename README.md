@@ -210,7 +210,7 @@ square. The face and the badge at the bottom right show what Orca reports:
 **Goals** (off until Settings → Features → Goals is on). The first section, above the workstreams, holds what you need to get done. A goal need
 not be a Linear issue: it can span several, or have no issue, worktree or agent at all (a document for
 a lawyer, product research). Each row is two lines: the title with its todo count (`2/4`) on the right,
-and under it the next step. Avatars show who is working on linked worktrees. Hover over them for the agent names. Hovering (or
+and under it the next step. Avatars show the agents on its linked worktrees that are still live, in any state (each face shows working, asking or done), until they sleep or the worktree goes; with avatars the goal offers Jump →, without them Assign → (or Jump → to the coordinator the step was assigned to). Hovering (or
 keyboard-focusing) an open goal shows one pill after its avatars and progress, centered in the row, like a Linear row's **Send →**: **Jump →** focuses the session of an agent on a linked worktree that still has a live session (one working, else one waiting
 for you, else the worktree's lead even when it is done and waiting for review, else any other live agent there), or of the coordinator the step was assigned to (checked against a fresh snapshot first: a
 session that is gone is never focused). With nobody on it, **Assign →** picks one of your coordinators with a live

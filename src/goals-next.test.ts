@@ -14,7 +14,7 @@ import type { AgentInfo, Coordinator, Snapshot, WorkspaceRow } from './protocol.
 const NOW = 1_800_000_000_000
 const view = (over: Partial<GoalView> = {}): GoalView => ({
   id: 'g_ship', title: 'Ship super admin', steps: [], next: 'Finish chat oversight', links: { linear: [], worktrees: [{ key: 'des-340' }] }, status: 'open',
-  createdAt: NOW - 1e9, updatedAt: NOW, lastChange: { by: 'you', field: 'next', at: NOW }, workingPanes: [], ...over
+  createdAt: NOW - 1e9, updatedAt: NOW, lastChange: { by: 'you', field: 'next', at: NOW }, livePanes: [], ...over
 })
 const agent = (paneKey: string, state: AgentInfo['state'], over: Partial<AgentInfo> = {}): AgentInfo => ({
   paneKey, title: `agent ${paneKey}`, state, agentType: 'claude', summary: null, workingMode: null, coordinator: 'home', leadPane: null, parentPane: null, orcaSession: null, dispatch: null,
@@ -88,10 +88,42 @@ test('a working agent beats a done lead; an agent waiting for the user beats it 
   assert.equal(jumpTarget(view({ assigned: assigned() }), s)?.terminal, 'term-lead', 'an agent on the worktree before the assigned coordinator')
 })
 
-test('the avatars stay working-only: a done lead is a jump target but not an avatar', () => {
-  const rows = [row('identity:des-340', [agent('lead', 'done')])]
-  assert.deepEqual(goalViews([view()], rows)[0].workingPanes, [])
-  assert.equal(jumpTarget(view(), snap(rows))?.paneKey, 'lead')
+test('avatars and the button follow one rule: a live done agent is both an avatar and the jump target; asleep or removed, neither', () => {
+  const lead = agent('lead', 'done')
+  const cases: [string, WorkspaceRow[], string[]][] = [
+    ['a done live lead', [row('identity:des-340', [lead])], ['lead']],
+    ['working and done', [row('identity:des-340', [lead, agent('w', 'working', { parentPane: 'lead' })])], ['w', 'lead']],
+    ['asleep: its session closed', [row('identity:des-340', [agent('lead', 'done', { live: false })])], []],
+    ['removed: the linked worktree is gone', [row('identity:other', [agent('x', 'working')])], []]
+  ]
+  for (const [what, rows, panes] of cases) {
+    const v = goalViews([view()], rows)[0]
+    assert.deepEqual(v.livePanes, panes, what)
+    const b = nextButton(v, snap(rows))
+    assert.equal(b?.kind, panes.length ? 'jump' : 'assign', what)
+    if (b?.kind === 'jump') assert.equal(b.target.paneKey, panes[0], `${what}: Jump → goes to the first avatar`)
+  }
+})
+
+test('render() draws an avatar for every live agent on the goal, with its own face, and Jump → with it', () => {
+  const r = (agents: AgentInfo[]) => ({ ...row('identity:des-340', agents), repo: 'r', branch: 'b', main: false, state: agents[0]?.state ?? null, priority: null, card: null, parentId: null, liveTerminals: 1, pinned: false, unread: false, active: false, workspaceStatus: null, lastActivityAt: NOW, createdAt: 1, pr: null })
+  const draw = (agents: AgentInfo[]) => {
+    const rows = [r(agents)]
+    const s = { source: 'cli', capacity: null, ready: true, features: { goals: true, linear: false, tokenSpeed: false }, rows, coordinators: [] } as unknown as Snapshot
+    return render(s, { ...emptyUi(), now: NOW }, null, goalViews([view()], rows)).goalsRows
+  }
+  const done = draw([agent('lead', 'done')])
+  assert.match(done, /class="who" role="img" aria-label="Agents on this goal: [^"]+"/)
+  assert.match(done, /data-gjump="g_ship"/)
+  assert.equal((draw([agent('lead', 'done'), agent('w', 'working', { parentPane: 'lead' })]).match(/class="sav"/g) ?? []).length, 2, 'one face each')
+  assert.notEqual(draw([agent('lead', 'done')]).match(/<span class="who"[^]*?<\/span><\/span>/)?.[0], draw([agent('lead', 'working')]).match(/<span class="who"[^]*?<\/span><\/span>/)?.[0], 'a working face differs from a done one')
+  const many = draw(['working', 'done', 'done', 'done', 'done'].map((st, i) => agent(`a${i}`, st as AgentInfo['state'], { parentPane: i ? 'a0' : null })))
+  assert.equal((many.match(/class="sav"/g) ?? []).length, 3, 'capped at 3')
+  assert.match(many, /class="sav more">\+2</)
+  const asleep = draw([agent('lead', 'done', { live: false })])
+  assert.ok(!/class="who"/.test(asleep), 'asleep: no avatar')
+  assert.match(asleep, /data-gassign="g_ship"/)
+  assert.ok(!/data-tip/.test(done + many), 'no tooltips')
 })
 
 test('nobody on the step: Assign to coordinator', () => {

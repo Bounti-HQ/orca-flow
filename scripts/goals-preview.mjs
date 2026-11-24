@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { emptyHistory, speedView } from '../src/token-speed.ts'
+import { goalAgents } from '../src/goals-view.ts'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const build = mkdtempSync(join(tmpdir(), 'orca-flow-goals-preview-'))
@@ -51,7 +52,7 @@ const snapshot = {
   ]
 }
 const g = (id, title, over = {}) => ({
-  id, title, steps: [], links: { linear: [], worktrees: [] }, status: 'open', createdAt: now - 5 * 24 * H, updatedAt: now - 2 * H, lastChange: { by: 'you', field: 'created', at: now - 5 * 24 * H }, workingPanes: [], ...over
+  id, title, steps: [], links: { linear: [], worktrees: [] }, status: 'open', createdAt: now - 5 * 24 * H, updatedAt: now - 2 * H, lastChange: { by: 'you', field: 'created', at: now - 5 * 24 * H }, livePanes: [], ...over
 })
 const goals = [
   g('g_super-admin', 'Ship super admin', {
@@ -59,7 +60,7 @@ const goals = [
     steps: [['Visibility fix in News and Documents', 1], ['Moderation rights (edit, delete, block)', 1], ['Group chat oversight without notifications', 0], ['Admin presence shown in chats', 0]].map(([text, d]) => ({ text, done: !!d })),
     next: 'Finish chat oversight without notifications', doneWhen: 'Super Admins see everything, can moderate, and the PR is merged',
     links: { linear: ['DES-340'], worktrees: [{ key: 'des-340', path: '/fixture/des-340-super-admin-permissions', name: 'mono/des-340-super-admin-permissions' }] },
-    lastChange: { by: 'the DES-340 lead', field: 'next', at: now - 2 * H }, workingPanes: [snapshot.rows[0].agents[0].paneKey] }),
+    lastChange: { by: 'the DES-340 lead', field: 'next', at: now - 2 * H } }),
   g('g_lesson-splitting', 'Finish lesson splitting for AI course creation', {
     note: 'Short documents with several topics should become several short lessons. The Kaimug onboarding doc gave one lesson instead of five.',
     steps: [['Plan lessons by topic (PR #6277)', 1], ['Review feedback worked in', 0], ['Re-run the Kaimug document', 0]].map(([text, d]) => ({ text, done: !!d })),
@@ -84,6 +85,8 @@ const goals = [
     lastChange: { by: 'the BOU-4300 lead', field: 'status', at: now - 40 * 60_000 } }),
   g('g_lawyer-intro', 'Intro call with the Germany lawyer', { status: 'done', doneAt: now - 3 * 24 * H, steps: [{ text: 'Book the call', done: true }], lastChange: { by: 'you', field: 'status', at: now - 3 * 24 * H } })
 ]
+// Who is on each goal, by the worker's own rule (goals-view.ts goalAgents): the live agents on its linked worktrees.
+for (const x of goals) x.livePanes = goalAgents(x, snapshot.rows).map(({ a }) => a.paneKey)
 const LIGHT = { '--orca-background': '#f7f7f9', '--orca-foreground': '#1c1c20', '--orca-muted-foreground': '#5f5f69', '--orca-border': '#e1e1e7', '--orca-accent': '#ececf0', '--orca-popover': '#ffffff', '--orca-popover-foreground': '#1c1c20' }
 const bridge = `<style>.tip { transition: none !important; }</style><script>
 const q = new URLSearchParams(location.search);
@@ -99,12 +102,12 @@ if (q.get('empty')) goals = [];
 const stamp = (x, field) => Object.assign(x, { updatedAt: Date.now(), lastChange: { by: 'you', field, at: Date.now() } });
 const apply = (a) => {
   const x = goals.find((y) => y.id === a.id);
-  if (a.action === 'add') { if (!a.title.trim()) return 'a goal needs a title'; const n = { id: 'g_' + Math.random().toString(36).slice(2, 8), title: a.title.trim(), steps: [], links: { linear: [], worktrees: [] }, status: 'open', createdAt: Date.now(), workingPanes: [] }; stamp(n, 'created'); goals.push(n); return null; }
+  if (a.action === 'add') { if (!a.title.trim()) return 'a goal needs a title'; const n = { id: 'g_' + Math.random().toString(36).slice(2, 8), title: a.title.trim(), steps: [], links: { linear: [], worktrees: [] }, status: 'open', createdAt: Date.now(), livePanes: [] }; stamp(n, 'created'); goals.push(n); return null; }
   if (!x) return 'no goal ' + a.id;
   if (a.action === 'update') { const f = []; for (const [k, v] of Object.entries(a.patch)) { if (k === 'title' && !v.trim()) return 'a goal needs a title'; if (v.trim() !== (x[k] ?? '')) { v.trim() ? (x[k] = v.trim()) : delete x[k]; f.push(k); } } if (f.includes('next')) x.assigned = null; if (f.length) stamp(x, f.join(',')); }
   else if (a.action === 'step') { x.steps[a.step - 1].done = a.done; stamp(x, 'steps'); }
   else if (a.action === 'addStep') { x.steps.push({ text: a.text, done: false }); stamp(x, 'steps'); }
-  else if (a.action === 'done' || a.action === 'confirm') { x.status = 'done'; x.doneAt = Date.now(); x.workingPanes = []; stamp(x, 'status'); }
+  else if (a.action === 'done' || a.action === 'confirm') { x.status = 'done'; x.doneAt = Date.now(); x.livePanes = []; stamp(x, 'status'); }
   else if (a.action === 'reopen' || (a.action === 'reject' && x.status === 'proposed')) { x.status = 'open'; delete x.doneAt; stamp(x, 'status'); }
   return null;
 };
@@ -167,7 +170,9 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     await wait(300);
     ok(document.querySelector('#goals-head .lfold span').textContent === 'Goals' && $('#goals-head .gc').textContent === '6', 'header: Goals 6');
     ok(!!$('[aria-label="View completed goals"]'), 'Completed is accessible from the Goals header');
-    ok(!!row('g_super-admin').querySelector('.sav svg.ch') && !row('g_lesson-splitting').querySelector('.sav svg.ch'), 'agent avatar only on the goal with a working agent');
+    const faces = (id) => row(id).querySelectorAll('.who .sav svg.ch').length;
+    ok(faces('g_super-admin') === 1 && faces('g_lesson-splitting') === 1 && faces('g_onboarding-review') === 3 && faces('g_shift-scheduling') === 0, 'avatars for every live agent on a goal (working, asking or done), none without a linked worktree');
+    ok(!document.querySelector('#goals-rows [data-tip]'), 'no tooltips on goal rows');
     ok(row('g_super-admin').querySelector('.cnt').textContent === '2/4' && row('g_super-admin').querySelector('.nx').textContent.startsWith('Finish chat'), 'row: count 2/4 and next');
     ok(row('g_pdf-export').querySelector('.nx').textContent === 'lead says done', 'proposed row says "lead says done"');
     ok(!titles().includes('Intro call with the Germany lawyer'), 'done goal hidden');
@@ -267,7 +272,8 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     };
     ok(word('g_super-admin') === 'Jump' && word('g_lesson-splitting') === 'Jump' && !!act('g_super-admin').querySelector('svg'), 'Jump → for a working agent and for one waiting for the user');
     ok(word('g_shift-scheduling') === 'Assign', 'Assign → when nobody is on the step');
-    ok(word('g_onboarding-review') === 'Jump' && act('g_onboarding-review').getAttribute('aria-label') === 'Jump to des-360 lead' && !row('g_onboarding-review').querySelector('.who'), 'agents that are done but live still count: Jump → to the worktree lead, with no working avatar');
+    ok(word('g_onboarding-review') === 'Jump' && act('g_onboarding-review').getAttribute('aria-label') === 'Jump to des-360 lead' && faces('g_onboarding-review') === 3, 'agents that are done but live still count: their avatars, and Jump → to the worktree lead');
+    ok([...document.querySelectorAll('#goals-rows .gline')].every((l) => !!l.querySelector('.who') === !!l.querySelector('[data-gjump]') || !!l.querySelector('.gact.rstatus')), 'every goal with avatars offers Jump →, every goal without offers Assign →');
     ok(act('g_super-admin').classList.contains('send') && act('g_super-admin').classList.contains('pill') && act('g_super-admin').getAttribute('aria-label').startsWith('Jump to ') && act('g_shift-scheduling').getAttribute('aria-label') === 'Assign the next step to a coordinator', 'the Linear Send pill, the full meaning in the label');
     ok(!shown('g_super-admin') && !shown('g_shift-scheduling') && room('g_super-admin') === 0 && room('g_shift-scheduling') === 0, 'at rest: no buttons, the row button (title and Next) has the whole width');
     row('g_shift-scheduling').focus({ focusVisible: true }); await wait();
@@ -393,6 +399,7 @@ server.listen(0, '127.0.0.1', () => {
     hovers.push({ theme, name: 'next-rest', h: 420 })
     hovers.push({ theme, name: 'next-hover-jump', h: 420, hover: '[data-gopen="g_super-admin"] .ti' })
     hovers.push({ theme, name: 'next-hover-assign', h: 420, hover: '[data-gopen="g_shift-scheduling"] .ti' })
+    hovers.push({ theme, name: 'next-hover-done-agents', h: 760, hover: '[data-gopen="g_onboarding-review"] .ti' })
     hovers.push({ theme, name: 'next-picker', h: 420, click: '[data-gassign="g_shift-scheduling"]' })
     hovers.push({ theme, name: 'next-assigning', h: 420, click: '[data-gassign="g_shift-scheduling"]|#ctx .mi', delay: 60000 })
   }
