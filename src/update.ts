@@ -10,7 +10,7 @@ import type { UpdateState } from './protocol.ts'
 
 export type { UpdateState }
 
-export const REPO = 'https://github.com/cyucelen/orca-flow.git'
+export const REPO = 'https://github.com/Bounti-HQ/orca-flow.git'
 
 // ---------- versions ----------
 

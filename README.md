@@ -123,12 +123,18 @@ remain untested. Flow has no Antigravity transcript summary or structured handov
 ## Install
 
 ```sh
-orca plugin install cyucelen/orca-flow
+orca plugin install Bounti-HQ/orca-flow
 ```
 
 Orca lists the access the plugin asks for: running its own worker process, reading and opening
 workspaces, getting agent status changes, and starting agents (to open coordinator sessions).
 Approve it, then open **Orca Flow** from the right sidebar (the layers icon).
+
+When switching from `cyucelen.flow`, disable the old copy before installing the fork so
+their shortcuts do not collide. On macOS, the panel preferences live in
+`~/Library/Application Support/orca/plugins-data/cyucelen.flow/storage.json`. To keep them,
+copy that file, if present, into the sibling `bounti-hq.flow` directory before the first fork
+install. Both publishers use the same `~/.orca-flow` settings and coordinator folders.
 
 The installed copy sets up these files outside its own folder:
 
@@ -446,10 +452,10 @@ before publication; an old session's card is not shown as a new Codex conversati
 
 ## Updating and uninstalling
 
-Update to the newest release with the same command:
+Update to the newest Bounti release:
 
 ```sh
-orca plugin install cyucelen/orca-flow
+orca plugin update bounti-hq.flow
 ```
 
 Orca asks for approval again only when a release needs different access. The release that adds the
@@ -464,12 +470,12 @@ shows Check for Updates turned off, with the reason in its tooltip: a developmen
 manifest without a version, a folder install, or a Git install whose commit is not its version's
 release tag (installed from a branch or a commit). `orca plugin update` would move such a copy along
 its branch or leave a commit pin where it is, not install the release, so reinstall from a release
-(the command above) to get updates.
+(`orca plugin install Bounti-HQ/orca-flow`) to get updates.
 
 To uninstall:
 
 ```sh
-orca plugin uninstall cyucelen.flow
+orca plugin uninstall bounti-hq.flow
 ```
 
 Then remove what it set up outside its folder, if you no longer want it: the `orca-flow` link in
@@ -501,7 +507,7 @@ your Claude profile's `skills` folder, the hooks that run `stop-check.mjs`, `pro
 ```sh
 scripts/dev.sh check   # types, tsc, plugin tests and orca-flow tests
 scripts/dev.sh load    # copy this folder to ~/.orca-flow/dev/flow and run it as local.flow (installed copy off; back on if it fails)
-scripts/dev.sh off     # unload local.flow and run the installed cyucelen.flow again
+scripts/dev.sh off     # unload local.flow and run the installed bounti-hq.flow again
 scripts/dev.sh shot    # screenshot the panel to /tmp/orca-sidebar-shots
 node scripts/settings-preview.mjs                       # the Settings dialog in a browser, with fixture data
 node scripts/settings-preview.mjs --shots /tmp/orca-settings-shots-v2 --tips   # every page, dark and light, 360 px and wide, plus tooltips
@@ -522,7 +528,7 @@ ORCA_FLOW_CODEX_VERIFY=1 node --test test/writer-cli.test.mjs
 ```
 
 Only one copy can run: both bind Alt+1..9, and Orca errors both when they run together. `load`
-and `off` swap between them, so `cyucelen.flow` stays installed and its skill links and hooks keep
+and `off` swap between them, so `bounti-hq.flow` stays installed and its skill links and hooks keep
 working. Orca ties a development plugin's approval to its exact files, so any edit drops it to pending:
 `load` therefore runs a copy, and edits here show in the sidebar only after the next `load`.
 `check` type-checks a temporary copy, so no `.orca/` is written here. `src/worker.ts` is the plugin's worker;

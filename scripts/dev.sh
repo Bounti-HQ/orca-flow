@@ -23,7 +23,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 KEY=local.flow
-INSTALLED=cyucelen.flow
+INSTALLED=bounti-hq.flow
 SHOTS=${SHOTS:-/tmp/orca-sidebar-shots}
 DEV_DIR=${DEV_DIR:-$HOME/.orca-flow/dev/flow}
 HERE=$(pwd)
