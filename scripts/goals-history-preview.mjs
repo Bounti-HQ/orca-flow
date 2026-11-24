@@ -183,10 +183,10 @@ const sideHtml = read('src/panel/index.html').replace('<head>', '<head><title>Go
 /** The page's own worker, unless it is hosted by /both's parent (which has one for both frames). */
 function hostedWorker() { return `if (new URLSearchParams(location.search).get('host') !== 'parent') { ${call(installWorker, workerArgs)} }` }
 
-const bothHtml = (theme) => `<!doctype html><title>Completed goals + sidebar</title><body style="margin:0;background:#2a2a2e;display:flex;gap:12px;padding:12px;align-items:flex-start">
+const bothHtml = (theme, doParam = '') => `<!doctype html><meta charset="utf-8"><title>Completed goals + sidebar</title><body style="margin:0;background:#2a2a2e;display:flex;gap:12px;padding:12px;align-items:flex-start">
 <script>${call(installWorker, workerArgs)}</script>
 <iframe id="side" src="/side?host=parent&theme=${theme}" style="border:0;width:340px;height:760px;flex:none"></iframe>
-<iframe id="tab" src="/tab?host=parent&theme=${theme}" style="border:0;width:1000px;height:760px;flex:none"></iframe>`
+<iframe id="tab" src="/tab?host=parent&theme=${theme}${doParam ? `&do=${encodeURIComponent(doParam)}` : ''}" style="border:0;width:1000px;height:760px;flex:none"></iframe>`
 const frameHtml = (q) => `<!doctype html><body style="margin:0;background:#888;display:flex;justify-content:center;align-items:center;min-height:100vh"><iframe src="/${new URLSearchParams(q).get('page')}?${q}" style="border:0;display:block;flex:none;width:${new URLSearchParams(q).get('w')}px;height:${new URLSearchParams(q).get('h')}px"></iframe>`
 
 const assets = new Map([
@@ -198,7 +198,7 @@ rmSync(build, { recursive: true, force: true })
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   if (url.pathname === '/frame') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(frameHtml(url.searchParams.toString())); return }
-  if (url.pathname === '/both') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(bothHtml(url.searchParams.get('theme') === 'light' ? 'light' : 'dark')); return }
+  if (url.pathname === '/both') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(bothHtml(url.searchParams.get('theme') === 'light' ? 'light' : 'dark', url.searchParams.get('do') ?? '')); return }
   if (url.pathname === '/selftest') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(selftestHtml); return }
   const asset = assets.get(url.pathname)
   if (!asset) { res.writeHead(404); res.end(); return }
@@ -436,14 +436,17 @@ server.listen(0, '127.0.0.1', () => {
   const jobs = []
   for (const [name, q, widths] of states) for (const w of widths) for (const theme of ['dark', 'light']) jobs.push({ file: `${name}-${w}-${theme}`, page: 'tab', q: `${q}&theme=${theme}`, w, h: w === 1000 ? 760 : 820 })
   // The detail screen opens on a narrow tab only.
-  for (const theme of ['dark', 'light']) { jobs.push({ file: `sidebar-${theme}`, page: 'side', q: `theme=${theme}`, w: 340, h: 360 }); jobs.push({ file: `sidebar-empty-${theme}`, page: 'side', q: `empty=1&theme=${theme}`, w: 340, h: 360 }) }
+  for (const theme of ['dark', 'light']) { jobs.push({ file: `sidebar-${theme}`, page: 'side', q: `theme=${theme}`, w: 340, h: 360 }); jobs.push({ file: `sidebar-reopened-${theme}`, page: 'both', q: `theme=${theme}&do=${encodeURIComponent('select:g1|reopen:g1')}`, w: 1376, h: 784, budget: 1300, side: true }); jobs.push({ file: `sidebar-empty-${theme}`, page: 'side', q: `empty=1&theme=${theme}`, w: 340, h: 360 }) }
   const run = async () => {
     for (const j of jobs) {
       const file = join(out, `${j.file}.png`)
       await new Promise((resolve, reject) => {
         const url = j.page === 'both' ? `${base}/both?${j.q}` : `${base}/frame?page=${j.page}&${j.q}&w=${j.w}&h=${j.h}`
-        execFile(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--force-device-scale-factor=2', `--user-data-dir=${profile}`, `--window-size=${Math.max(j.w + 40, 700)},${j.h + 120}`, '--virtual-time-budget=6000', `--screenshot=${file}`, url], { timeout: 60_000 }, (e, _o, stderr) => {
+        execFile(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--force-device-scale-factor=2', `--user-data-dir=${profile}`, `--window-size=${j.side ? j.w : Math.max(j.w + 40, 700)},${j.side ? j.h : j.h + 120}`, `--virtual-time-budget=${j.budget ?? 6000}`, `--screenshot=${file}`, url], { timeout: 60_000 }, (e, _o, stderr) => {
           if (e && !/bytes written to file/.test(String(stderr))) return reject(e)
+          // `side`: also keep the sidebar alone (the left 340 px) beside the full page.
+          if (j.side) { const alone = file.replace('.png', '-alone.png'); execFileSync('cp', [file, alone]); execFileSync('sips', ['-c', String(760 * 2), String(340 * 2), '--cropOffset', '24', '24', alone], { stdio: 'ignore' }) }
+          if (!j.side)
           execFileSync('sips', ['--cropToHeightWidth', String(j.h * 2), String(j.w * 2), file], { stdio: 'ignore' })
           resolve()
         })
