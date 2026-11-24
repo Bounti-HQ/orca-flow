@@ -1,11 +1,15 @@
 // The Goals section's HTML and rules, shared by the worker (which attaches the working agents) and the
 // panel (which draws it). Goals are read by skills/orca-flow/scripts/goals.mjs (worker side only); this
 // file has no Node imports, so the panel bundles it. Every goal text is untrusted: escaped when drawn.
-import type { Goal } from '../skills/orca-flow/scripts/goals.d.mts'
-import type { AgentInfo, WorkspaceRow } from './protocol.ts'
+import type { Goal, GoalAssignment } from '../skills/orca-flow/scripts/goals.d.mts'
+import type { AgentInfo, Coordinator, Snapshot, WorkspaceRow } from './protocol.ts'
 
-/** A goal as the panel gets it: the stored goal, and the agents working on its linked worktrees. */
-export type GoalView = Goal & { workingPanes: string[] }
+/**
+ * A goal as the panel gets it: the stored goal, the agents working on its linked worktrees, and the
+ * assignment of its Next step when it is for the current Next text (goals.mjs currentAssignment; the
+ * worker fills it, absent on older views).
+ */
+export type GoalView = Goal & { workingPanes: string[]; assigned?: GoalAssignment | null }
 
 export const COMPLETED_BATCH = 20
 
@@ -31,13 +35,91 @@ const linkedTo = (w: Goal['links']['worktrees'][number], row: Pick<WorkspaceRow,
 const isWorking = (a: Pick<AgentInfo, 'state'>) => a.state === 'working'
 
 /** Identify each working pane once, even when a goal has multiple links to its worktree. */
-export function goalViews(goals: Goal[], rows: Pick<WorkspaceRow, 'id' | 'path' | 'agents'>[]): GoalView[] {
+export function goalViews(goals: Goal[], rows: Pick<WorkspaceRow, 'id' | 'path' | 'agents'>[], assignedOf: (g: Goal) => GoalAssignment | null = () => null): GoalView[] {
   return goals.map((g) => ({
     ...g,
+    assigned: g.status === 'done' ? null : assignedOf(g),
     workingPanes: g.status === 'done' ? [] : [...new Set(rows
       .filter((row) => g.links.worktrees.some((w) => linkedTo(w, row)))
       .flatMap((row) => row.agents.filter(isWorking).map((a) => a.paneKey)))]
   }))
+}
+
+// ---------- the Next step's button: Jump to agent, or Assign to coordinator ----------
+
+/** An agent in one of these states is on the goal's step: working, or waiting for the user (a question, a permission prompt). */
+const ON_STEP: AgentInfo['state'][] = ['working', 'waiting', 'blocked']
+
+/** Where Jump to agent goes: an exact live session (its workspace and terminal), checked against a snapshot. */
+export type JumpTarget = { workspaceId: string; terminal: string; paneKey: string; name: string; coordinator?: string }
+
+type SnapLike = Pick<Snapshot, 'rows' | 'coordinators'>
+
+/**
+ * A coordinator's current session when it is live: the explicitly current member's live pane
+ * (Snapshot.coordinators[].session), so after a handover it is the new session, never the old pane.
+ */
+export function coordinatorTarget(c: Coordinator | undefined, gone: ReadonlySet<string> = new Set()): JumpTarget | null {
+  const s = c?.session
+  if (!c || !s || s.live === false || !s.terminal || gone.has(s.terminal)) return null
+  const member = c.sessions?.members.find((m) => m.id === c.sessions?.current)
+  const workspaceId = member?.workspaceId ?? c.workspaceId
+  return workspaceId ? { workspaceId, terminal: s.terminal, paneKey: s.paneKey, name: c.name, coordinator: c.key } : null
+}
+
+/** The coordinators the picker offers: those with a live current session, in the snapshot's order. */
+export const liveCoordinators = (snap: SnapLike): Coordinator[] => snap.coordinators.filter((c) => coordinatorTarget(c))
+
+/**
+ * Who is on the goal's Next step right now, by the given snapshot: an agent on a linked worktree that
+ * is working (first) or waiting for the user, else the coordinator the current step was assigned to,
+ * at its current live session. Sessions in `gone` (seen dead) are skipped. Null: nobody.
+ */
+export function jumpTarget(g: GoalView, snap: SnapLike, gone: ReadonlySet<string> = new Set()): JumpTarget | null {
+  if (g.status === 'done') return null
+  const linked = snap.rows.filter((row) => !row.historical && g.links.worktrees.some((w) => linkedTo(w, row)))
+  const agents = linked.flatMap((row) => row.agents.filter((a) => ON_STEP.includes(a.state) && a.live !== false && !!a.terminal && !gone.has(a.terminal)).map((a) => ({ row, a })))
+  const pick = agents.find(({ a }) => a.state === 'working') ?? agents[0]
+  if (pick) return { workspaceId: pick.row.id, terminal: pick.a.terminal!, paneKey: pick.a.paneKey, name: pick.a.title || pick.row.name }
+  const a = g.assigned
+  if (!a || a.state === 'pending' || a.next !== g.next) return null
+  return coordinatorTarget(snap.coordinators.find((c) => c.key === a.coordinator), gone)
+}
+
+export type NextButton = { kind: 'jump'; target: JumpTarget } | { kind: 'assign' } | { kind: 'pending' }
+
+/**
+ * The one button on an open goal's Next line; null for a done or proposed goal, or one with no Next
+ * step. Pending while this panel sends it (`assigning`) or the store says a send is under way.
+ */
+export function nextButton(g: GoalView, snap: SnapLike, opts: { assigning?: ReadonlySet<string>; gone?: ReadonlySet<string> } = {}): NextButton | null {
+  if (g.status !== 'open' || !g.next) return null
+  if (opts.assigning?.has(g.id) || (g.assigned?.state === 'pending' && g.assigned.next === g.next)) return { kind: 'pending' }
+  const target = jumpTarget(g, snap, opts.gone)
+  return target ? { kind: 'jump', target } : { kind: 'assign' }
+}
+
+/** The button's HTML; its own element beside the row, so pressing it never opens the card. */
+export function nextButtonHtml(g: Pick<GoalView, 'id'>, b: NextButton | null): string {
+  if (!b) return ''
+  if (b.kind === 'pending') return '<button class="gact pending" disabled aria-disabled="true">Assigning…</button>'
+  if (b.kind === 'jump') {
+    const tip = esc(`Jump to ${b.target.name}`)
+    return `<button class="gact" data-gjump="${esc(g.id)}" data-tip="${tip}" aria-label="${tip}">Jump to agent</button>`
+  }
+  return `<button class="gact" data-gassign="${esc(g.id)}" aria-haspopup="menu" data-tip="Send this next step to a coordinator">Assign to coordinator</button>`
+}
+
+/** The text a coordinator gets: the exact step, the goal for context, and the commands to keep the goal current. Goal text is data, quoted, on one line each. */
+export function goalStepMessage(g: Pick<Goal, 'id' | 'title' | 'next' | 'doneWhen'>): string {
+  const line = (s: string | undefined) => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return [
+    `The user assigned you the next step of their Orca Flow goal ${g.id} (from the Goals section).`,
+    `Next step: "${line(g.next)}"`,
+    `Goal: "${line(g.title)}"`,
+    ...(g.doneWhen ? [`Done when: "${line(g.doneWhen)}"`] : []),
+    `Commands: orca-flow goal show ${g.id} · orca-flow goal link ${g.id} --worktree <sel> (link the worktree you start for it) · orca-flow goal step ${g.id} tick <n|text> · orca-flow goal set ${g.id} --next "<the step after>" (when this one is done) · orca-flow goal propose-done ${g.id}`
+  ].join('\n')
 }
 
 // ---------- small helpers ----------
@@ -88,8 +170,11 @@ export function goalsHead(goals: GoalView[], s: GoalsState, searching = false): 
 
 const completedDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 
-/** One goal: its title and step count, and under it the next step (or "lead says done" while an agent proposes it). */
-export function goalRow(g: GoalView, open: string | null, avatars = ''): string {
+/**
+ * One goal: its title and step count, and under it the next step (or "lead says done" while an agent proposes it).
+ * `button` (nextButton) sits at the end of the Next line, beside the row's button, not inside it.
+ */
+export function goalRow(g: GoalView, open: string | null, avatars = '', button: NextButton | null = null): string {
   const done = g.status === 'done'
   const second = done
     ? ''
@@ -99,13 +184,14 @@ export function goalRow(g: GoalView, open: string | null, avatars = ''): string 
         ? `<span class="nx">${esc(g.next)}</span>`
         : '<span class="nx none">No next step yet</span>'
   const detail = done ? `<span class="cnt">${completedDate.format(g.doneAt ?? g.updatedAt)}</span>` : stepProgress(g)
-  return `<button class="g${done ? ' fin' : ''}${open === g.id ? ' menu-open' : ''}" data-gopen="${esc(g.id)}" aria-haspopup="dialog" aria-expanded="${open === g.id}"><span class="m"><span class="ti">${esc(g.title)}</span>${second}</span>${avatars}${detail}</button>`
+  const row = `<button class="g${done ? ' fin' : ''}${open === g.id ? ' menu-open' : ''}" data-gopen="${esc(g.id)}" aria-haspopup="dialog" aria-expanded="${open === g.id}"><span class="m"><span class="ti">${esc(g.title)}</span>${second}</span>${avatars}${detail}</button>`
+  return button && !done ? `<div class="grow gk-${button.kind}">${row}${nextButtonHtml(g, button)}</div>` : row
 }
 
 /** The store supplies completed goals in reverse completion order. Search the whole history before limiting the rows. */
-export function goalsRows(goals: GoalView[], s: GoalsState, searching = false, avatars?: (g: GoalView) => string): string {
+export function goalsRows(goals: GoalView[], s: GoalsState, searching = false, avatars?: (g: GoalView) => string, button?: (g: GoalView) => NextButton | null): string {
   if (searching) return ''
-  if (!s.showDone) return s.folded ? '' : activeGoals(goals).map((g) => goalRow(g, s.open, avatars?.(g))).join('')
+  if (!s.showDone) return s.folded ? '' : activeGoals(goals).map((g) => goalRow(g, s.open, avatars?.(g), button?.(g))).join('')
   const query = (s.completedQuery ?? '').trim().toLocaleLowerCase()
   const matches = goals.filter((g) => g.status === 'done' && g.title.toLocaleLowerCase().includes(query))
   if (!matches.length) return `<div class="empty">${query ? 'No matching goals' : 'No completed goals yet'}</div>`
@@ -121,6 +207,14 @@ const editable = (field: string, id: string, value: string | undefined, placehol
 
 /** A worktree link's text: its name, else the last part of its path. */
 const worktreeName = (w: Goal['links']['worktrees'][number]) => w.name || (w.path ? w.path.split('/').filter(Boolean).pop() : '') || w.key || 'worktree'
+
+const ASSIGNED_WORD = { pending: 'Sending to', delivered: 'Assigned to', unconfirmed: 'Sent, unconfirmed, to' } as const
+/** Under the card's Next: who the current step was handed to, while it is for this exact step. */
+function assignedLine(g: GoalView, now: number): string {
+  const a = g.assigned
+  if (!a || g.status === 'done' || a.next !== g.next) return ''
+  return `<span class="gassigned">${ASSIGNED_WORD[a.state] ?? 'Assigned to'} ${esc(a.name || a.coordinator)} · ${agoText(a.deliveredAt ?? a.at, now)}</span>`
+}
 
 /**
  * The details card of a goal: its title, description, done criteria, next step, checklist, links, and the foot with who changed it last and the buttons that fit its status.
@@ -142,7 +236,7 @@ export function goalCard(g: GoalView, now: number): string {
     `<div class="gpart" data-part="title">${editable('title', g.id, g.title, 'Goal', 'ed ph')}</div>`,
     `<div class="gpart f" data-part="note"><span class="k">Description</span>${editable('note', g.id, g.note, 'Add a description', 'ed note')}</div>`,
     `<div class="gpart f" data-part="doneWhen"><span class="k">Done criteria</span>${editable('doneWhen', g.id, g.doneWhen, 'How will you know it is done?')}</div>`,
-    `<div class="gpart f" data-part="next"><span class="k">Next</span>${editable('next', g.id, g.next, 'What is the next thing to do?')}</div>`,
+    `<div class="gpart f" data-part="next"><span class="k">Next</span>${editable('next', g.id, g.next, 'What is the next thing to do?')}${assignedLine(g, now)}</div>`,
     `<div class="gpart f" data-part="steps"><span class="k">Todos${g.steps.length ? ` · ${completedSteps(g)}/${g.steps.length}` : ''}</span><div class="steps">${steps}</div>${editable('newStep', g.id, '', 'Add a todo', 'ed addstep')}</div>`,
     `<div class="gpart f" data-part="links"><span class="k">Links</span><div class="links">${links || '<span class="nolinks">No ticket or worktree</span>'}</div></div>`,
     g.status === 'proposed' ? '<div class="gpart gsays" data-part="says">An agent says this is done. Is it?</div>' : '',

@@ -685,6 +685,8 @@ declare module 'orca' {
     'sidebar.goals': { output: import('./goals-view.ts').GoalView[] }
     /** One edit by the user from the Goals section; answers the goals after it, or why it was refused. */
     'sidebar.goalAction': { input: import('./goals.ts').GoalAction; output: { ok: boolean; error?: string; goals: import('./goals-view.ts').GoalView[] } }
+    /** Assign to coordinator: delivers the goal's exact Next step to the coordinator's current live session and records it on the goal. */
+    'sidebar.goalAssign': { input: import('./goals.ts').GoalAssign; output: { ok: boolean; error?: string; warning?: string; goals: import('./goals-view.ts').GoalView[] } }
     /** The Linear section's data, read again when older than a minute; null when Linear is not connected. */
     'sidebar.linear': { input: { force?: boolean }; output: LinearWire | null }
     /**

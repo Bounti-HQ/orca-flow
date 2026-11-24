@@ -13,7 +13,7 @@ import { mixedProviders, providerBadge, providerMark, providerOf } from './provi
 import { PROVIDER_LOGOS } from './provider-logos.ts'
 import { asksYou, byUrgency, canRemove, claimsAsk, holdsWorkstream, laterAsk, monitoring, needsYou, waitingQueue } from './rank.ts'
 import { BEAMS, capGlyph, headLines, nodeX, rowLines, trunkX, type NodeState } from './lines.ts'
-import { COMPLETED_BATCH, goalsHead, goalsRows, type GoalView } from './goals-view.ts'
+import { COMPLETED_BATCH, goalsHead, goalsRows, nextButton, type GoalView } from './goals-view.ts'
 import { DEFAULT_DISPLAY, FILTER_NAME, FILTERS, isDefaultDisplay, issueLink, LINEAR_MARK, linkRows, priorityIcon, rowsByIssue, STATE_NAME, statusIcon, teamsOf, viewOf, type Display, type LinearFilter, type LinearGroup } from './linear.ts'
 
 export type UiState = {
@@ -52,6 +52,10 @@ export type UiState = {
   goalsCompletedLimit: number
   goalsShowDone: boolean
   goalOpen: string | null
+  /** Goals whose Next step this panel is sending to a coordinator (their button shows Assigning…). */
+  goalAssigning?: Set<string>
+  /** Terminals Jump to agent found dead; their goals offer Assign to coordinator instead. */
+  goalGone?: Set<string>
   /** Set by render from the snapshot: each pane's skill reload still worth a mark on its row. */
   reloads?: Map<string, SkillReloadEntry>
 }
@@ -59,7 +63,7 @@ export type UiState = {
 export const emptyUi = (): UiState => ({
   opened: new Set(), closed: new Set(), folded: new Set(), unfolded: new Set(), query: '', now: Date.now(),
   cockpitOpen: false, stats: null, statsLoading: false, confirming: null, pending: null, notice: null, status: new Map(), colors: new Map(),
-  linearFolded: false, linearFilter: 'mine', linearDisplay: DEFAULT_DISPLAY, linearGroupFolds: new Set(), botsFolded: false, goalsFolded: false, goalsShowDone: false, goalsCompletedQuery: '', goalsCompletedLimit: COMPLETED_BATCH, goalOpen: null
+  linearFolded: false, linearFilter: 'mine', linearDisplay: DEFAULT_DISPLAY, linearGroupFolds: new Set(), botsFolded: false, goalsFolded: false, goalsShowDone: false, goalsCompletedQuery: '', goalsCompletedLimit: COMPLETED_BATCH, goalOpen: null, goalAssigning: new Set(), goalGone: new Set()
 })
 
 // ---------- small helpers ----------
@@ -1414,7 +1418,8 @@ export function render(given: Snapshot, state: UiState, linearData: LinearData |
     const label = esc(`Working: ${names}`)
     return `<span class="who" role="img" aria-label="${label}" data-tip="${label}">${avatarStack(working, all, 3)}</span>`
   }
-  const goalsOut = { goalsHead: goalsHead(goalsData ?? [], gs, !!ui.query || !goalsData), goalsRows: goalsRows(goalsData ?? [], gs, !!ui.query || !goalsData, avatars) }
+  const button = (g: GoalView) => nextButton(g, given, { assigning: ui.goalAssigning, gone: ui.goalGone })
+  const goalsOut = { goalsHead: goalsHead(goalsData ?? [], gs, !!ui.query || !goalsData), goalsRows: goalsRows(goalsData ?? [], gs, !!ui.query || !goalsData, avatars, button) }
   // One briefing per asking agent, workspaces in urgency order; several agents in one workspace each
   // get one; a coordinator asking itself gets one too.
   const asking = upNextOrder(snap)
