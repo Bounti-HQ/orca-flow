@@ -2,348 +2,92 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Account switching · Orca Flow UX draft</title>
+<title>Account switching · Orca Flow 0.2.98 preview</title>
 <!--
-  Disposable UX draft: Orca Flow continuing a conversation on another same-provider account after a
-  usage limit. One flow, on by default, with no account UI while work is healthy.
-  Standalone fixture. No account reads, auth, network, storage, host bridge or real sessions.
-  Identities are made up (*.example). Host constraints and contract: docs/account-failover.md.
-  Open directly, or with ?state=normal|switched|exhausted|scope&provider=Claude|Codex&host=ready|today.
+  Review shell only. The panel in the frame is the released Orca Flow 0.2.98 renderer, HTML and CSS
+  with synthetic data (docs/account-failover-preview/panel.html, written by
+  scripts/account-failover-preview.mjs). Everything on this page outside the frame is for review.
+  URL: ?state=healthy|switched|exhausted|scope|settings&provider=claude|codex&host=ready|today
 -->
 <style>
-:root {
-  color-scheme: dark;
-  --bg: #161618; --page: #0f0f11; --ink: #e9e9ec; --muted: #8d8d96; --faint: #6c6c74; --line: #27272c;
-  --hair: color-mix(in srgb, var(--ink) 10%, transparent); --fill: color-mix(in srgb, var(--ink) 7%, transparent);
-  --pop: #1e1e21; --card: color-mix(in srgb, var(--ink) 5.5%, var(--pop));
-  --ask: #8fb3ff; --warn: #e8b64c; --action: #4fc7c0; --on: #0a84ff;
-  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--page); color: var(--ink); }
-button, select, input { font: inherit; color: inherit; }
-button { cursor: pointer; background: none; border: 0; padding: 0; }
-:focus-visible { outline: 2px solid color-mix(in srgb, var(--ask) 80%, transparent); outline-offset: 2px; border-radius: 5px; }
-.wrap { max-width: 1080px; margin: 0 auto; padding: 16px 16px 40px; }
-.top { margin-bottom: 12px; }
-.top h1 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
-.top p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-
-/* The Orca window: the thing being designed, so it gets the space */
-.window { position: relative; display: grid; grid-template-columns: 236px minmax(0, 1fr); height: 600px;
-  border: 1px solid #2f2f35; border-radius: 11px; overflow: hidden; background: var(--bg); box-shadow: 0 20px 60px -20px #000c; }
-.flow { border-right: 1px solid var(--line); padding: 10px 10px 0; overflow: auto; }
-.flowHead { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
-.flowHead h2 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
-.gear { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; color: var(--faint); }
-.gear:hover { color: var(--ink); background: var(--fill); }
-.gear svg { width: 14px; height: 14px; }
-.ws { margin-bottom: 12px; }
-.ws > b { display: block; font-size: 12px; margin: 0 0 4px 2px; }
-.card { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 1px 6px; padding: 6px 7px; border-radius: 7px; }
-.card.focus { background: color-mix(in srgb, var(--ink) 6%, transparent); }
-.card .dot { width: 7px; height: 7px; border-radius: 50%; margin: 5px 0 0 3px; background: var(--action); }
-.card .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card .s { grid-column: 2; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card.waiting .dot { background: var(--warn); } .card.waiting .s { color: var(--warn); }
-.card.idle .dot { background: var(--faint); }
-
-.pane { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
-.phead { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 14px; border-bottom: 1px solid var(--line); }
-.phead .title { min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.phead .role { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
-.mark { display: inline-flex; flex: none; } .mark svg { width: 15px; height: 15px; } .codex { color: #c9d1d6; }
-.log { overflow: auto; padding: 14px 16px; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 12px; }
-.msg { color: #c9c9cf; max-width: 640px; }
-.msg.user { justify-self: end; background: var(--fill); padding: 6px 10px; border-radius: 9px; color: var(--ink); }
-.tool { font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); }
-.compose { margin: 0 14px 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--faint); }
-
-/* The only two things this feature ever adds to a conversation */
-.record { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; max-width: 680px; font-size: 12px; color: var(--muted); }
-.record .ic { color: var(--action); display: inline-flex; align-self: center; } .record svg, .waitline svg { width: 14px; height: 14px; }
-.record b { color: #c9c9cf; font-weight: 500; }
-.waitline { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; max-width: 680px; padding: 8px 10px; border-radius: 8px; background: var(--fill); }
-.waitline .ic { color: var(--warn); margin-top: 1px; display: inline-flex; }
-.waitline .sub { color: var(--muted); font-size: 12px; }
-.btn { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 6px; border: 1px solid #3a3a41; background: #26262a; white-space: nowrap; font-size: 12px; }
-.btn:hover { background: #303035; }
-.link { color: var(--ask); font-size: 12px; } .link:hover { text-decoration: underline; }
-.details { flex-basis: 100%; margin: 4px 0 0 22px; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; }
-.details dt { color: var(--faint); } .details dd { margin: 0; color: #c4c4ca; }
-.ok { color: var(--action); }
-
-#overlay { position: absolute; inset: 0; pointer-events: none; }
-#overlay > * { pointer-events: auto; }
-/* Quiet override: reached only from the Flow settings gear or a record's details */
-.scrim { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; background: #0008; }
-.sheet { width: min(460px, 100%); max-height: 100%; overflow: auto; background: var(--pop); border: 1px solid var(--hair); border-radius: 12px; box-shadow: 0 22px 56px -12px #000a; padding: 14px 16px 16px; display: grid; gap: 12px; }
-.sheet header { display: flex; align-items: center; justify-content: space-between; }
-.sheet h3 { margin: 0; font-size: 14px; }
-.x { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); background: var(--fill); }
-.x svg { width: 10px; height: 10px; }
-.srow { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 12px; background: var(--card); border: 1px solid var(--hair); border-radius: 9px; }
-.srow span { flex: 1; }
-.switch { position: relative; width: 32px; height: 19px; flex: none; }
-.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
-.switch i { position: absolute; inset: 0; border-radius: 999px; background: #3a3a40; transition: background .15s; pointer-events: none; }
-.switch i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: transform .15s; }
-.switch input:checked + i { background: var(--on); } .switch input:checked + i::after { transform: translateX(13px); }
-.switch input:focus-visible + i { outline: 2px solid var(--ask); outline-offset: 2px; }
-.grp { display: grid; gap: 5px; }
-.gh { margin: 0; padding: 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-.list { border: 1px solid var(--hair); border-radius: 9px; overflow: hidden; background: var(--card); }
-.acc { position: relative; display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 5px 12px; }
-.acc + .acc::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: 1px; background: var(--hair); }
-.acc input { accent-color: var(--on); margin: 0; width: 15px; height: 15px; flex: none; }
-.acc small { display: block; color: var(--muted); font-size: 11.5px; }
-.acc.out { color: var(--faint); } .acc.out .slot { width: 15px; flex: none; }
-.dim { opacity: .45; pointer-events: none; }
-.foot { margin: 0; font-size: 11.5px; color: var(--muted); }
-
-/* Fixture controls: deliberately small and below the window */
-.fixture { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 11.5px; color: var(--faint); }
-.fixture b { font-weight: 600; color: var(--muted); }
-.seg { display: inline-flex; flex-wrap: wrap; max-width: 100%; padding: 2px; gap: 2px; border-radius: 7px; background: var(--fill); }
-.seg button { padding: 2px 9px; border-radius: 5px; color: var(--muted); white-space: nowrap; }
-.seg button[aria-pressed="true"] { background: #2c2c31; color: var(--ink); }
-.fixture select { background: transparent; border: 1px solid #2f2f35; border-radius: 6px; padding: 2px 5px; color: var(--muted); }
-.notes { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
-.notes section { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; }
-.notes h2 { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); }
-.notes ul { margin: 0; padding-left: 18px; color: #b4b4bb; font-size: 12px; }
-.notes li + li { margin-top: 4px; }
-
-@media (max-width: 720px) {
-  .window { grid-template-columns: minmax(0, 1fr); height: 640px; }
-  .flow { display: none; }
-  .phead .role { display: none; }
-}
-@media (prefers-reduced-motion: reduce) { .switch i, .switch i::after { transition: none; } }
+  :root { color-scheme: dark; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  body { margin: 0; background: #1b1b1e; color: #d8d8dc; }
+  .wrap { display: flex; flex-wrap: wrap; gap: 20px; padding: 16px; align-items: flex-start; }
+  .review { flex: 1 1 280px; max-width: 420px; display: grid; gap: 14px; }
+  h1 { margin: 0; font-size: 15px; }
+  p { margin: 0; color: #a5a5ad; font-size: 12.5px; }
+  .group { display: grid; gap: 6px; }
+  .group b { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #85858e; font-weight: 600; }
+  .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+  .seg a { padding: 4px 10px; border-radius: 6px; background: #26262a; color: #c9c9cf; text-decoration: none; font-size: 12.5px; }
+  .seg a[aria-current="true"] { background: #3a3a40; color: #fff; }
+  .seg a:focus-visible { outline: 2px solid #8fb3ff; outline-offset: 2px; }
+  .what { padding: 10px 12px; border-left: 2px solid #4fc7c0; background: #222225; color: #cfcfd4; font-size: 12.5px; }
+  ul { margin: 0; padding-left: 18px; color: #a5a5ad; font-size: 12px; }
+  li + li { margin-top: 3px; }
+  /* Orca draws the panel at 110%; the frame is the panel's real CSS width. */
+  .frame { flex: none; width: 572px; height: 1348px; zoom: 1.1; border: 0; border-radius: 8px; background: #000; box-shadow: 0 0 0 1px #2c2c31; max-width: calc((100vw - 32px) / 1.1); }
 </style>
 <body>
 <div class="wrap">
-  <header class="top">
-    <h1>Account switching</h1>
-    <p>Orca Flow UX draft · fixture identities only · nothing here reads accounts or touches Orca</p>
-  </header>
-
-  <div class="window" id="window">
-    <aside class="flow" id="flow" aria-label="Orca Flow sidebar (mock)"></aside>
-    <section class="pane" id="pane" aria-label="Agent conversation (mock)"></section>
-    <div id="overlay"></div>
-  </div>
-
-  <div class="fixture" aria-label="Fixture controls">
-    <b>Fixture</b>
-    <span class="seg" id="states" role="group" aria-label="State">
-      <button data-state="normal">Normal</button>
-      <button data-state="switched">Limit, switched</button>
-      <button data-state="exhausted">Limit, all limited</button>
-      <button data-state="scope">Limit, scope unknown</button>
-    </span>
-    <span class="seg" id="providers" role="group" aria-label="Provider">
-      <button data-provider="Claude">Claude</button>
-      <button data-provider="Codex">Codex</button>
-    </span>
-    <label>Host <select id="host">
-      <option value="ready">Can continue on another account</option>
-      <option value="today">Orca 1.4.272 (today)</option>
-    </select></label>
-  </div>
-
-  <div class="notes">
-    <section>
-      <h2>Behaviour</h2>
+  <section class="review" aria-label="Review controls">
+    <div>
+      <h1>Account switching in Orca Flow</h1>
+      <p>The installed 0.2.98 panel with synthetic data. Healthy is the panel exactly as released. The other states add only what is described below.</p>
+    </div>
+    <div class="group"><b>State</b><nav class="seg" id="state"></nav></div>
+    <div class="group"><b>Provider</b><nav class="seg" id="provider"></nav></div>
+    <div class="group"><b>Host</b><nav class="seg" id="host"></nav></div>
+    <div class="what" id="what" role="status"></div>
+    <div class="group"><b>Decisions kept</b>
       <ul>
-        <li>On by default. Every eligible login of the same provider is used, in discovery order, with no setup, prompt or picker.</li>
-        <li>Eligible means discovered, distinct, inside the workspace’s authorized sharing scope, not excluded and not limited. System default is an alias for one login, never a second account.</li>
-        <li>Discovering a login doesn’t authorize it. A login outside the scope (the Acme Codex login here) is never sent Atlas’s work, even when it has capacity.</li>
-        <li>When Orca can’t establish the scope, the chat stays where it is and the waiting line says why.</li>
-        <li>Healthy work shows nothing. A successful switch leaves one muted record. When everything is limited, one waiting line shows the earliest known reset and <b>Check now</b>. It doesn’t cycle through accounts.</li>
+        <li>On by default for every eligible login of the same provider, discovered automatically. There’s no prompt, picker or Usage page.</li>
+        <li>Eligible means inside the workspace’s authorized sharing scope. Discovering a login doesn’t authorize it: the Acme Codex login is never used.</li>
+        <li>System default is collapsed onto the login it points to.</li>
+        <li>When the scope can’t be established, the chat stays and the line says why.</li>
+        <li>When everything is limited, one line shows the earliest known reset and <b>Check now</b>. It doesn’t cycle.</li>
       </ul>
-    </section>
-    <section>
-      <h2>Override (only when sought)</h2>
-      <ul>
-        <li>Reached from the gear in the Orca Flow sidebar, or from <b>Account switching</b> inside a record’s details.</li>
-        <li>One switch turns it off. Unchecking a login excludes it. New logins in scope are used automatically.</li>
-        <li>On Orca 1.4.272 nothing appears in the conversation beyond today’s wait for the reset.</li>
-      </ul>
-    </section>
-  </div>
+    </div>
+    <p>Hover the account label or the Limited status in the panel for the full record.</p>
+  </section>
+  <iframe class="frame" id="frame" title="Orca Flow panel (preview)"></iframe>
 </div>
-
 <script>
 'use strict'
-const marks={"claude": "<svg viewBox=\"0 0 24 24\" fill=\"#D97757\" aria-hidden=\"true\"><path d=\"m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z\"/></svg>", "codex": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z\"/></svg>"};
-const mark = p => `<span class="mark ${p.toLowerCase()}" aria-hidden="true">${marks[p.toLowerCase()]}</span>`
-const svg = d => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`
-const I = {
-  pause: svg('<circle cx="8" cy="8" r="6"/><path d="M6.5 5.8v4.4M9.5 5.8v4.4"/>'),
-  swap: svg('<path d="M3 5.5h8.5M9 3l2.5 2.5L9 8M13 10.5H4.5M7 8l-2.5 2.5L7 13"/>'),
-  gear: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"/>'),
-  close: svg('<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>')
+const OPTIONS = {
+  state: [['healthy', 'Healthy'], ['switched', 'Switched'], ['exhausted', 'All limited'], ['scope', 'Scope unknown'], ['settings', 'Settings']],
+  provider: [['claude', 'Claude'], ['codex', 'Codex']],
+  host: [['ready', 'Can continue on another account'], ['today', 'Orca 1.4.272 (today)']]
 }
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-const $ = id => document.getElementById(id)
-
-// ---- Fixture. Atlas is authorized to share context within the Studio organization.
-// Discovery reports what Orca can see, including the System default alias; scope decides eligibility.
-const SCOPE = 'Studio'
-const FIX = {
-  Claude: {
-    model: 'Opus 5.5 · High',
-    discovered: [
-      { id: 'sd', alias: 'c1', label: 'System default' },
-      { id: 'c1', email: 'dev@studio.example', org: 'Studio', reset: '3:45 PM', at: 945 },
-      { id: 'c2', email: 'qa@studio.example', org: 'Studio', reset: '6:10 PM', at: 1090 }
-    ]
-  },
-  Codex: {
-    model: 'GPT-6 Luna · xhigh',
-    discovered: [
-      { id: 'x1', email: 'dev@studio.example', org: 'Studio', reset: '4:20 PM', at: 980 },
-      { id: 'x2', email: 'ops@studio.example', org: 'Studio', reset: '5:05 PM', at: 1025 },
-      { id: 'x3', email: 'contractor@acme.example', org: 'Acme', reset: '2:30 PM', at: 870 }
-    ]
-  }
+const WHAT = {
+  healthy: 'Nothing added. This is the released panel.',
+  switched: 'One faint account label on the row whose conversation moved (⇄ qa@studio, or ops@studio for Codex), next to the project and age. Its tooltip is the account-change record. Nothing else changes.',
+  exhausted: 'The row’s age becomes the panel’s existing warn status, “Limited · 3:45 PM”. One line under Coordinators shows the earliest known reset and Check now.',
+  scope: 'The same row status. The line says Orca couldn’t confirm which accounts may receive the work, so it stays on its login.',
+  settings: 'One switch and the discovered logins at the end of the Models page, all on by default. The Acme login is shown but can’t be used. Nothing is saved in this preview.',
+  today: 'On Orca 1.4.272 a limit only shows the row status. The conversation continues after its reset.'
 }
-
-const S = { state: 'normal', provider: 'Claude', host: 'ready', on: true, excluded: new Set(), sheet: false, details: false, checked: false }
-
-// Distinct logins, with System default collapsed onto the login it points to.
-function logins(p) {
-  const d = FIX[p].discovered
-  return d.filter(a => !a.alias).map(a => ({ ...a, systemDefault: d.some(x => x.alias === a.id) }))
-}
-const scopeKnown = () => S.state !== 'scope'
-const inScope = a => scopeKnown() && a.org === SCOPE
-const eligible = p => logins(p).filter(a => inScope(a) && !S.excluded.has(a.id))
-const source = p => logins(p)[0]   // the login this conversation started on
-
-// What the conversation shows for the chosen fixture state.
-function outcome() {
-  const p = S.provider, src = source(p)
-  if (S.state === 'normal') return null
-  if (S.host === 'today') return { kind: 'wait', head: `${src.email} reached its usage limit`, sub: `This chat continues here after the reset.`, reset: src.reset }
-  if (S.state === 'scope') return { kind: 'wait', head: `${src.email} reached its usage limit`, sub: `Orca couldn’t confirm which accounts may receive Atlas’s work, so this chat stays here.`, reset: src.reset }
-  if (!S.on) return { kind: 'wait', head: `${src.email} reached its usage limit`, sub: `Account switching is off, so this chat continues here after the reset.`, reset: src.reset }
-  const others = eligible(p).filter(a => a.id !== src.id)
-  if (S.state === 'switched') {
-    if (others.length) return { kind: 'switched', from: src, to: others[0] }
-    return { kind: 'wait', head: `${src.email} reached its usage limit`, sub: `No other ${p} account can take Atlas’s work, so this chat continues here after the reset.`, reset: src.reset }
-  }
-  // exhausted: every eligible login is limited. One line, earliest known reset, no cycling.
-  const pool = [src, ...others]
-  const first = [...pool].sort((a, b) => a.at - b.at)[0]
-  return { kind: 'wait', head: pool.length > 1 ? `All ${pool.length} ${p} accounts for Atlas are limited` : `${src.email} reached its usage limit`,
-    sub: `This chat continues on ${first.email}, the earliest reset.`, reset: first.reset, waitingOn: first }
-}
-
-// ---- Render
-function flowHTML(o) {
-  const waiting = o?.kind === 'wait'
-  return `<div class="flowHead"><h2>Orca Flow</h2><button class="gear" data-act="sheet" aria-label="Orca Flow settings">${I.gear}</button></div>
-  <div class="ws"><b>Atlas</b>
-    <div class="card focus ${waiting ? 'waiting' : ''}"><span class="dot"></span><span class="t">Update onboarding</span><span class="s">${waiting ? `Waiting · resets ${esc(o.reset)}` : 'Lead · working'}</span></div>
-    <div class="card idle"><span class="dot"></span><span class="t">Validation tests</span><span class="s">Worker · waiting on lead</span></div>
-  </div>
-  <div class="ws"><b>Billing</b>
-    <div class="card"><span class="dot"></span><span class="t">Export CSV</span><span class="s">Worker · working</span></div>
-  </div>`
-}
-function recordHTML(o) {
-  const p = S.provider
-  const det = S.details ? `<dl class="details">
-      <dt>Account</dt><dd><span class="ok">✓</span> ${esc(o.to.email)}, confirmed by Orca</dd>
-      <dt>Conversation</dt><dd><span class="ok">✓</span> Same session, pane and worktree</dd>
-      <dt>Model</dt><dd><span class="ok">✓</span> ${esc(FIX[p].model)}, unchanged</dd>
-      <dt>Assignment</dt><dd><span class="ok">✓</span> Lead of the Atlas run, questions and gates kept</dd>
-      <dt>Settings</dt><dd><button class="link" data-act="sheet">Account switching</button></dd>
-    </dl>` : ''
-  return `<div class="record" role="status"><span class="ic">${I.swap}</span><span>Continued on <b>${esc(o.to.email)}</b>. ${esc(o.from.email)} reached its limit (resets ${esc(o.from.reset)}).</span>
-    <button class="link" data-act="details" aria-expanded="${S.details}">${S.details ? 'Hide' : 'Details'}</button>${det}</div>`
-}
-function waitHTML(o) {
-  return `<div class="waitline" role="status"><span class="ic">${I.pause}</span>
-    <div><div>${esc(o.head)}</div><div class="sub">${esc(o.sub)}${S.checked ? ' Checked just now: still limited.' : ''}</div></div>
-    <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><span class="sub">Resets ${esc(o.reset)}</span><button class="btn" data-act="check">Check now</button></span></div>`
-}
-function paneHTML(o) {
-  const p = S.provider
-  return `<div class="phead">${mark(p)}<span class="title">Update onboarding</span><span class="role">Lead · Atlas</span></div>
-  <div class="log" aria-live="polite">
-    <div class="msg user">Update the onboarding form and get the validation tests green.</div>
-    <div class="msg">I updated the onboarding form and split the address step. Next I’ll run the validation tests.</div>
-    <div class="tool">$ npm test -- onboarding</div>
-    ${o?.kind === 'switched' ? recordHTML(o) + `<div class="msg">All 14 onboarding tests pass. The address step now validates postcodes per country.</div>` : ''}
-    ${o?.kind === 'wait' ? waitHTML(o) : ''}
-  </div>
-  <div class="compose">Message ${p}…</div>`
-}
-function sheetHTML() {
-  const ready = S.host === 'ready'
-  const body = !ready
-    ? `<div class="srow"><span>Needs a newer Orca</span></div><p class="foot">Orca 1.4.272 can’t continue a conversation on another account. A limited chat continues in place after the reset.</p>`
-    : `<div class="srow"><span>Continue on another account when one is limited</span><label class="switch"><input type="checkbox" role="switch" id="onSwitch" ${S.on ? 'checked' : ''} aria-label="Continue on another account when one is limited"><i></i></label></div>
-      <div class="${S.on ? '' : 'dim'}" style="display:grid;gap:12px">
-      ${['Claude', 'Codex'].map(p => {
-        const rows = logins(p).map(a => {
-          if (!inScope(a)) {
-            const why = scopeKnown() ? `Not used for Atlas: ${a.org} is outside its sharing scope` : 'Not used until Orca confirms Atlas’s sharing scope'
-            return `<div class="acc out" data-out="${a.id}"><span class="slot"></span><span><span>${esc(a.email)}</span><small>${esc(why)}</small></span></div>`
-          }
-          return `<label class="acc"><input type="checkbox" data-exclude="${a.id}" ${S.excluded.has(a.id) ? '' : 'checked'} ${S.on ? '' : 'tabindex="-1"'}><span><span>${esc(a.email)}</span><small>${esc(a.org)}${a.systemDefault ? ' · also System default' : ''}</small></span></label>`
-        }).join('')
-        return `<div class="grp"><h4 class="gh">${mark(p)}${p}</h4><div class="list">${rows}</div></div>`
-      }).join('')}
-      </div>
-      <p class="foot">All logins in Atlas’s sharing scope are used. Unchecked ones never are. New logins in scope are used automatically.</p>`
-  return `<div class="scrim" data-act="scrim"><div class="sheet" role="dialog" aria-label="Account switching">
-    <header><h3>Account switching</h3><button class="x" data-act="close" aria-label="Close">${I.close}</button></header>${body}</div></div>`
-}
-function render() {
-  const keep = document.activeElement?.dataset?.exclude ? `[data-exclude="${document.activeElement.dataset.exclude}"]` : document.activeElement?.id === 'onSwitch' ? '#onSwitch' : null
-  const o = outcome()
-  $('flow').innerHTML = flowHTML(o)
-  $('pane').innerHTML = paneHTML(o)
-  $('overlay').innerHTML = S.sheet ? sheetHTML() : ''
-  for (const b of document.querySelectorAll('[data-state]')) b.setAttribute('aria-pressed', b.dataset.state === S.state)
-  for (const b of document.querySelectorAll('[data-provider]')) b.setAttribute('aria-pressed', b.dataset.provider === S.provider)
-  $('host').value = S.host
-  const url = new URL(location.href)
-  url.searchParams.set('state', S.state); url.searchParams.set('provider', S.provider); url.searchParams.set('host', S.host)
-  history.replaceState(null, '', url)
-  if (keep) document.querySelector(keep)?.focus()
-}
-
-// ---- Events
-document.addEventListener('click', e => {
-  const t = e.target.closest('button,[data-act="scrim"]')
-  if (!t) return
-  if (t.dataset.state) { S.state = t.dataset.state; S.details = false; S.checked = false; return render() }
-  if (t.dataset.provider) { S.provider = t.dataset.provider; S.details = false; S.checked = false; return render() }
-  switch (t.dataset.act) {
-    case 'details': S.details = !S.details; return render()
-    case 'check': S.checked = true; return render()
-    case 'sheet': S.sheet = true; return render()
-    case 'close': S.sheet = false; return render()
-    case 'scrim': if (e.target === t) { S.sheet = false; render() } return
-  }
-})
-document.addEventListener('change', e => {
-  const t = e.target
-  if (t.id === 'host') { S.host = t.value; S.checked = false; return render() }
-  if (t.id === 'onSwitch') { S.on = t.checked; return render() }
-  if (t.dataset.exclude) { t.checked ? S.excluded.delete(t.dataset.exclude) : S.excluded.add(t.dataset.exclude); return render() }
-})
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.sheet) { S.sheet = false; render() } })
-
+const LEGACY = { conversation: 'exhausted', usage: 'healthy', limit: 'exhausted', normal: 'healthy' }
 const q = new URLSearchParams(location.search)
-if (['normal', 'switched', 'exhausted', 'scope'].includes(q.get('state'))) S.state = q.get('state')
-if (['Claude', 'Codex'].includes(q.get('provider'))) S.provider = q.get('provider')
-if (['ready', 'today'].includes(q.get('host'))) S.host = q.get('host')
+const pick = (key, fallback) => { const v = q.get(key); const ok = OPTIONS[key].map(([k]) => k); return ok.includes(v) ? v : ok.includes(LEGACY[v]) ? LEGACY[v] : fallback }
+const cur = { state: pick('state', LEGACY[q.get('placement')] || 'healthy'), provider: pick('provider', q.get('provider') === 'Codex' ? 'codex' : 'claude'), host: pick('host', 'ready') }
+function render() {
+  for (const key of Object.keys(OPTIONS)) {
+    document.getElementById(key).innerHTML = OPTIONS[key].map(([k, label]) => {
+      const next = new URLSearchParams({ ...cur, [key]: k })
+      return `<a href="?${next}" data-key="${key}" data-value="${k}" aria-current="${cur[key] === k}">${label}</a>`
+    }).join('')
+  }
+  const params = new URLSearchParams(cur)
+  document.getElementById('frame').src = 'account-failover-preview/panel.html?' + params
+  document.getElementById('what').textContent = cur.host === 'today' && cur.state !== 'healthy' && cur.state !== 'settings' ? WHAT.today : WHAT[cur.state]
+  history.replaceState(null, '', '?' + params)
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-key]')
+  if (!a) return
+  e.preventDefault(); cur[a.dataset.key] = a.dataset.value; render()
+})
 render()
 </script>
 </body>

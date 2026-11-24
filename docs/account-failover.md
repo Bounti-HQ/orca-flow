@@ -94,7 +94,8 @@ A live cross-account task continuation and the desktop restart controls were not
    identity makes a login a new candidate that has to be checked again. Offer a quiet override,
    reached only when the user looks for it, to exclude logins or turn switching off. Healthy work
    shows no account chrome. A successful switch leaves one inline record in the conversation.
-   `docs/account-failover-prototype.html` is the UX draft.
+   `docs/account-failover-prototype.html` previews this in the released Orca Flow 0.2.98 panel with
+   synthetic data (`node scripts/account-failover-preview.mjs` rebuilds it).
 2. **Require a confirmed stop.** Orca supplies a stable event ID, exact source session, turn,
    account, owner generation and scope of the exhausted allowance. A transient request takes the
    provider's retry path. Exclude every candidate covered by an organization-wide limit. Unknown
