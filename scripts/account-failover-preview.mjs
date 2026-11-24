@@ -78,7 +78,7 @@ const snapshot = {
   rows
 }
 const goal = (id, title, next, steps, over = {}) => ({ id, title, next, steps: steps.map(([text, done]) => ({ text, done: !!done })), links: { linear: [], worktrees: [] }, status: 'open',
-  createdAt: T - 5 * 24 * H, updatedAt: T - 2 * H, lastChange: { by: 'you', field: 'next', at: T - 2 * H }, workingPanes: [], ...over })
+  createdAt: T - 5 * 24 * H, updatedAt: T - 2 * H, lastChange: { by: 'you', field: 'next', at: T - 2 * H }, livePanes: [], ...over })
 const goals = [
   goal('g1', 'Ship role-based workspace access', 'Check where the ATL-212 lead is', [['Access matrix', 0], ['Moderation rights', 0], ['Audit log', 0], ['Review', 0]]),
   goal('g2', 'Finish splitting long lessons into short ones', 'Check CI for PR #4180 after the review fixes.', []),
@@ -106,6 +106,9 @@ const bridge = `<style>.tip{transition:none!important}
 /* Proposal: the only CSS this draft adds. It reuses the panel's tokens. */
 .r > .acct{align-self:baseline;display:inline-flex;align-items:center;gap:3px;color:var(--faint);font-size:11px;white-space:nowrap}
 .r > .acct svg{width:11px;height:11px;flex:none;align-self:center}
+.acct-line{display:flex;align-items:flex-start;gap:5px;min-width:0;margin:0 0 6px;font-size:11px;line-height:1.35;color:var(--muted)}
+.acct-line svg{width:11px;height:11px;flex:none;margin-top:1.5px;color:var(--faint)}
+.acct-line span{min-width:0}
 .acct-line .act{margin-left:auto;font-size:11px}
 </style><script>
 'use strict';
@@ -244,7 +247,7 @@ function applyLine(o) {
   if (!label) return;
   const after = label.nextElementSibling?.classList.contains('reload-sum') ? label.nextElementSibling : label;
   const div = document.createElement('div');
-  div.className = 'reload-sum acct-line'; div.setAttribute('role', 'status'); div.dataset.tip = o.tip;
+  div.className = 'acct-line'; div.setAttribute('role', 'status'); div.dataset.tip = o.tip;
   div.innerHTML = PAUSE + '<span>' + esc(o.line + (checked ? ' · checked just now' : '')) + '</span><button class="act" data-acct-check>Check now</button>';
   after.after(div);
 }
@@ -341,6 +344,7 @@ async function shoot(out, reference) {
   // All eligible included usage used up: pause before paid usage, earliest reset, no cycling.
   await load('state=spent')
   check('spent: the row says Paused · 3:45 PM', (await text('[data-menu="agent:onboarding"] .acct-status')).startsWith('Paused · 3:45 PM'))
+  check('spent: the waiting line is one compact row (its own style, not a borrowed one)', (await ev(`Math.round(document.querySelector('.acct-line svg').getBoundingClientRect().height)`)) <= 14 && (await ev(`Math.round(document.querySelector('.acct-line').getBoundingClientRect().height)`)) <= 24)
   check('spent: one line, paused before paid usage, earliest reset', (await ev(`[...document.querySelectorAll('.acct-line')].map(e => e.textContent).join('|')`)) === 'Claude: included usage used up · paused before paid usage · 3:45 PMCheck now')
   await ev(`document.querySelector('[data-acct-check]').click()`); await sleep(100)
   check('spent: Check now answers in place', (await text('.acct-line')).includes('checked just now'))
