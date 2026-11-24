@@ -38,6 +38,21 @@ test('known installed release links can be repaired after Orca removes the old h
   } finally { rmSync(home, { recursive: true }) }
 })
 
+test('all discovery links follow the publisher migration and dangling Bounti release links are repaired', () => {
+  const { home, claudeDir } = profile()
+  try {
+    const legacy = join(home, 'plugins/cyucelen.flow', 'a'.repeat(64))
+    const fork = join(home, 'plugins/bounti-hq.flow')
+    const first = join(fork, 'b'.repeat(64)), next = join(fork, 'c'.repeat(64))
+    mkdirSync(join(legacy, 'skills/orca-flow'), { recursive: true })
+    for (const dir of [legacy, first, next]) {
+      const links = linksFor(dir, home, claudeDir)
+      ensureOwnLinks(links, true, { repairOnly: dir === next })
+      for (const { from, to } of links) assert.equal(readlinkSync(from), to)
+    }
+  } finally { rmSync(home, { recursive: true }) }
+})
+
 test('installed discovery updates our skill links but preserves user files and other plugin symlinks, including dangling ones', () => {
   const home = mkdtempSync(join(tmpdir(), 'discovery-'))
   try {

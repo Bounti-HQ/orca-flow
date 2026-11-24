@@ -121,10 +121,15 @@ export function ensureOwnLinks(links: Link[], installed: boolean, options: { rep
         if (options.repairOnly && existsSync(link.from)) return []
         const target = resolve(link.from, '..', readlinkSync(link.from))
         if (target !== resolve(link.to)) {
-          const install = /^(.*\/plugins\/cyucelen\.flow)\/(?:[a-f0-9]{64}|current)\/skills\/orca-flow$/
+          const install = /^(.*\/plugins)\/(cyucelen\.flow|bounti-hq\.flow)\/(?:[a-f0-9]{64}|current)\/skills\/orca-flow$/
           const oldInstall = install.exec(target), newInstall = install.exec(resolve(link.to))
           // Known installed release paths retain ownership even after Orca removes an old hash.
-          if (oldInstall && newInstall && oldInstall[1] === newInstall[1]) return ensureLinks([link], options)
+          if (oldInstall && newInstall && oldInstall[1] === newInstall[1] &&
+              (oldInstall[2] === newInstall[2] || newInstall[2] === 'bounti-hq.flow')) {
+            // Includes the publisher migration. The previous target is a known Flow release,
+            // so Antigravity can move this link too, even when the old hash has gone.
+            return ensureLinks([{ ...link, preserveUserLinks: false }], options)
+          }
           // A symlink alone is not proof of ownership. Only our installed plugin's skill can
           // be replaced; unknown/dangling destinations are preserved for the user.
           const manifest = JSON.parse(readFileSync(join(target, '..', '..', 'orca-plugin.json'), 'utf8'))
