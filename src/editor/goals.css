@@ -114,3 +114,4 @@ button.lchip.link:hover { color: var(--ink); background: var(--card-hover); }
 .toast .x:hover { background: var(--card-hover); color: var(--ink); }
 .toast .x svg { width: 9px; height: 9px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+#qside { display: contents; }
