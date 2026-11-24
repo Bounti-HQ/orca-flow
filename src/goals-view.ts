@@ -168,7 +168,7 @@ function stepProgress(g: Goal): string {
   if (!total) return ''
   const done = completedSteps(g)
   const arc = done ? `<circle cx="7" cy="7" r="5.5" pathLength="${total}" stroke-dasharray="${done} ${total}" transform="rotate(-90 7 7)"/>` : ''
-  return `<span class="gprogress" data-tip="${done} of ${total} ${total === 1 ? 'todo' : 'todos'} complete"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><circle class="track" cx="7" cy="7" r="5.5"/>${arc}</svg><span class="cnt">${done}/${total}</span></span>`
+  return `<span class="gprogress" role="img" aria-label="${done} of ${total} ${total === 1 ? 'todo' : 'todos'} complete"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><circle class="track" cx="7" cy="7" r="5.5"/>${arc}</svg><span class="cnt">${done}/${total}</span></span>`
 }
 
 const CHEV = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 2l3 3-3 3"/></svg>'

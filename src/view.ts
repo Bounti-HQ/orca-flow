@@ -1416,7 +1416,7 @@ export function render(given: Snapshot, state: UiState, linearData: LinearData |
     if (!working.length) return ''
     const names = working.map(({ a, row }) => nameOf(a, row)).join(', ')
     const label = esc(`Working: ${names}`)
-    return `<span class="who" role="img" aria-label="${label}" data-tip="${label}">${avatarStack(working, all, 3)}</span>`
+    return `<span class="who" role="img" aria-label="${label}">${avatarStack(working, all, 3)}</span>`
   }
   const button = (g: GoalView) => nextButton(g, given, { assigning: ui.goalAssigning, gone: ui.goalGone })
   const goalsOut = { goalsHead: goalsHead(goalsData ?? [], gs, !!ui.query || !goalsData), goalsRows: goalsRows(goalsData ?? [], gs, !!ui.query || !goalsData, avatars, button) }
