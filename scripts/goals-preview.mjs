@@ -186,14 +186,14 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     ok(titles().includes('Hire a designer') && previewCalls.some((c) => c.name === 'sidebar.goalAction' && c.data.action === 'add' && c.data.title === 'Hire a designer') && $('#goal-add').hidden, 'Enter adds a goal');
     // open card, tick, edit next
     row('g_shift-scheduling').click(); await wait();
-    ok(!$('#goalpop').hidden && $('#goalpop .meta').textContent.startsWith('Next updated by you'), 'click opens the card with who changed it last');
+    ok(!$('#goalpop').hidden && !$('#goalpop .meta'), 'click opens the card, with no last-change line');
     ok(document.activeElement === $('#goalpop'), 'opening a goal focuses the dialog, leaving the title out of edit mode');
     const fields = [...document.querySelectorAll('#goalpop .k')].map((label) => label.textContent.split(' · ')[0]);
     ok(fields.join(',') === 'Description,Done criteria,Next,Todos,Links', 'goal details follow reading order');
     $('#goalpop [data-gstep="1"]').click(); await wait(300);
-    ok($('#goalpop [data-gstep="1"]').getAttribute('aria-checked') === 'true' && row('g_shift-scheduling').querySelector('.cnt').textContent === '1/4' && $('#goalpop .meta').textContent.startsWith('Todos updated by you · just now'), 'tick a step: card, row count and meta follow');
+    ok($('#goalpop [data-gstep="1"]').getAttribute('aria-checked') === 'true' && row('g_shift-scheduling').querySelector('.cnt').textContent === '1/4', 'tick a step: card and row count follow');
     await edit('next', 'Draft the Austria template', 'enter'); await wait(250);
-    ok(row('g_shift-scheduling').querySelector('.nx').textContent === 'Draft the Austria template' && $('#goalpop .meta').textContent.startsWith('Next updated by you'), 'edit next (Enter) saves; the row shows it');
+    ok(row('g_shift-scheduling').querySelector('.nx').textContent === 'Draft the Austria template', 'edit next (Enter) saves; the row shows it');
     await edit('note', 'Sent to the lawyer by Friday'); await wait(250);
     ok(previewCalls.some((c) => c.data?.patch?.note === 'Sent to the lawyer by Friday'), 'edit note on blur saves');
     // a live repaint while typing keeps the focus and the text

@@ -216,8 +216,7 @@ for you, else the worktree's lead even when it is done and waiting for review, e
 session that is gone is never focused). With nobody on it, **Assign →** picks one of your coordinators with a live
 session and types the exact step (the row shows "Assigning…" until it lands), with the goal's title, id and `orca-flow goal` commands, into its current session; the goal
 records it (`orca-flow goal show` names the coordinator) until the next step changes. Click a row for its card: edit the next step, tick todos, edit the description and done criteria (edits
-save when you leave the field or press Enter), see the Linear issues and worktrees it links, and one
-line saying who changed it last ("Next updated by you · 2h ago"). **Mark done** moves it to **Completed**. Search completed goals by title, newest completion first, and open any goal to **Reopen** it. **+** adds a goal from
+save when you leave the field or press Enter), and see the Linear issues and worktrees it links. **Mark done** moves it to **Completed**. Search completed goals by title, newest completion first, and open any goal to **Reopen** it. **+** adds a goal from
 one line (Enter adds, Esc cancels). Agents keep goals current with `orca-flow goal` (a lead ticks todos
 and updates the next step), but only propose done: such a goal reads "lead says done", and its card
 asks **Confirm done** or **Not yet** (back to open). The section folds like Linear and hides while you

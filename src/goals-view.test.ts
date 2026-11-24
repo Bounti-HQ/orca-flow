@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { add, done, get, propose, setStep } from '../skills/orca-flow/scripts/goals.mjs'
-import { goalCard, goalRow, goalViews, goalsHead, goalsRows, lastChangeText, type GoalView } from './goals-view.ts'
+import { goalCard, goalRow, goalViews, goalsHead, goalsRows, type GoalView } from './goals-view.ts'
 import { applyGoalAction, readGoals } from './goals.ts'
 import { emptyUi, render } from './view.ts'
 import type { AgentInfo, Snapshot, WorkspaceRow } from './protocol.ts'
@@ -119,25 +119,15 @@ test('goal text is escaped, in the row and in the card', () => {
   for (const html of [goalRow(g, null), goalCard(g, NOW)]) noMatch(html, /<img|<script|<b>/)
 })
 
-test('the card has editable next, note, done-when and title, tickable steps, links and one muted last-change line', () => {
+test('the card has editable next, note, done-when and title, tickable steps, links, and no last-change line', () => {
   const card = goalCard(view(), NOW)
   for (const f of ['title', 'next', 'note', 'doneWhen', 'newStep']) assert.match(card, new RegExp(`data-gedit="${f}" data-g="g_ship"`))
   assert.match(card, /data-gstep="1" data-g="g_ship" role="checkbox" aria-checked="true"/)
   assert.match(card, /data-gstep="2"[^>]*aria-checked="false"/)
   assert.match(card, /DES-340/)
   assert.match(card, /mono\/des-340/)
-  assert.equal(card.match(/class="meta"/g)?.length, 1)
-  assert.match(card, /Next updated by the DES-340 lead · 2h ago/)
+  assert.ok(!/class="meta"|updated by/.test(card), "no last-change line")
   assert.match(goalCard(view({ links: { linear: [], worktrees: [] } }), NOW), /No ticket or worktree/)
-})
-
-test('who changed it last reads in one line', () => {
-  const at = NOW - 5 * 60_000
-  assert.equal(lastChangeText({ lastChange: { by: 'you', field: 'next', at } }, NOW), 'Next updated by you · 5m ago')
-  assert.equal(lastChangeText({ lastChange: { by: 'you', field: 'doneWhen', at } }, NOW), 'Done criteria updated by you · 5m ago')
-  assert.equal(lastChangeText({ lastChange: { by: 'a lead', field: 'next,steps', at: NOW } }, NOW), 'Next and Todos updated by a lead · just now')
-  assert.equal(lastChangeText({ lastChange: { by: 'you', field: 'created', at } }, NOW), 'Added by you · 5m ago')
-  assert.equal(lastChangeText({ lastChange: { by: 'you', field: 'status', at: NOW - 3 * 86_400_000 } }, NOW), 'Status changed by you · 3d ago')
 })
 
 test('render() puts the section above the tree and drops it while searching or before the goals are read', () => {

@@ -156,17 +156,6 @@ export function agoText(at: number, now: number): string {
   return m < 60 ? `${m}m ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`
 }
 
-const FIELD = { title: 'Title', note: 'Description', next: 'Next', doneWhen: 'Done criteria', steps: 'Todos', links: 'Links' } as const
-/** The one muted line at the foot of a card: "Next updated by you · 2h ago". */
-export function lastChangeText(g: Pick<Goal, 'lastChange'>, now: number): string {
-  const { by, field, at } = g.lastChange
-  const when = agoText(at, now)
-  if (field === 'created') return `Added by ${by} · ${when}`
-  if (field === 'status') return `Status changed by ${by} · ${when}`
-  const names = field.split(',').map((f) => FIELD[f as keyof typeof FIELD] ?? f)
-  return `${names.join(' and ')} updated by ${by} · ${when}`
-}
-
 const completedSteps = (g: Goal) => g.steps.filter((s) => s.done).length
 
 function stepProgress(g: Goal): string {
@@ -242,7 +231,7 @@ function assignedLine(g: GoalView, now: number): string {
 }
 
 /**
- * The details card of a goal: its title, description, done criteria, next step, checklist, links, and the foot with who changed it last and the buttons that fit its status.
+ * The details card of a goal: its title, description, done criteria, next step, checklist, links, and the foot with the buttons that fit its status.
  * Every section is a direct child with a data-part, so a live redraw replaces the parts the person
  * is not typing in (see paintGoalCard in panel/app.ts).
  */
@@ -265,6 +254,6 @@ export function goalCard(g: GoalView, now: number): string {
     `<div class="gpart f" data-part="steps"><span class="k">Todos${g.steps.length ? ` · ${completedSteps(g)}/${g.steps.length}` : ''}</span><div class="steps">${steps}</div>${editable('newStep', g.id, '', 'Add a todo', 'ed addstep')}</div>`,
     `<div class="gpart f" data-part="links"><span class="k">Links</span><div class="links">${links || '<span class="nolinks">No ticket or worktree</span>'}</div></div>`,
     g.status === 'proposed' ? '<div class="gpart gsays" data-part="says">An agent says this is done. Is it?</div>' : '',
-    `<div class="gpart pfoot${g.status === 'proposed' ? ' wrap' : ''}" data-part="foot"><span class="meta">${esc(lastChangeText(g, now))}</span>${buttons}</div>`
+    `<div class="gpart pfoot${g.status === 'proposed' ? ' wrap' : ''}" data-part="foot">${buttons}</div>`
   ].join('')
 }
