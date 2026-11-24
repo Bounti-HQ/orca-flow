@@ -58,7 +58,7 @@ export type AssignIo = {
   changed?: () => void
 }
 
-const UNCONFIRMED = 'Orca did not confirm the coordinator got it: open it with Jump to agent and check before sending again.'
+const UNCONFIRMED = 'Orca did not confirm the coordinator got it: open it with Jump → and check before sending again.'
 
 /**
  * Hands the goal's exact Next step to a coordinator. The store refuses a second assignment of the same

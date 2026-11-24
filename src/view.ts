@@ -14,6 +14,7 @@ import { PROVIDER_LOGOS } from './provider-logos.ts'
 import { asksYou, byUrgency, canRemove, claimsAsk, holdsWorkstream, laterAsk, monitoring, needsYou, waitingQueue } from './rank.ts'
 import { BEAMS, capGlyph, headLines, nodeX, rowLines, trunkX, type NodeState } from './lines.ts'
 import { COMPLETED_BATCH, goalsHead, goalsRows, nextButton, type GoalView } from './goals-view.ts'
+import { ARROW } from './icons.ts'
 import { DEFAULT_DISPLAY, FILTER_NAME, FILTERS, isDefaultDisplay, issueLink, LINEAR_MARK, linkRows, priorityIcon, rowsByIssue, STATE_NAME, statusIcon, teamsOf, viewOf, type Display, type LinearFilter, type LinearGroup } from './linear.ts'
 
 export type UiState = {
@@ -1530,7 +1531,6 @@ export const idChip = (id: string, link?: { url: string; title: string | null } 
     ? `<span class="idchip" role="link" data-url="${esc(link.url)}" data-tip="${esc(link.title ? `${id} · ${link.title}` : `Open ${id} in Linear`)}" aria-label="${esc(`Open ${id} in Linear`)}">${LINEAR_MARK}${esc(id)}</span>`
     : `<span class="idchip">${LINEAR_MARK}${esc(id)}</span>`
 
-const ARROW = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3"/></svg>'
 
 /** Rows a filter shows before "N more", so a big team list stays quick to draw. */
 export const LINEAR_ROWS = 50

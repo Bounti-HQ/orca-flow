@@ -967,6 +967,12 @@ function markTarget(): void {
   document.querySelectorAll<HTMLElement>('[data-status]').forEach((el) => {
     el.setAttribute('aria-expanded', String(menuTarget === `status:${el.dataset.status}`))
   })
+  // A goal's Assign → stays shown while its picker is open, as a Linear row's Send → does.
+  document.querySelectorAll<HTMLElement>('[data-gassign]').forEach((el) => {
+    const open = menuTarget === `goalassign:${el.dataset.gassign}`
+    el.setAttribute('aria-expanded', String(open))
+    el.parentElement?.classList.toggle('menu-open', open)
+  })
 }
 
 function closeMenu(): void {
@@ -1486,7 +1492,8 @@ document.addEventListener('click', (event) => {
   if (d.gassign) {
     const target = `goalassign:${d.gassign}`
     if (menuTarget === target) closeMenu()
-    else if (opener.shouldOpen(target)) openMenu(goalAssignMenu(d.gassign), 12, 12, target, el.getBoundingClientRect())
+    // Under the goal's row, as a Linear row's send menu opens under its row (the pill itself may be hidden: keyboard).
+    else if (opener.shouldOpen(target)) openMenu(goalAssignMenu(d.gassign), 12, 12, target, (el.parentElement ?? el).getBoundingClientRect())
     return
   }
   if (d.gstep) {

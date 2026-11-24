@@ -44,7 +44,9 @@ test('a working agent on a linked worktree: Jump to agent, to its exact workspac
   const b = nextButton(view(), s)
   assert.equal(b?.kind, 'jump')
   assert.deepEqual(b?.kind === 'jump' && b.target, { workspaceId: 'identity:des-340', terminal: 'term-w2', paneKey: 'w2', name: 'agent w2' }, 'the working agent before the waiting one')
-  assert.match(nextButtonHtml(view(), b), /data-gjump="g_ship"[^>]*>Jump to agent<\/button>/)
+  const html = nextButtonHtml(view(), b)
+  assert.match(html, /^<button class="gact act pill send" data-gjump="g_ship"[^>]*>Jump <svg[^]*<\/svg><\/button>$/, 'the Linear row\'s Send pill: one word and the arrow')
+  assert.match(html, /data-tip="Jump to agent w2" aria-label="Jump to agent w2"/, 'the full meaning in the tooltip and accessible name')
 })
 
 test('an agent waiting for the user (a question or a permission prompt) is on the step too', () => {
@@ -73,7 +75,9 @@ test('nobody on the step: Assign to coordinator', () => {
   assert.equal(nextButton(view({ links: { linear: [], worktrees: [] } }), snap())?.kind, 'assign', 'no links at all')
   assert.equal(nextButton(view(), snap([row('identity:des-340', [agent('w1', 'working', { live: false })])]))?.kind, 'assign', 'a pane without a live session')
   assert.equal(nextButton(view(), snap([row('identity:des-340', [agent('w1', 'working', { terminal: null })])]))?.kind, 'assign', 'no terminal to focus')
-  assert.match(nextButtonHtml(view(), { kind: 'assign' }), /data-gassign="g_ship"[^>]*>Assign to coordinator<\/button>/)
+  const html = nextButtonHtml(view(), { kind: 'assign' })
+  assert.match(html, /^<button class="gact act pill send" data-gassign="g_ship"[^>]*>Assign <svg[^]*<\/svg><\/button>$/)
+  assert.match(html, /aria-haspopup="menu" aria-expanded="false" data-tip="Assign the next step to a coordinator" aria-label="Assign the next step to a coordinator"/)
 })
 
 test('a done goal, a proposed one, and one with no Next step show no button', () => {
@@ -90,8 +94,8 @@ test('pending while this panel sends it or the store says a send is under way; i
   assert.equal(nextButton(view(), snap(), { assigning: new Set(['g_ship']) })?.kind, 'pending')
   assert.equal(nextButton(view({ assigned: assigned({ state: 'pending' }) }), snap())?.kind, 'pending')
   const html = nextButtonHtml(view(), { kind: 'pending' })
-  assert.match(html, /disabled/)
-  assert.match(html, />Assigning…</)
+  assert.match(html, /^<span class="gact rstatus pending" role="status"><span class="refreshing"><\/span>Assigning…<\/span>$/, 'a row status like Linear\'s Sending…, not a button, and not a hover pill (always shown)')
+  assert.ok(!/<button|\bsend\b/.test(html))
   assert.ok(!/data-gassign|data-gjump/.test(html))
 })
 
@@ -103,7 +107,7 @@ test('an assignment for another Next text does not apply: Assign to coordinator 
 
 test('the button sits beside the row button (never inside it), so pressing it does not open the card', () => {
   const html = goalRow(view({ title: '<img src=x>' }), null, '', { kind: 'jump', target: { workspaceId: 'w', terminal: 't', paneKey: 'p', name: '<b>lead</b>' } })
-  assert.match(html, /^<div class="grow gk-jump"><button class="g"[^]*?<\/button><button class="gact" data-gjump=/)
+  assert.match(html, /^<div class="gline gk-jump"><button class="g"[^]*?<\/button><button class="gact act pill send" data-gjump=/)
   assert.ok(!html.includes('<img') && !html.includes('<b>lead'), 'goal and agent names are escaped')
 })
 

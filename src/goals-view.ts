@@ -3,6 +3,7 @@
 // file has no Node imports, so the panel bundles it. Every goal text is untrusted: escaped when drawn.
 import type { Goal, GoalAssignment } from '../skills/orca-flow/scripts/goals.d.mts'
 import type { AgentInfo, Coordinator, Snapshot, WorkspaceRow } from './protocol.ts'
+import { ARROW } from './icons.ts'
 
 /**
  * A goal as the panel gets it: the stored goal, the agents working on its linked worktrees, and the
@@ -99,15 +100,20 @@ export function nextButton(g: GoalView, snap: SnapLike, opts: { assigning?: Read
   return target ? { kind: 'jump', target } : { kind: 'assign' }
 }
 
-/** The button's HTML; its own element beside the row, so pressing it never opens the card. */
+/**
+ * The button's HTML: the Linear row's hover pill (`act pill send`, "Send →"), one word and the arrow, with the full
+ * meaning in its tooltip and accessible name. Its own element beside the row, so pressing it never opens the card.
+ * Pending is a row status, like Linear's "Sending…": nothing to press, shown without hover.
+ */
 export function nextButtonHtml(g: Pick<GoalView, 'id'>, b: NextButton | null): string {
   if (!b) return ''
-  if (b.kind === 'pending') return '<button class="gact pending" disabled aria-disabled="true">Assigning…</button>'
+  if (b.kind === 'pending') return '<span class="gact rstatus pending" role="status"><span class="refreshing"></span>Assigning…</span>'
   if (b.kind === 'jump') {
     const tip = esc(`Jump to ${b.target.name}`)
-    return `<button class="gact" data-gjump="${esc(g.id)}" data-tip="${tip}" aria-label="${tip}">Jump to agent</button>`
+    return `<button class="gact act pill send" data-gjump="${esc(g.id)}" data-tip="${tip}" aria-label="${tip}">Jump ${ARROW}</button>`
   }
-  return `<button class="gact" data-gassign="${esc(g.id)}" aria-haspopup="menu" data-tip="Send this next step to a coordinator">Assign to coordinator</button>`
+  const tip = 'Assign the next step to a coordinator'
+  return `<button class="gact act pill send" data-gassign="${esc(g.id)}" aria-haspopup="menu" aria-expanded="false" data-tip="${tip}" aria-label="${tip}">Assign ${ARROW}</button>`
 }
 
 /** The text a coordinator gets: the exact step, the goal for context, and the commands to keep the goal current. Goal text is data, quoted, on one line each. */
@@ -185,7 +191,7 @@ export function goalRow(g: GoalView, open: string | null, avatars = '', button: 
         : '<span class="nx none">No next step yet</span>'
   const detail = done ? `<span class="cnt">${completedDate.format(g.doneAt ?? g.updatedAt)}</span>` : stepProgress(g)
   const row = `<button class="g${done ? ' fin' : ''}${open === g.id ? ' menu-open' : ''}" data-gopen="${esc(g.id)}" aria-haspopup="dialog" aria-expanded="${open === g.id}"><span class="m"><span class="ti">${esc(g.title)}</span>${second}</span>${avatars}${detail}</button>`
-  return button && !done ? `<div class="grow gk-${button.kind}">${row}${nextButtonHtml(g, button)}</div>` : row
+  return button && !done ? `<div class="gline gk-${button.kind}">${row}${nextButtonHtml(g, button)}</div>` : row
 }
 
 /** The store supplies completed goals in reverse completion order. Search the whole history before limiting the rows. */

@@ -566,9 +566,11 @@ button.item.coord { padding: 5px 6px; }
 .lrow > :is(.lid, .t) { align-self: baseline; }
 .lrow .r { max-width: 45%; height: 18px; }
 .lrow .r > span:not(.who):not(.act) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.lrow .send { display: none; height: 18px; padding: 0 8px; margin-left: 0; font-size: 11px; }
-.lrow .send svg { width: 10px; height: 10px; }
-.lrow:hover .send, .lrow:focus-visible .send, .lrow.menu-open .send { display: inline-flex; }
+/* The hover pill ("Send →"), shared with a goal's Next step ("Jump →", "Assign →", see .gline below): hidden until the
+   row is hovered or keyboard-focused, or while its menu is open. */
+:is(.lrow, .gline) .send { display: none; height: 18px; padding: 0 8px; margin-left: 0; font-size: 11px; }
+:is(.lrow, .gline) .send svg { width: 10px; height: 10px; }
+.lrow:hover .send, .lrow:focus-visible .send, .lrow.menu-open .send, .gline:is(:hover, :has(:focus-visible), .menu-open) .send { display: inline-flex; }
 .lrow:hover .rest, .lrow:focus-visible .rest, .lrow.menu-open .rest { display: none; }
 .lrow.menu-open { background: var(--hover); }
 /* A worktree's Linear issue, before its row's title in the tree. */
@@ -1067,20 +1069,19 @@ html.light { --c3: #eda100; --c4: #e87ba4; --c5: #008300; }
 .gprogress svg { fill: none; stroke: var(--action); stroke-width: 2; }
 .gprogress .track { stroke: var(--faint); }
 .g.fin .ti { color: var(--ink); }
-/* The Next step's button (Jump to agent / Assign to coordinator) sits at the end of the Next line, beside the row's
-   button (a button cannot hold another): progress and avatars move up to the title line, the Next text makes room. */
-.grow { position: relative; display: grid; }
-.grow:hover > .g { background: var(--hover); }
-.grow > .g { align-items: flex-start; }
-.grow > .g .who, .grow > .g .gprogress { margin-top: 1px; }
-.grow.gk-jump > .g .nx { padding-right: 86px; }
-.grow.gk-assign > .g .nx { padding-right: 132px; }
-.grow.gk-pending > .g .nx { padding-right: 76px; }
-.gact { position: absolute; right: 0; bottom: 4px; display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; line-height: 1; white-space: nowrap;
-  color: var(--action); background: color-mix(in srgb, var(--action) 14%, transparent); }
-.gact:hover { background: color-mix(in srgb, var(--action) 24%, transparent); }
-.gact:focus-visible { outline: 1px solid var(--action); outline-offset: 1px; }
-.gact.pending { color: var(--muted); background: var(--card); cursor: default; }
+/* A goal's Next step pill (the Linear row's "Send →" pill above) sits at the end of the Next line, beside the row's
+   button (a button cannot hold another). At rest it is hidden and the Next text has the whole width; on hover, keyboard
+   focus or an open picker the text makes room. Progress and avatars sit on the title line, so the pill never covers them.
+   "Assigning…" is a row status, shown without hover. */
+.gline { position: relative; display: grid; }
+.gline:is(:hover, .menu-open) > .g { background: var(--hover); }
+.gline > .g { align-items: flex-start; }
+.gline > .g .who, .gline > .g .gprogress { margin-top: 1px; }
+.gline.gk-jump:is(:hover, :has(:focus-visible), .menu-open) > .g .nx { padding-right: 64px; }
+.gline.gk-assign:is(:hover, :has(:focus-visible), .menu-open) > .g .nx { padding-right: 72px; }
+.gline.gk-pending > .g .nx { padding-right: 84px; }
+.gact { position: absolute; right: 0; bottom: 4px; }
+.gline .gact.rstatus { height: 18px; font-size: 11px; }
 .gsec .add { margin: 2px 0 4px; }
 .gsec .add input { all: unset; box-sizing: border-box; width: 100%; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--ask); user-select: text; -webkit-user-select: text; }
 .gsec .add input::placeholder { color: var(--faint); }

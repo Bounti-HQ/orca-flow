@@ -3,17 +3,20 @@
 // (src/goals.ts: edits are "you"), and records every request in window.previewCalls.
 //   node scripts/goals-preview.mjs                   serve; open the printed URL (add ?theme=light, ?open=<goal id>, ?add=1, ?showdone=1, ?fold=1)
 //   node scripts/goals-preview.mjs --shots <dir>     capture the section, an open card, the add box and the done goals, dark and light, 360 px, then exit
-//   node scripts/goals-preview.mjs --selftest        click through add, tick, edit next, mark done, reopen, confirm, "Not yet", Jump to agent and
-//                                                    Assign to coordinator (picker, Assigning…, delivery, then Jump) in headless Chrome, then exit
+//   node scripts/goals-preview.mjs --selftest        click through add, tick, edit next, mark done, reopen, confirm, "Not yet", Jump → and
+//                                                    Assign → (hidden at rest, picker, Assigning…, delivery, then Jump →) in headless Chrome, then exit
+//   --shots also captures the Next step pill with a real pointer hover (Chrome DevTools protocol): rows at rest, a hovered
+//   row with Jump → and one with Assign →, the open picker and Assigning….
 // The stub answers sidebar.goalAssign the way the worker does (src/goals.ts assignNext): pending at once, delivered
 // after ?delay= ms (default 500), refused for a step already assigned or a Next text that changed, and a changed Next
 // drops the assignment. sidebar.open answers opened: false for a terminal in window.previewGone.
-import { execFile, execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { execFile, execFileSync, spawn } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { emptyHistory, speedView } from '../src/token-speed.ts'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -236,9 +239,17 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     // ---------- the Next step's button ----------
     $('[data-gdone]').click(); await wait();
     const act = (id) => $('[data-gopen="' + id + '"]')?.parentElement?.querySelector(':scope > .gact');
-    ok(act('g_super-admin')?.textContent === 'Jump to agent' && act('g_lesson-splitting')?.textContent === 'Jump to agent', 'Jump to agent for a working agent and for one waiting for the user');
-    ok(act('g_shift-scheduling')?.textContent === 'Assign to coordinator', 'Assign to coordinator when nobody is on the step');
-    ok(!act('g_lawyer-intro') && !row('g_lawyer-intro').closest('.grow'), 'no button for a goal with no Next step');
+    const word = (id) => act(id)?.textContent.trim();
+    const shown = (id) => !!act(id) && getComputedStyle(act(id)).display !== 'none';
+    const room = (id) => parseFloat(getComputedStyle(row(id).querySelector('.nx')).paddingRight);
+    ok(word('g_super-admin') === 'Jump' && word('g_lesson-splitting') === 'Jump' && !!act('g_super-admin').querySelector('svg'), 'Jump → for a working agent and for one waiting for the user');
+    ok(word('g_shift-scheduling') === 'Assign', 'Assign → when nobody is on the step');
+    ok(act('g_super-admin').classList.contains('send') && act('g_super-admin').classList.contains('pill') && act('g_super-admin').getAttribute('aria-label').startsWith('Jump to ') && act('g_shift-scheduling').getAttribute('aria-label') === 'Assign the next step to a coordinator', 'the Linear Send pill, the full meaning in the label');
+    ok(!shown('g_super-admin') && !shown('g_shift-scheduling') && room('g_super-admin') === 0 && room('g_shift-scheduling') === 0, 'at rest: no buttons, the Next text has the whole width');
+    row('g_shift-scheduling').focus({ focusVisible: true }); await wait();
+    ok(shown('g_shift-scheduling') && room('g_shift-scheduling') > 0 && !shown('g_super-admin'), 'keyboard focus on a row shows its button and makes room for it');
+    row('g_shift-scheduling').blur(); await wait();
+    ok(!act('g_lawyer-intro') && !row('g_lawyer-intro').closest('.gline'), 'no button for a goal with no Next step');
     ok(!$('.gact[data-gjump="g_pdf-export"],.gact[data-gassign="g_pdf-export"]'), 'no button for a done goal');
     // Jump to agent: reads the snapshot again, then focuses the exact pane; the card stays closed.
     let before = previewCalls.length;
@@ -250,21 +261,24 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     // A session that is gone: no dead pane is focused; the toast says so and the button offers Assign.
     previewGone.add('term-bou-4206-aic-split-lessons lead');
     act('g_lesson-splitting').click(); await wait(200);
-    ok(/gone/.test($('#toast').textContent) && !$('#toast').hidden && act('g_lesson-splitting')?.textContent === 'Assign to coordinator', 'a gone session: said briefly, button falls back to Assign to coordinator');
+    ok(/gone/.test($('#toast').textContent) && !$('#toast').hidden && word('g_lesson-splitting') === 'Assign', 'a gone session: said briefly, button falls back to Assign to coordinator');
     // Assign to coordinator: the picker lists the coordinators with a live session, with their provider logo.
     act('g_shift-scheduling').click(); await wait();
     const items = [...document.querySelectorAll('#ctx .mi')];
     ok(!$('#ctx').hidden && $('#ctx .mh').textContent === 'Assign next step to' && items.map((b) => b.textContent).join(',') === 'bounti,mono' && items.every((b) => b.querySelector('.provider svg')), 'picker: live coordinators only, name + provider logo');
     ok($('#goalpop').hidden, 'the picker does not open the card');
+    const menuAt = $('#ctx').getBoundingClientRect(), rowAt = act('g_shift-scheduling').parentElement.getBoundingClientRect();
+    ok(menuAt.top >= rowAt.bottom - 1 || menuAt.bottom <= rowAt.top + 1, 'the picker opens next to the goal row');
+    ok(act('g_shift-scheduling').parentElement.classList.contains('menu-open') && shown('g_shift-scheduling') && act('g_shift-scheduling').getAttribute('aria-expanded') === 'true', 'the button stays shown while its picker is open');
     const step = goals.find((y) => y.id === 'g_shift-scheduling').next;
     before = previewCalls.length;
     items[0].click(); await wait(60);
     const pend = act('g_shift-scheduling');
-    ok(pend?.textContent === 'Assigning…' && pend.disabled, 'Assigning… while it is sent, and it cannot be pressed');
+    ok(pend?.textContent === 'Assigning…' && pend.tagName === 'SPAN' && shown('g_shift-scheduling') && room('g_shift-scheduling') > 0, 'Assigning… shows without hover while it is sent, and there is nothing to press');
     const req = previewCalls.slice(before).find((c) => c.name === 'sidebar.goalAssign');
     ok(req?.data.id === 'g_shift-scheduling' && req.data.coordinator === 'home' && req.data.next === step && previewDelivered.at(-1)?.next === step, 'delivery request carries the exact Next text: ' + JSON.stringify(req?.data));
     await wait(700);
-    ok(act('g_shift-scheduling')?.textContent === 'Jump to agent', 'after delivery: Jump to agent');
+    ok(word('g_shift-scheduling') === 'Jump' && !shown('g_shift-scheduling'), 'after delivery: Jump →, hidden again until hover');
     row('g_shift-scheduling').click(); await wait();
     ok(/Assigned to bounti/.test($('#goalpop [data-part="next"]').textContent), 'the card names the coordinator the step went to');
     key(document.body, 'Escape'); await wait();
@@ -278,11 +292,11 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     // The Next text changes: the old assignment does not apply to the new step.
     row('g_shift-scheduling').click(); await wait(); await edit('next', 'Send both templates to the lawyer', 'enter'); await wait(250);
     key(document.body, 'Escape'); await wait();
-    ok(act('g_shift-scheduling')?.textContent === 'Assign to coordinator', 'a new Next step goes back to Assign to coordinator');
+    ok(word('g_shift-scheduling') === 'Assign', 'a new Next step goes back to Assign →');
     // A late answer for an old step does not mark the new one.
     act('g_shift-scheduling').click(); await wait(); document.querySelectorAll('#ctx .mi')[1].click(); await wait(60);
     goals.find((y) => y.id === 'g_shift-scheduling').next = 'Changed meanwhile'; listeners['sidebar.goalsChanged'].forEach((f) => f(JSON.parse(JSON.stringify(goals)))); await wait(800);
-    ok(act('g_shift-scheduling')?.textContent === 'Assign to coordinator' && /changed while it was being sent/.test($('#toast').textContent), 'a late delivery answer for the old text leaves the new step unassigned');
+    ok(word('g_shift-scheduling') === 'Assign' && /changed while it was being sent/.test($('#toast').textContent), 'a late delivery answer for the old text leaves the new step unassigned');
 
   } catch (e) { fail.push('exception ' + e.message); log.push('EXC ' + e.stack); }
   if (errors.length) { fail.push('page errors'); log.push(...errors.map((m) => 'ERR ' + m)); }
@@ -337,12 +351,63 @@ server.listen(0, '127.0.0.1', () => {
     jobs.push({ theme, name: 'add', h: 760, click: '[data-gadd]', type: 'Book the lawyer call for next week' })
     jobs.push({ theme, name: 'done-shown', h: 760, showdone: true })
     jobs.push({ theme, name: 'empty', h: 360, empty: true })
-    jobs.push({ theme, name: 'next-buttons', h: 600 })
-    jobs.push({ theme, name: 'assign-picker', h: 600, click: '[data-gassign="g_shift-scheduling"]' })
-    jobs.push({ theme, name: 'assigning', h: 600, click: '[data-gassign="g_shift-scheduling"]|#ctx .mi', delay: 60000 })
-    jobs.push({ theme, name: 'assigned', h: 600, click: '[data-gassign="g_shift-scheduling"]|#ctx .mi', delay: 50 })
+  }
+  // The Next step pill shows on :hover, which a plain --screenshot cannot reach: these drive Chrome over the DevTools
+  // protocol and move the pointer onto the row (no click), at exactly 360 px.
+  const hovers = []
+  for (const theme of ['dark', 'light']) {
+    hovers.push({ theme, name: 'next-rest', h: 420 })
+    hovers.push({ theme, name: 'next-hover-jump', h: 420, hover: '[data-gopen="g_super-admin"] .ti' })
+    hovers.push({ theme, name: 'next-hover-assign', h: 420, hover: '[data-gopen="g_shift-scheduling"] .ti' })
+    hovers.push({ theme, name: 'next-picker', h: 420, click: '[data-gassign="g_shift-scheduling"]' })
+    hovers.push({ theme, name: 'next-assigning', h: 420, click: '[data-gassign="g_shift-scheduling"]|#ctx .mi', delay: 60000 })
+  }
+  const cdpShots = async () => {
+    const cdpProfile = mkdtempSync(join(tmpdir(), 'orca-flow-chrome-cdp-'))
+    const proc = spawn(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--user-data-dir=${cdpProfile}`, '--remote-debugging-port=0', 'about:blank'], { stdio: 'ignore' })
+    try {
+      let port
+      for (let i = 0; i < 100 && !port; i++) {
+        try { port = readFileSync(join(cdpProfile, 'DevToolsActivePort'), 'utf8').split('\n')[0] } catch { await sleep(100) }
+      }
+      if (!port) throw new Error('Chrome did not open its DevTools port')
+      const page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === 'page')
+      const ws = new WebSocket(page.webSocketDebuggerUrl)
+      await new Promise((r, x) => { ws.onopen = r; ws.onerror = x })
+      let id = 0
+      const waiting = new Map()
+      const events = []
+      ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && waiting.has(d.id)) { waiting.get(d.id)(d); waiting.delete(d.id) } else if (d.method) events.push(d.method) }
+      const send = (method, params = {}) => new Promise((r) => { const n = ++id; waiting.set(n, r); ws.send(JSON.stringify({ id: n, method, params })) })
+      await send('Page.enable')
+      for (const j of hovers) {
+        await send('Emulation.setDeviceMetricsOverride', { width: W, height: j.h, deviceScaleFactor: 1, mobile: false })
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: W - 1, y: j.h - 1 })
+        events.length = 0
+        const query = `theme=${j.theme}${j.click ? `&click=${encodeURIComponent(j.click)}` : ''}${j.delay ? `&delay=${j.delay}` : ''}`
+        await send('Page.navigate', { url: `${base}?${query}` })
+        for (let i = 0; i < 100 && !events.includes('Page.loadEventFired'); i++) await sleep(50)
+        await sleep(j.click ? 1300 : 900)
+        if (j.hover) {
+          const r = await send('Runtime.evaluate', { expression: `(() => { const b = document.querySelector(${JSON.stringify(j.hover)}).getBoundingClientRect(); return JSON.stringify({ x: b.x + Math.min(40, b.width / 2), y: b.y + b.height / 2 }) })()`, returnByValue: true })
+          const at = JSON.parse(r.result.result.value)
+          await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y })
+          await sleep(300)
+        }
+        const shot = await send('Page.captureScreenshot', { format: 'png' })
+        const file = join(out, `goals-${j.name}-${j.theme}-${W}.png`)
+        writeFileSync(file, Buffer.from(shot.result.data, 'base64'))
+        console.log(file)
+      }
+      ws.close()
+    } finally {
+      proc.kill()
+      await sleep(300)
+      rmSync(cdpProfile, { recursive: true, force: true })
+    }
   }
   const run = async () => {
+    await cdpShots()
     for (const j of jobs) {
       const file = join(out, `goals-${j.name}-${j.theme}-${W}.png`)
       await new Promise((resolve, reject) => {
