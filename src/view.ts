@@ -13,6 +13,7 @@ import { mixedProviders, providerBadge, providerMark, providerOf } from './provi
 import { PROVIDER_LOGOS } from './provider-logos.ts'
 import { asksYou, byUrgency, canRemove, claimsAsk, holdsWorkstream, laterAsk, monitoring, needsYou, waitingQueue } from './rank.ts'
 import { BEAMS, capGlyph, headLines, nodeX, rowLines, trunkX, type NodeState } from './lines.ts'
+import { COMPLETED_BATCH, goalsHead, goalsRows, type GoalView } from './goals-view.ts'
 import { DEFAULT_DISPLAY, FILTER_NAME, FILTERS, isDefaultDisplay, issueLink, LINEAR_MARK, linkRows, priorityIcon, rowsByIssue, STATE_NAME, statusIcon, teamsOf, viewOf, type Display, type LinearFilter, type LinearGroup } from './linear.ts'
 
 export type UiState = {
@@ -45,6 +46,12 @@ export type UiState = {
   linearGroupFolds: Set<string>
   /** The Bots section folded to its header (kept in plugin storage under BOTS_UI_KEY). */
   botsFolded: boolean
+  /** The Goals section: folded to its header, done goals shown, and the goal whose card is open (see goals-view.ts). */
+  goalsFolded: boolean
+  goalsCompletedQuery: string
+  goalsCompletedLimit: number
+  goalsShowDone: boolean
+  goalOpen: string | null
   /** Set by render from the snapshot: each pane's skill reload still worth a mark on its row. */
   reloads?: Map<string, SkillReloadEntry>
 }
@@ -52,7 +59,7 @@ export type UiState = {
 export const emptyUi = (): UiState => ({
   opened: new Set(), closed: new Set(), folded: new Set(), unfolded: new Set(), query: '', now: Date.now(),
   cockpitOpen: false, stats: null, statsLoading: false, confirming: null, pending: null, notice: null, status: new Map(), colors: new Map(),
-  linearFolded: false, linearFilter: 'mine', linearDisplay: DEFAULT_DISPLAY, linearGroupFolds: new Set(), botsFolded: false
+  linearFolded: false, linearFilter: 'mine', linearDisplay: DEFAULT_DISPLAY, linearGroupFolds: new Set(), botsFolded: false, goalsFolded: false, goalsShowDone: false, goalsCompletedQuery: '', goalsCompletedLimit: COMPLETED_BATCH, goalOpen: null
 })
 
 // ---------- small helpers ----------
@@ -1338,6 +1345,8 @@ function foldList(key: string, title: string, rows: string[], ui: UiState, count
  */
 /** Settings → Features: a section shows unless its switch is off (an older snapshot has no switches). */
 export const linearOn = (snap: Pick<Snapshot, 'features'>): boolean => snap.features?.linear !== false
+/** Goals is off unless Settings → Features says so: an absent switch reads as off. */
+export const goalsOn = (snap: Pick<Snapshot, 'features'>): boolean => snap.features?.goals === true
 export const tokenSpeedOn = (snap: Pick<Snapshot, 'features'>): boolean => snap.features?.tokenSpeed !== false
 
 // ---------- Reload skills ----------
@@ -1383,7 +1392,7 @@ export function summaryNotice(failure: Snapshot['summaryFailure']): string {
   return `<div class="sumfail" role="status" data-tone="warn" data-tip="${esc(tip)}">${STATUS_ICON.warn}<span class="sumtext">Summaries failing: ${esc(failure.reason)}</span></div>`
 }
 
-export function render(given: Snapshot, state: UiState, linearData: LinearData | null = null): { cockpit: string; copen: string; main: string; attention: string; bots: string; linear: string; footer: string } {
+export function render(given: Snapshot, state: UiState, linearData: LinearData | null = null, goals: GoalView[] | null = null): { cockpit: string; copen: string; goalsHead: string; goalsRows: string; main: string; attention: string; bots: string; linear: string; footer: string } {
   const reloading = visibleReload(given.skillReload, state.now)
   const ui: UiState = { ...state, reloads: new Map(reloading.map((e) => [e.pane, e])) }
   // Linear off: no Linear data reaches the section or the rows' labels.
@@ -1392,7 +1401,20 @@ export function render(given: Snapshot, state: UiState, linearData: LinearData |
   // Its label opens the issue in Linear when the data gives its page.
   const snap = linear ? { ...given, rows: linkRows(given.rows, teamsOf(linear)).map((r) => (r.linearIssue ? { ...r, linearLink: issueLink(r.linearIssue, linear) } : r)) } : given
   const copen = ui.cockpitOpen && !ui.query ? cockpitOpen(snap, ui) : ''
-  const all = snap.rows.flatMap((r) => r.agents)
+  // Goals, at the top above the tree; hidden while searching, like the other sections.
+  const goalsData = goalsOn(given) ? goals : null
+  const gs = { folded: ui.goalsFolded, showDone: ui.goalsShowDone, completedQuery: ui.goalsCompletedQuery, completedLimit: ui.goalsCompletedLimit, open: ui.goalOpen, now: ui.now }
+  const placed = snap.rows.flatMap((row) => row.agents.map((a) => ({ a, row })))
+  const all = placed.map((p) => p.a)
+  const byPane = new Map(placed.map((p) => [p.a.paneKey, p]))
+  const avatars = (g: GoalView): string => {
+    const working = g.workingPanes.flatMap((key) => byPane.get(key) ?? [])
+    if (!working.length) return ''
+    const names = working.map(({ a, row }) => nameOf(a, row)).join(', ')
+    const label = esc(`Working: ${names}`)
+    return `<span class="who" role="img" aria-label="${label}" data-tip="${label}">${avatarStack(working, all, 3)}</span>`
+  }
+  const goalsOut = { goalsHead: goalsHead(goalsData ?? [], gs, !!ui.query || !goalsData), goalsRows: goalsRows(goalsData ?? [], gs, !!ui.query || !goalsData, avatars) }
   // One briefing per asking agent, workspaces in urgency order; several agents in one workspace each
   // get one; a coordinator asking itself gets one too.
   const asking = upNextOrder(snap)
@@ -1405,7 +1427,7 @@ export function render(given: Snapshot, state: UiState, linearData: LinearData |
       found.length
         ? found.map((r) => `<button class="item" ${r.folderOf && r.agents[0] ? openAttrs({ a: r.agents[0], row: r }) : `data-open="${esc(r.id)}"`}>${asleep(r) ? tipped(character(colorOf(r.repo), 'solo', 'idle', 20), 'Asleep') : character(colorOf(r.repo), 'solo', r.agents.length ? faceOf(r.agents[0]) : 'idle', 20)}${providerBadge(r.agents[0], mixed)}<span class="t">${esc(r.agents[0]?.title ?? r.name)}</span><span class="r soft">${esc(r.repo)}</span></button>`).join('')
         : '<div class="empty">No matching workspaces</div>'
-    }</div>`, attention: '', bots: '', linear: '', footer: '' }
+    }</div>`, ...goalsOut, attention: '', bots: '', linear: '', footer: '' }
   }
 
   // Sleep and remove are in the rows' menus.
@@ -1417,6 +1439,7 @@ export function render(given: Snapshot, state: UiState, linearData: LinearData |
   return {
     cockpit: cockpit(snap, ui),
     copen,
+    ...goalsOut,
     main: `${summaryNotice(snap.summaryFailure)}<div class="tree">${treeLabel(reloading, ui)}${tree || '<div class="empty">No agents running</div>'}<button class="newcoord" data-new-coordinator>${ICON.plus}New coordinator</button></div>`,
     attention: upNext(asking, all, snap.coordinators, ui, snap.bots ?? []),
     bots: botsSection(snap, ui),

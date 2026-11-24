@@ -1803,6 +1803,19 @@ test('a row’s model: seen in the latest reply, else asked for, else default, e
   assert.equal(main.parseRoutes(JSON.stringify({ dispatchId: 'x', choice: { agent: 'codex', model: 'm' } })).choices.get('x')?.model, 'm')
 })
 
+test('the worker answers the Goals section: the list, and edits it refuses without writing', async () => {
+  const worker = await mountWorker(main, { host: mockHost({ results: { 'statusBar.update': {}, 'workspace.list': { workspaces: [], truncated: false } } }) })
+  assert.deepEqual(worker.refusals, [], 'sidebar.goals and sidebar.goalAction are declared')
+  assert.ok(Array.isArray(await worker.request('sidebar.goals')))
+  // Refused edits only (an unknown goal, an empty title): this test never writes to the real data folder.
+  const gone = (await worker.request('sidebar.goalAction', { action: 'update', id: 'g_no-such-goal-0000', patch: { next: 'x' } })) as { ok: boolean; error?: string }
+  assert.equal(gone.ok, false)
+  assert.ok(gone.error, 'says why')
+  const empty = (await worker.request('sidebar.goalAction', { action: 'add', title: ' ' })) as { ok: boolean }
+  assert.equal(empty.ok, false)
+  await worker.deactivate()
+})
+
 test('usage.open: with a workspace focused it writes the stub in its folder and opens the tab; with none it says so and opens nothing', async () => {
   const { mkdtempSync, readFileSync, rmSync, existsSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')

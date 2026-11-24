@@ -201,6 +201,17 @@ square. The face and the badge at the bottom right show what Orca reports:
 | Red cross | Failed |
 | Faded, no badge | Sleeping |
 
+**Goals** (off until Settings → Features → Goals is on). The first section, above the workstreams, holds what you need to get done. A goal need
+not be a Linear issue: it can span several, or have no issue, worktree or agent at all (a document for
+a lawyer, product research). Each row is two lines: the title with its todo count (`2/4`) on the right,
+and under it the next step. Avatars show who is working on linked worktrees. Hover over them for the agent names. Click a row for its card: edit the next step, tick todos, edit the description and done criteria (edits
+save when you leave the field or press Enter), see the Linear issues and worktrees it links, and one
+line saying who changed it last ("Next updated by you · 2h ago"). **Mark done** moves it to **Completed**. Search completed goals by title, newest completion first, and open any goal to **Reopen** it. **+** adds a goal from
+one line (Enter adds, Esc cancels). Agents keep goals current with `orca-flow goal` (a lead ticks todos
+and updates the next step), but only propose done: such a goal reads "lead says done", and its card
+asks **Confirm done** or **Not yet** (back to open). The section folds like Linear and hides while you
+search. Edits you make record "you"; changes agents make show in the panel within a second.
+
 **Top bar.** Memory shows what Orca reports as available, minus a 2 GB safety margin. It turns
 amber when only another agent would fit (not a new worktree with its dev servers), and red when
 nothing fits. Disk turns amber under 25 GB and red under 10 GB.
@@ -275,12 +286,14 @@ Changes apply at once; there is no Save button. Close it with the × or Escape.
 - **Capacity:** the memory always kept free and the extra room under memory pressure
   ([Capacity](#capacity)).
 - **Features:** Bots (off by default; shows the Bots section, bot chats in Up next and the waiting
-  count), Linear and Analytics (on by default; each shows its sidebar section). Display only:
+  count), Goals (off by default, enables the Goals section and the `orca-flow goal` commands),
+  Linear and Analytics (on by default; each shows its sidebar section). Display only:
   Orca's bots, schedules and chats, your Linear credentials and the recorded usage and speed history
-  are untouched. While Bots is off Orca Flow does not read `orca bot list`; while Linear is off it reads
+  are untouched. Turning Goals off preserves saved goals and disables goal reads and edits.
+  While Bots is off Orca Flow does not read `orca bot list`; while Linear is off it reads
   nothing from Linear and sends no issue; while Analytics is off it does not read the agents' logs,
   record usage, sample their traffic or run the internet test. Turning one on shows its section at
-  once with fresh data. Saved as `features.bots`, `features.linear` and `features.tokenSpeed` (the
+  once with fresh data. Saved as `features.bots`, `features.goals`, `features.linear` and `features.tokenSpeed` (the
   name Analytics had as Token Speed, kept so existing settings files keep working) in the settings file.
 - **Advanced:** Linear test mode (log the Linear comments and status changes Orca Flow would send,
   and send nothing) and Show in Finder for the settings file.
@@ -427,6 +440,7 @@ before publication; an old session's card is not shown as a new Codex conversati
 - `~/.orca-flow/cards/`: a card per worktree (priority, goal), written by coordinators.
 - `~/.orca-flow/config.json`: your settings, if you change any (see [Settings](#settings)).
 - `~/.orca-flow/format-misses.jsonl`: one line per message that missed the message frame.
+- `~/.orca-flow/goals/`: one JSON file per goal (`<id>.json`), written by you in the panel and by agents with `orca-flow goal`.
 - `~/orca/coordinators/<name>/`: one folder per coordinator, with its `coordinator.json`.
 - `~/orca/coordinators/CLAUDE.md`: shared coordinator instructions and your project notes.
 
@@ -492,6 +506,9 @@ scripts/dev.sh shot    # screenshot the panel to /tmp/orca-sidebar-shots
 node scripts/settings-preview.mjs                       # the Settings dialog in a browser, with fixture data
 node scripts/settings-preview.mjs --shots /tmp/orca-settings-shots-v2 --tips   # every page, dark and light, 360 px and wide, plus tooltips
 node scripts/skill-reload-preview.mjs --shots /tmp/orca-flow-reload-shots   # Reload skills: status, coordinator menu, both confirmations
+node scripts/goals-preview.mjs                          # the Goals section in a browser, with fixture goals (?open=<id>, ?add=1, ?showdone=1, ?theme=light)
+node scripts/goals-preview.mjs --shots /tmp/orca-goals-shots   # section, open card, add box and done goals, dark and light, 360 px
+node scripts/goals-preview.mjs --selftest               # clicks through add, tick, edit, mark done, reopen and confirm in headless Chrome
 ```
 
 The settings preview bundles the real panel with a stubbed `orca` global: no plugin load, worker
