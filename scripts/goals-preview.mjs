@@ -319,6 +319,54 @@ if (q.get('selftest')) window.addEventListener('load', () => setTimeout(async ()
     act('g_shift-scheduling').click(); await wait(); document.querySelectorAll('#ctx .mi')[1].click(); await wait(60);
     goals.find((y) => y.id === 'g_shift-scheduling').next = 'Changed meanwhile'; listeners['sidebar.goalsChanged'].forEach((f) => f(JSON.parse(JSON.stringify(goals)))); await wait(800);
     ok(word('g_shift-scheduling') === 'Assign' && /changed while it was being sent/.test($('#toast').textContent), 'a late delivery answer for the old text leaves the new step unassigned');
+    // ---------- hidden while the CLI changes a goal ----------
+    // The panel is hidden, the CLI (orca-flow goal ...) changes a goal and the worker's post never reaches the panel (it was hidden).
+    // When the panel shows again it asks for the goals itself, and the list and the open card show the change.
+    const setVisibility = (state) => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state }); document.dispatchEvent(new Event('visibilitychange')); };
+    row('g_super-admin').click(); await wait();
+    setVisibility('hidden'); await wait();
+    const cli = goals.find((y) => y.id === 'g_super-admin');
+    cli.next = 'Changed by the CLI while hidden'; cli.title = 'Ship super admin (CLI)'; cli.steps[2].done = true;
+    await wait(200);
+    ok(row('g_super-admin').querySelector('.nx').textContent.startsWith('Finish chat'), 'hidden panel: no post reached it, the list still shows the old goal');
+    before = previewCalls.length;
+    setVisibility('visible'); await wait(300);
+    ok(previewCalls.slice(before).some((c) => c.name === 'sidebar.goals'), 'showing again asks the worker for the goals');
+    ok(row('g_super-admin').querySelector('.nx').textContent === 'Changed by the CLI while hidden' && row('g_super-admin').querySelector('.ti').textContent === 'Ship super admin (CLI)' && row('g_super-admin').querySelector('.cnt').textContent === '3/4', 'shown again: the list has the goal as the CLI left it');
+    ok(!$('#goalpop').hidden && $('#goalpop [data-gedit="next"]').textContent === 'Changed by the CLI while hidden', 'the open card stays open and shows the change');
+    // Hiding alone asks for nothing.
+    before = previewCalls.length; setVisibility('hidden'); await wait(100);
+    ok(!previewCalls.slice(before).some((c) => c.name === 'sidebar.goals'), 'hiding the panel does not ask for the goals');
+    setVisibility('visible'); key(document.body, 'Escape'); await wait();
+    // ---------- a step that has focus ----------
+    // A person's click focuses the step (a tabindex=0 checkbox) and nothing blurs it afterwards.
+    row('g_super-admin').click(); await wait();
+    const stepEl = (n) => $('#goalpop [data-gstep="' + n + '"]');
+    const personClick = (el) => { el.focus(); el.click(); };
+    personClick(stepEl(4)); await wait(300);
+    ok(document.activeElement === stepEl(4) || document.activeElement?.dataset?.gstep === '4', 'the clicked step keeps focus (' + (document.activeElement?.className || document.activeElement?.tagName) + ')');
+    ok($('#goalpop [data-part="steps"] .k').textContent.includes('4/4'), 'a clicked step: the Todos count follows');
+    ok(stepEl(4).getAttribute('aria-checked') === 'true' && stepEl(4).classList.contains('done'), 'a clicked step (focus stays on it): it shows ticked at once, not when focus leaves');
+    ok(row('g_super-admin').querySelector('.cnt').textContent === '4/4', 'a clicked step: the row count follows');
+    // Unticking the focused step again.
+    personClick(stepEl(4)); await wait(300);
+    ok(goals.find((y) => y.id === 'g_super-admin').steps[3].done === false && stepEl(4).getAttribute('aria-checked') === 'false' && !stepEl(4).classList.contains('done'), 'a second click on the focused step unticks it, in the goal and in the card (goal: ' + goals.find((y) => y.id === 'g_super-admin').steps[3].done + ', card: ' + stepEl(4).getAttribute('aria-checked') + ')');
+    // Outside the panel (the CLI): the focused step stays focused; other steps change and the post arrives.
+    stepEl(1).focus();
+    const outside = goals.find((y) => y.id === 'g_super-admin');
+    outside.steps[1].done = false; outside.steps[3].done = true; outside.steps.push({ text: 'Added by the CLI', done: false });
+    listeners['sidebar.goalsChanged'].forEach((f) => f(JSON.parse(JSON.stringify(goals)))); await wait(300);
+    ok(document.activeElement === stepEl(1), 'a step has focus while the CLI changes steps: it keeps focus');
+    ok($('#goalpop [data-part="steps"] .k').textContent.includes('3/5'), 'CLI step change, a step has focus: the Todos count follows');
+    ok($('#goalpop .steps').children.length === 5 && stepEl(2).getAttribute('aria-checked') === 'false' && stepEl(4).getAttribute('aria-checked') === 'true', 'CLI step change, a step has focus: the steps show it (' + [...document.querySelectorAll('#goalpop .step')].map((s) => s.getAttribute('aria-checked')).join(',') + ' of ' + $('#goalpop .steps').children.length + ')');
+    // Keyboard: Space ticks and unticks the same step, which keeps focus through the repaint.
+    const space = async () => { stepEl(3).focus(); key(stepEl(3), ' '); await wait(300); };
+    const before3 = goals.find((y) => y.id === 'g_super-admin').steps[2].done;
+    await space();
+    ok(goals.find((y) => y.id === 'g_super-admin').steps[2].done === !before3 && stepEl(3).getAttribute('aria-checked') === String(!before3) && document.activeElement === stepEl(3), 'Space on a focused step ticks it, the card shows it, focus stays on that step');
+    await space();
+    ok(goals.find((y) => y.id === 'g_super-admin').steps[2].done === before3 && stepEl(3).getAttribute('aria-checked') === String(before3) && document.activeElement === stepEl(3), 'Space again unticks it, still on that step');
+    key(document.body, 'Escape'); await wait();
 
   } catch (e) { fail.push('exception ' + e.message); log.push('EXC ' + e.stack); }
   if (errors.length) { fail.push('page errors'); log.push(...errors.map((m) => 'ERR ' + m)); }
