@@ -235,3 +235,36 @@ asar extract /Applications/Orca.app/Contents/Resources/app.asar <scratch>   # re
 node docs/account-switch-host-probe/installed-source-match.cjs <checkout> <3 shared modules>
 PROBE_TYPECHECK=1 docs/account-switch-host-probe/run-probe.sh ~/orca/research/orca-v1.4.272-switch-probe-repro   # fresh clone → probe-output.txt
 ```
+
+## Turn-boundary continuation with the installed provider CLIs
+
+On November 25, 2026, `node docs/account-switch-host-probe/cli-continuity.mjs` passed on macOS
+with Claude Code 2.1.332 and Codex CLI 0.172.0. Run from the Flow checkout with both CLIs on
+PATH and a Node version with zstd support. The test creates a temporary workspace and two empty
+homes for each provider. A macOS sandbox restricts network access to the loopback test server
+and denies access to the user's home apart from the CLI and Node executables. The CLIs run in
+print/exec mode. The server receives only synthetic identities and produces fixed replies.
+
+The first completed turn consumes the fixture account's included allowance. At the next turn
+the driver consults the fixture meter and chooses the second eligible identity. It resumes by
+exact session ID from the same working directory. The server verifies the destination identity,
+model and full prior user/assistant exchange on the resumed request. Each account receives one
+task turn. After both meters reach 100%, the decision holds the next turn. The homes share only
+synthetic conversation history. The real provider service, interactive terminal, Orca account
+selection, dispatch and billing are outside this test.
+
+This removes one uncertainty in a host implementation. Both installed clients can use their normal
+resume commands across separate homes with shared history. Actual provider acceptance with two
+managed subscriptions still needs verification in a host acceptance environment. For production,
+Orca must authorize a specific destination in the workspace and confirm the account that actually
+resumed before releasing queued work. At a turn boundary, move once under the existing owner,
+keeping queued mail and approvals attached. A failure to confirm leaves the work held. An account
+reading observed mid-turn can protect the next turn only. A strict spend ceiling belongs at the
+provider.
+
+I also checked released host v1.4.274 (`48fcb4df`) and upstream main at `b96b5eb4`. The
+terminal restart still takes no destination account ID. Main adds a useful safe-boundary check
+that releases idle native chats after the host selection changes. It skips a running turn and a
+lead owed a wake-up, but iterates over open chats and follows the committed host-wide selection.
+It does not supply a workspace-authorized per-session operation for Flow.
+[Upstream chat implementation](https://github.com/stablyai/orca/blob/b96b5eb416797afb7ccb29724fcd2ac4d5d3ca67/src/main/native-chat/agent-session-wire/host/structured-agent-session-account-switch.ts)
