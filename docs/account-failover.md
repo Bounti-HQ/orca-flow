@@ -1,14 +1,15 @@
 # Continuing work after a Claude or Codex account limit
 
-**On macOS with Orca 1.4.272, the supported recovery for supervised work is to continue in the
-original conversation after reset.** Flow cannot select a different managed account for just that
-assignment. A person can use Orca's own switcher when a change to the provider default on that
-host is intended.
+**Flow may change the provider default host-wide and leave the replacement selected.** Other work
+using that provider may follow the switch. Use a managed account authorized to receive the affected
+work, including work in other workspaces. A host-wide selection cannot enforce a workspace exclusion
+on a different chat that follows the default. If those policies conflict, hold the switch.
 
-The proposed primary trigger is earlier than a limit: these accounts go on to paid usage once their
-included usage reaches 100%, until an account or team spending cap. Flow should move work to a login
-that still has included usage before the next paid request. Orca 1.4.272 cannot do this. Its own
-reading counts paid credits as room (see [Included usage before paid usage](#included-usage-before-paid-usage)).
+The desired trigger is a fresh reading of 100% included usage, even while paid usage is available.
+On Orca 1.4.272, Flow can select a host default through the public CLI. What happens to existing
+work depends on its surface. Native chats already have recovery after a confirmed account limit.
+Restarting a supervised terminal can fail its dispatch. Flow does not yet perform automatic
+selection in production.
 
 ## Recover on this host
 
@@ -52,16 +53,34 @@ session ID gives the user their conversation back. Claude checks whether the sam
 in another pane before resuming it. Codex can fall back to a fresh process when it cannot build
 a resume command, so clicking **Restart** by itself is insufficient proof of continuity.
 
-Reuse this host implementation for automatic switching. Expose the existing pane restart through a
-supported CLI or plugin operation that takes the destination account as part of the same request,
-requires exact-session resume, and confirms the resulting account and owner. On 1.4.272 Flow's
-public `agent.resume` accepts only workspace, provider and session. Calling it after a host-wide
-account change also changes which account unrelated launches use.
+### Host-wide selection and continuation
 
-The installed implementation can be traced from `runtime-provider-accounts-client` (selection),
-through `queuePaneAccountRestarts` and the renderer's `resumeProviderSession` construction, to
-`shared/agent-launch/startup/agent-resume-argv.js` (provider commands). The detached-pane path in
-the desktop renderer uses `replacesPtyId` while keeping the worktree, tab and leaf IDs.
+For a verified eligible destination, the supported selection is a single
+`orca account select --agent <provider> --account <managed-id>`. Leave that selection in place
+until another confirmed limit or the user's next choice. Serialize automatic decisions per host and
+provider. Re-read the selected identity before acting on a delayed observation, and verify which
+identity took the next turn. A lost response requires reconciliation with the host before another
+selection or continuation. Host-wide selection alone does not establish permission for every
+workspace to use that identity.
+
+- **Native chat:** let Orca own the continuation for a confirmed limited turn when auto-continue
+  is enabled. Its Codex recovery fixture resumed on fresh quota, delivered queued mail after the
+  continuation settled, and suppressed replay after an ambiguous send. Do not submit a second
+  prompt from Flow. These tests start with a failed turn and simulate the account change. They do
+  not exercise the proactive 100% case or establish lead and worker ownership.
+- **Supervised terminal:** the selected account applies to future launches. A running Codex terminal
+  still needs a restart. A Claude selection may restart panes immediately depending on the host's
+  running-terminal setting. A stock in-place restart can fail the existing worker dispatch even
+  when the provider conversation resumes. Until Orca can retain that assignment and its pending
+  work, an automatic global selection that would cause this restart is unsafe.
+- **Billing:** a fresh 100% reading can guide a subsequent account choice. Native hard-limit
+  recovery starts after a failed turn. The installed host counts remaining paid credits as room,
+  and a terminal agent can issue more requests inside a turn.
+
+On November 26 the three v1.4.272 native-chat fixture suites for usage-limit account holds, relaunch
+and queue recovery passed all 19 cases with synthetic accounts. The account selector, terminal
+exit lifecycle and in-place restart source files are identical in the v1.4.277 tag.
+[Native-chat queue recovery tests](https://github.com/stablyai/orca/blob/v1.4.272/src/main/native-chat/agent-session-wire/host/testing/structured-agent-session-usage-limit-queue-recovery.test.ts)
 
 ## Included usage before paid usage
 
@@ -83,7 +102,7 @@ this even though the current account can still pay and no error has appeared.
 - **Fallback.** A hard usage-limit error still triggers the same continuation when the reading was
   missed or unavailable.
 - **Boundary.** Only the host can enforce this. It must check at the provider-request boundary and
-  own the targeted continuation. Background readings and Flow's UI are not spend caps. A request
+  own admission of the resumed turn. Background readings and Flow's UI are not spend caps. A request
   already in flight can still cost paid usage, so there is no guarantee of zero paid usage. Spending
   caps stay with the provider account or team.
 
@@ -167,7 +186,7 @@ were not exercised.
 
 ## Contract for automatic substitution
 
-1. **Use every eligible account by default.** When the host supports targeted continuation, switching
+1. **Use every eligible account by default.** When the host can preserve the assignment and enforce workspace eligibility, switching
    is on with no setup, prompt or picker. Candidates are all automatically discovered managed logins
    of the same provider on the same execution host, with System default and other aliases collapsed
    onto the one login they point to. A candidate is eligible only inside the workspace's already
@@ -190,9 +209,9 @@ were not exercised.
    candidate without a fresh reading showing included usage left. Unknown scope pauses before paid
    usage and says why. Keep the chosen model and effort. A candidate that cannot run them
    is ineligible for this incident.
-3. **Continue once.** Prefer a host operation that changes the account in the original session.
-   Bind the target account, source checkpoint, expected owner generation and idempotency key in
-   the same operation. Fence the source before the target acts. Verify the destination before
+3. **Continue once.** Keep the original session as the sole owner of the continuation after a host-wide selection.
+   Bind admission of that turn to the expected account, source checkpoint, owner generation and
+   idempotency key. Fence the source before the target acts. Verify the effective destination before
    releasing context. Coordinate native reset timers and pending sends so only one continuation
    can win. Reconcile ambiguous replies by operation ID and uncertain tool effects before replay.
 4. **Preserve the assignment.** Require an effective account receipt plus session continuity,
