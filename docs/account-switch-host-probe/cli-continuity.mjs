@@ -9,6 +9,8 @@ import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { startFixturePty } from './fixture-pty.mjs'
+import { pathToFileURL } from 'node:url'
 import { zstdDecompressSync, gunzipSync } from 'node:zlib'
 
 const run = promisify(execFile)
@@ -17,6 +19,7 @@ const first = 'Remember the offline marker ' + randomUUID()
 const answer = 'first reply ' + randomUUID()
 const followup = 'Continue the original fixture conversation.'
 const requests = []
+let admitReplacement = null
 // The loopback provider gives each identity one included turn and leaves paid capacity enabled.
 // These meters belong to the fixture. No claim is made about a real provider's reporting latency.
 const meters = new Map(['claude', 'codex'].map(provider =>
@@ -48,6 +51,11 @@ const server = createServer(async (req, res) => {
     const provider = claude ? 'claude' : 'codex'
     requests.push({ account, model: payload.model, input, provider })
     if (input.includes(first) || input.includes(followup)) meters.get(provider).set(account, 100)
+    if (account === synthetic[1] && input.includes(followup) && admitReplacement) {
+      const admit = admitReplacement
+      admitReplacement = null
+      await admit({provider, model: payload.model, input, identity: account})
+    }
     const id = 'msg_' + randomUUID()
     res.writeHead(200, {'content-type': 'text/event-stream'})
     if (claude) {
@@ -75,7 +83,7 @@ const server = createServer(async (req, res) => {
   }
 })
 
-async function probe(provider, root, port) {
+async function probe(provider, root, port, lifecycle) {
   const bin = await realpath(execFileSync('/usr/bin/which', [provider], {encoding: 'utf8'}).trim())
   const hostHome = await realpath(homedir())
   const folder = join(root, provider)
@@ -96,62 +104,98 @@ async function probe(provider, root, port) {
   const model = claude ? 'claude-sonnet-4-6' : 'gpt-5.2'
   let session = claude ? randomUUID() : null
   let identity = synthetic[0]
-  for (const [index, prompt] of [first, followup].entries()) {
-    identity = nextAccount(provider, identity)
-    assert.ok(identity, 'no authorized fixture identity has included usage')
-    const home = join(folder, identity)
-    const config = join(home, claude ? '.claude' : '.codex')
-    await mkdir(config, {recursive: true})
-    await symlink(shared, join(config, claude ? 'projects' : 'sessions'))
-    const env = {HOME: home, TMPDIR: root, PATH: [dirname(nodeBin), '/opt/homebrew/bin', '/usr/bin', '/bin'].join(delimiter),
-      TERM: 'dumb', LANG: 'en_US.UTF-8'}
-    let args
-    if (claude) {
-      Object.assign(env, {CLAUDE_CONFIG_DIR: config, ANTHROPIC_BASE_URL: address, ANTHROPIC_API_KEY: identity,
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1'})
-      args = ['-p', '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--model', model,
-        '--output-format', 'json', index ? '--resume' : '--session-id', session, prompt]
-    } else {
-      Object.assign(env, {CODEX_HOME: config, FIXTURE_ACCOUNT: identity})
-      await writeFile(join(config, 'config.toml'), [
-        'model_provider = "fixture"', 'model = "' + model + '"', 'cli_auth_credentials_store = "file"',
-        '[model_providers.fixture]', 'name = "offline"', 'base_url = "' + address + '/v1"',
-        'env_key = "FIXTURE_ACCOUNT"', 'wire_api = "responses"', 'request_max_retries = 0', 'stream_max_retries = 0'
-      ].join('\n'))
-      args = ['exec', ...(index ? ['resume'] : []), '--json', '--skip-git-repo-check',
-        ...(index ? [session, prompt] : [prompt])]
+  let terminal = null
+  try {
+    for (const [index, prompt] of [first, followup].entries()) {
+      identity = nextAccount(provider, identity)
+      assert.ok(identity, 'no authorized fixture identity has included usage')
+      const home = join(folder, identity)
+      const config = join(home, claude ? '.claude' : '.codex')
+      await mkdir(config, {recursive: true})
+      await symlink(shared, join(config, claude ? 'projects' : 'sessions'))
+      const env = {HOME: home, TMPDIR: root, PATH: [dirname(nodeBin), '/opt/homebrew/bin', '/usr/bin', '/bin'].join(delimiter),
+        TERM: 'dumb', LANG: 'en_US.UTF-8'}
+      let args
+      if (claude) {
+        Object.assign(env, {CLAUDE_CONFIG_DIR: config, ANTHROPIC_BASE_URL: address, ANTHROPIC_API_KEY: identity,
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1'})
+        args = ['-p', '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--model', model,
+          '--output-format', 'json', index ? '--resume' : '--session-id', session, prompt]
+      } else {
+        Object.assign(env, {CODEX_HOME: config, FIXTURE_ACCOUNT: identity})
+        await writeFile(join(config, 'config.toml'), [
+          'model_provider = "fixture"', 'model = "' + model + '"', 'cli_auth_credentials_store = "file"',
+          '[model_providers.fixture]', 'name = "offline"', 'base_url = "' + address + '/v1"',
+          'env_key = "FIXTURE_ACCOUNT"', 'wire_api = "responses"', 'request_max_retries = 0', 'stream_max_retries = 0'
+        ].join('\n'))
+        args = ['exec', ...(index ? ['resume'] : []), '--json', '--skip-git-repo-check',
+          ...(index ? [session, prompt] : [prompt])]
+      }
+      if (index) {
+        const turn = {provider, session, model, cwd, identity}
+        await lifecycle.beforeResume?.({...turn, ptyId: terminal?.ptyId}, () => terminal.stop())
+        admitReplacement = async received => {
+          assert.equal(received.identity, identity)
+          assert.equal(received.provider, provider)
+          assert.equal(received.model, model)
+          for (const text of [first, answer, followup]) assert.ok(received.input.includes(text))
+          await lifecycle.replacementReady?.({...turn, ptyId: terminal?.ptyId})
+        }
+      }
+      const sandboxed = ['/usr/bin/sandbox-exec', '-p', profile, bin, ...args]
+      let stdout
+      if (lifecycle.initialTurnFinished) {
+        // The host test acknowledges the old terminal's exit before this one is created.
+        await terminal?.stop()
+        terminal = await startFixturePty(sandboxed, {cwd, env}, home)
+        ;({stdout} = await terminal.result())
+      } else {
+        const command = run(sandboxed[0], sandboxed.slice(1), {cwd, env, timeout: 45000})
+        command.child.stdin.end()
+        ;({stdout} = await command)
+      }
+      if (claude) {
+        const result = JSON.parse(stdout)
+        assert.equal(result.session_id, session)
+        assert.equal(result.is_error, false)
+      } else {
+        const events = stdout.trim().split('\n').map(line => JSON.parse(line))
+        const thread = events.find(e => e.type === 'thread.started')?.thread_id
+        assert.ok(thread, 'missing Codex thread id')
+        if (index) assert.equal(thread, session)
+        else session = thread
+        assert.ok(events.some(e => e.type === 'turn.completed'))
+      }
+      if (!index) await lifecycle.initialTurnFinished?.({provider, session, model, cwd, identity, ptyId: terminal?.ptyId})
     }
-    const command = run('/usr/bin/sandbox-exec', ['-p', profile, bin, ...args], {cwd, env, timeout: 45000})
-    command.child.stdin.end()
-    const {stdout} = await command
-    if (claude) {
-      const result = JSON.parse(stdout)
-      assert.equal(result.session_id, session)
-      assert.equal(result.is_error, false)
-    } else {
-      const events = stdout.trim().split('\n').map(line => JSON.parse(line))
-      const thread = events.find(e => e.type === 'thread.started')?.thread_id
-      assert.ok(thread, 'missing Codex thread id')
-      if (index) assert.equal(thread, session)
-      else session = thread
-      assert.ok(events.some(e => e.type === 'turn.completed'))
-    }
-  }
-  const turns = requests.filter(r => r.provider === provider && (r.input.includes(first) || r.input.includes(followup)))
-  assert.deepEqual(turns.map(t => t.account), synthetic)
-  assert.deepEqual(turns.map(t => t.model), [model, model])
-  for (const text of [first, answer, followup]) assert.ok(turns[1].input.includes(text), 'missing conversation on resume')
-  assert.equal(nextAccount(provider, identity), null, 'exhausted pool must hold')
-  console.log(provider + ': switched at the fixture’s 100% reading; same session, model and history; both spent, next turn held')
+    const turns = requests.filter(r => r.provider === provider && (r.input.includes(first) || r.input.includes(followup)))
+    assert.deepEqual(turns.map(t => t.account), synthetic)
+    assert.deepEqual(turns.map(t => t.model), [model, model])
+    for (const text of [first, answer, followup]) assert.ok(turns[1].input.includes(text), 'missing conversation on resume')
+    assert.equal(nextAccount(provider, identity), null, 'exhausted pool must hold')
+    await lifecycle.resumeVerified?.({provider, session, model, cwd, identity})
+    console.log(provider + ': switched at the fixture’s 100% reading; same session, model and history; both spent, next turn held')
+  } finally { await terminal?.stop() }
 }
 
-const root = await mkdtemp(join(await realpath(tmpdir()), 'orca-cli-continuity-'))
-try {
-  server.listen(0, '127.0.0.1')
-  await once(server, 'listening')
-  for (const provider of ['claude', 'codex']) await probe(provider, root, server.address().port)
-} finally {
-  server.closeAllConnections()
-  server.close()
-  await rm(root, {recursive: true, force: true})
+export async function verifyCliContinuity(providers = ['claude', 'codex'], lifecycle = {}) {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'orca-cli-continuity-'))
+  try {
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    for (const provider of providers) {
+      requests.length = 0
+      meters.set(provider, new Map(synthetic.map(account => [account, 0])))
+      await probe(provider, root, server.address().port, lifecycle)
+    }
+  } finally {
+    admitReplacement = null
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+    await rm(root, {recursive: true, force: true})
+  }
+}
+
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  await verifyCliContinuity()
 }

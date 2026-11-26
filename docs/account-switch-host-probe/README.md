@@ -19,6 +19,55 @@ synthetic managed identities, empty temporary account folders, a fixture `claude
 in-memory orchestration database. No auth file was read, no default changed, no desktop build
 installed and the live app was not patched.
 
+## Supervised worker acceptance test
+
+Run this on macOS with Claude Code, Codex, Node, pnpm and the system Python available:
+
+```sh
+docs/account-switch-host-probe/verify-worker-resume.sh
+```
+
+The runner makes a new checkout of v1.4.272 outside Flow. It runs the stock control, applies
+`worker-resume.patch`, repeats the journey, then checks host types and regressions. It prints
+the disposable checkout and log location. The patch also applies cleanly to tag v1.4.277.
+The earlier `seam.patch` below is a separate experiment and is unnecessary for this test.
+
+On November 26, 2026 the fresh-checkout run passed both stock controls, both patched journeys,
+all 46 surrounding host regression tests, and the Node and web typechecks. The clients were
+Claude Code 2.1.332 and Codex CLI 0.172.0 on macOS.
+
+| In the same fixture | Stock host | Host with worker resume patch |
+| --- | --- | --- |
+| Claude and Codex resume the same conversation on the second fixture identity | Both resume, but Orca marks the assignment failed | Both resume and complete the original assignment |
+| Restored agent reports to its original lead | Assignment already failed | One completion reaches the lead, including after replaying the delivery receipt |
+| Busy worker or a different conversation offered for resume | Outside the stock control | Refused before the terminal is stopped |
+| Mail, a pending run gate, a child dispatch, and two coordinator run bindings | Outside the stock control | Remain attached after the terminal handle changes |
+
+The test uses the installed provider executables, two disposable controlling terminals per provider,
+a loopback model server and the real Orca runtime with an in-memory orchestration database. It
+starts a task, records the exact provider session, observes a synthetic 100% reading, and exercises
+the host's pane-replacement handler. The replacement waits for the operating system to confirm the
+old terminal exited. The loopback server sees the new identity, model and history before it releases
+the second reply. The fixture feeds the session observation into Orca's registered handler and
+checks the new worker's authority. A duplicate exit, duplicate observation and completion-receipt
+replay leave one completed task and one report to the original lead. Once both test identities
+have spent their included turns the driver holds further work.
+
+The patch allows Orca to hold a resting worker through a deliberate local conversation restart.
+It checks the saved provider session and source process incarnation before the stop, then uses
+Orca's existing worker rebind and mailbox fencing. A busy worker, open prompt or unknown saved
+conversation is refused. A renderer restart that loses its resume instruction refuses a fresh
+provider launch for that worker. Ordinary terminal closes retain the stock exit behavior.
+
+**Release coverage.** The fixture supplies the workspace's two synthetic identities, the quota
+reading, login selection, terminal registrations, worker presence and session observations. It
+runs the clients in print/exec mode and connects Orca's real replacement, ownership, run lookup
+and report handling to the disposable PTYs. The full desktop, live account-selector/usage feed,
+provider subscriptions and automatic Flow trigger are outside this test. Production still needs
+a supported host with safe restart, a trusted scope covering the work a host-wide change can
+redirect, and an automatic controller that retries at rest and verifies the effective account.
+No real account selection, hosted model request, live task or installed app is used by the test.
+
 ## Contents
 
 | File | What it is |

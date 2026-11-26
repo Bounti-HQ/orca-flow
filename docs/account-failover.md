@@ -11,6 +11,11 @@ work depends on its surface. Native chats already have recovery after a confirme
 Restarting a supervised terminal can fail its dispatch. Flow does not yet perform automatic
 selection in production.
 
+A disposable Orca host patch fixes the resting worker's assignment loss in the Claude and Codex
+integration tests. The same provider conversation completes once on a second fixture login and
+reports back to the original lead. The installed host still has the stock behavior.
+[Reproduction and coverage](account-switch-host-probe/README.md#supervised-worker-acceptance-test)
+
 ## Recover on this host
 
 | Where the limit appeared | What to do |
@@ -86,8 +91,8 @@ exit lifecycle and in-place restart source files are identical in the v1.4.277 t
 
 **Proposed, not available on 1.4.272.** When a fresh, attributable provider reading shows 100% or more
 of an included window that applies to this conversation's model and login, the host selects an
-eligible same-provider login with confirmed included usage before the next billable request. It does
-this even though the current account can still pay and no error has appeared.
+eligible same-provider login with confirmed included usage at the next safe pause between turns.
+The active turn may finish on paid usage. Begin the switch on the reading without waiting for a spending-limit error.
 
 - **What counts.** A reading taken recently enough for this request, attributed to the source login,
   for a window that covers its model. A meter that rounds 99.6% to 100%, a stale or unknown reading, a
@@ -97,14 +102,13 @@ this even though the current account can still pay and no error has appeared.
   sharing scope, not covered by the same organization or team window, aliases such as System default
   collapsed, able to run the chosen model and effort, and with a fresh reading showing included usage
   left. A login whose usage is unknown is not a destination.
-- **When none has any.** Pause before the next paid request. Show the earliest known reset, or that
+- **When none has any.** Pause at that turn boundary. Show the earliest known reset, or that
   it is unknown, with **Check now**. Don't cycle through logins.
 - **Fallback.** A hard usage-limit error still triggers the same continuation when the reading was
   missed or unavailable.
-- **Boundary.** Only the host can enforce this. It must check at the provider-request boundary and
-  own admission of the resumed turn. Background readings and Flow's UI are not spend caps. A request
-  already in flight can still cost paid usage, so there is no guarantee of zero paid usage. Spending
-  caps stay with the provider account or team.
+- **Boundary.** Paid usage during detection and completion of the active turn is acceptable. The host must
+  preserve the assignment and admit the resumed turn once. The provider enforces any spend limit
+  configured for the billing plan used by the session.
 
 The sidebar stays as it is. Moving shows on the row as the panel's pending status ("Moving to …"), a
 completed move as one faint account label, and a pause as the row's warn status plus one line under
@@ -201,13 +205,13 @@ were not exercised.
    `docs/account-failover-prototype.html` previews this in the released Orca Flow 0.2.98 panel with
    synthetic data (`node scripts/account-failover-preview.mjs` rebuilds it).
 2. **Require a confirmed trigger.** The primary trigger is a fresh, attributable reading at 100% or
-   more of an included window that applies to the conversation's model and login, checked by the host
-   before the next billable request. The fallback is a hard usage-limit error. Orca supplies a stable
+   more of an included window that applies to the conversation's model and login, acted on at the
+   next safe pause between turns. The fallback is a hard usage-limit error. Orca supplies a stable
    event ID, exact source session, turn, account, owner generation and scope of the spent allowance.
    A rounded display, a stale or unknown reading, another model's window and a transient retry are not
    triggers. Exclude every candidate covered by the same organization or team window, and every
-   candidate without a fresh reading showing included usage left. Unknown scope pauses before paid
-   usage and says why. Keep the chosen model and effort. A candidate that cannot run them
+   candidate without a fresh reading showing included usage left. Unknown scope holds the transfer
+   and says why. Keep the chosen model and effort. A candidate that cannot run them
    is ineligible for this incident.
 3. **Continue once.** Keep the original session as the sole owner of the continuation after a host-wide selection.
    Bind admission of that turn to the expected account, source checkpoint, owner generation and
@@ -222,7 +226,7 @@ were not exercised.
 5. **Bound retries.** Persist the source and attempted identities per incident, including known reset
    times. Try each eligible identity at most once. Duplicate events, concurrent observers and plugin
    restarts reconcile the same incident. When no eligible login has included usage, pause before the
-   next paid request and show one actionable waiting line with the earliest known reset, without
+   next turn and show one actionable waiting line with the earliest known reset, without
    cycling through accounts. Recheck capacity on a fresh host signal
    or explicit user retry.
    Store opaque IDs and recovery metadata in Flow. Orca owns authentication and context migration.

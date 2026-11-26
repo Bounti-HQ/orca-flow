@@ -1,0 +1,378 @@
+// Copied next to cli-continuity.mjs inside the disposable host checkout by run-worker-e2e.sh.
+import { expect, it } from 'vitest'
+import { OrcaRuntimeService } from '../runtime/orca-runtime'
+import { OrchestrationDb } from '../runtime/orchestration/db/orchestration-db'
+import { stopReplacedPaneOwner } from '../ipc/pty/pane/pane-owner-replacement'
+import { resolveRunScope } from '../runtime/rpc/methods/orchestration/runs/run-scope'
+import { dispatchReportMailbox } from '../runtime/orchestration/workers/reports/dispatch-report-mailbox'
+import { sendPointToPointMessage } from '../runtime/rpc/methods/orchestration/messaging/send-point-to-point'
+import { replayAcceptedSend } from '../runtime/rpc/methods/orchestration/messaging/send-replay'
+import { restartResumedCallerHandle } from '../runtime/rpc/methods/orchestration/access/restart-resumed-caller'
+import { recordWorkerResumeSession } from '../runtime/orchestration/db/dispatch-context/worker-follow-up-lineage'
+import type { AgentProviderSessionMetadata } from '../../shared/agent-session/lifecycle/agent-session-resume'
+import type { PtyIncarnationId } from '../../shared/terminal/pty/lifecycle/pty-incarnation'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+
+async function receiveTurns(
+  provider: Provider,
+  callbacks: Record<string, (turn: Turn) => void | Promise<void>>
+) {
+  const dir = process.env.ORCA_WORKER_E2E_BRIDGE
+  if (!dir) throw new Error('Start this test with run-worker-e2e.mjs')
+  for (const [name, callback] of Object.entries(callbacks)) {
+    const path = join(dir, provider + '-' + name)
+    const deadline = Date.now() + 65_000
+    let body: string
+    for (;;) {
+      try {
+        body = await readFile(path, 'utf8')
+        break
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || Date.now() > deadline) throw error
+        await delay(40)
+      }
+    }
+    try {
+      await callback(JSON.parse(body))
+    } catch (error) {
+      await writeFile(path + '.failed', String(error))
+      throw error
+    }
+    await writeFile(path + '.ok', '')
+  }
+}
+
+type Provider = 'claude' | 'codex'
+type Turn = {
+  provider: Provider
+  session: string
+  cwd: string
+  model: string
+  identity: string
+  ptyId: string
+}
+const leaf = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const pane = 'tab_worker:' + leaf
+const leadPane = 'tab_lead:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const oldHandle = 'term_worker'
+const oldInc = 'fixture-1' as PtyIncarnationId
+const options = { tabId: 'tab_worker', leafId: leaf }
+type Observation = { paneKey: string; sessionId: string }
+
+for (const provider of ['claude', 'codex'] as const) {
+  it(
+    provider + ' resumes once, keeps its assignment, and reports to the original lead',
+    async () => {
+      const db = new OrchestrationDb(':memory:')
+      const listeners = new Set<(sessions: readonly Observation[]) => void>()
+      const runtime = new OrcaRuntimeService(null, undefined, {
+        subscribeAgentProviderSessionChanges: (listener) => {
+          listeners.add(listener)
+          return () => {
+            listeners.delete(listener)
+          }
+        }
+      })
+      runtime.setOrchestrationDb(db)
+      const run = db.createRun({
+        objective: 'account switch',
+        coordinatorHandle: 'term_coordinator',
+        coordinatorPaneKey: 'tab_c:cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+      })
+      const leadTask = db.createTask({ spec: 'supervise this worker', runId: run.id })
+      function start(
+        taskId: string,
+        handle: string,
+        paneKey: string,
+        worktreeId: string,
+        incarnation: string,
+        creator?: { handle: string; paneKey: string }
+      ) {
+        const { dispatch } = db.createStartingWorkerDispatch({
+          taskId,
+          maxDepth: 3,
+          creator: creator ? { kind: 'terminal', ...creator } : { kind: 'system' },
+          startOptions: { topology: 'current', agent: provider }
+        })
+        db.prepareStartingWorkerAuthority({
+          dispatchId: dispatch.id,
+          handle,
+          paneKey,
+          processIncarnation: incarnation,
+          worktreeId,
+          setupState: 'not_applicable',
+          effects: [],
+          terminalOwnership: 'created'
+        })
+        db.markWorkerDispatchReady(dispatch.id)
+        return dispatch.id
+      }
+      const lead = start(leadTask.id, 'term_lead', leadPane, 'lead-worktree', 'lead-1')
+      const approval = db.createTask({
+        spec: 'review release',
+        runId: run.id,
+        parentId: leadTask.id
+      })
+      const gate = db.createGate({ taskId: approval.id, question: 'Approve release?' })
+      const task = db.createTask({ spec: 'remember the offline marker', runId: run.id })
+      let dispatch: string
+      const stock = process.env.ORCA_WORKER_E2E_CONTROL === 'stock'
+      let ownRuns: string[]
+      let metadata: AgentProviderSessionMetadata
+      let waitingMail: string
+      let stopped = 0
+      let originalPty: string
+      let sourceIncarnation: string
+      let helperDispatch: string
+
+      try {
+        await receiveTurns(provider, {
+          initialTurnFinished(turn: Turn) {
+            expect(turn.identity).toBe('fixture-A')
+            originalPty = turn.ptyId
+            runtime.registerPty(originalPty, turn.cwd, null, {
+              ...options,
+              terminalHandle: oldHandle,
+              incarnationId: oldInc
+            })
+            ownRuns = ['first run', 'second run'].map(
+              (objective) =>
+                db.createRun({ objective, coordinatorHandle: oldHandle, coordinatorPaneKey: pane })
+                  .id
+            )
+            sourceIncarnation = runtime.getTerminalProcessIncarnation(oldHandle)!
+            dispatch = start(task.id, oldHandle, pane, turn.cwd, sourceIncarnation, {
+              handle: 'term_lead',
+              paneKey: leadPane
+            })
+            const helperTask = db.createTask({
+              spec: 'independent check',
+              runId: run.id,
+              parentId: task.id
+            })
+            helperDispatch = start(
+              helperTask.id,
+              'term_helper',
+              'tab_help:dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+              turn.cwd,
+              'helper-1',
+              { handle: oldHandle, paneKey: pane }
+            )
+            expect(db.getDispatchContextById(dispatch)?.creator_dispatch_id).toBe(lead)
+            metadata = {
+              key: provider === 'codex' ? 'conversation_id' : 'session_id',
+              id: turn.session
+            }
+            recordWorkerResumeSession(db, db.getWorkerTerminalResourceByOwner(dispatch)!.id, {
+              agent: provider,
+              providerSession: metadata,
+              connectionId: null,
+              paneKey: pane,
+              processIncarnation: runtime.getTerminalProcessIncarnation(oldHandle)!,
+              observedAt: Date.now()
+            })
+            db.db
+              .prepare(
+                "INSERT INTO worker_presence (dispatch_id, presence, generation) VALUES (?, 'working', 1)"
+              )
+              .run(dispatch)
+            waitingMail = db.insertMessage({
+              from: 'term_lead',
+              to: 'dispatch:' + dispatch,
+              subject: 'queued before switch',
+              runId: run.id
+            }).id
+          },
+          async beforeResume(turn: Turn) {
+            expect(turn.identity).toBe('fixture-B')
+            const replace = (session: AgentProviderSessionMetadata) =>
+              stopReplacedPaneOwner(
+                {
+                  runtime,
+                  stopReplacedPty: async (id) => {
+                    stopped++
+                    const settle = runtime.intentionalPtyStops.mark(id, 'replaced', oldInc)
+                    try {
+                      expect(id).toBe(originalPty)
+                      const request = join(
+                        process.env.ORCA_WORKER_E2E_BRIDGE!,
+                        provider + '-beforeResume'
+                      )
+                      await writeFile(request + '.stop', '')
+                      const deadline = Date.now() + 10_000
+                      for (;;) {
+                        try {
+                          await readFile(request + '.exited')
+                          break
+                        } catch (error) {
+                          if (
+                            (error as NodeJS.ErrnoException).code !== 'ENOENT' ||
+                            Date.now() > deadline
+                          )
+                            throw error
+                          await delay(25)
+                        }
+                      }
+                      await runtime.onPtyExit(id, 0, oldInc)
+                    } finally {
+                      settle(true)
+                    }
+                  }
+                },
+                {
+                  replacesPtyId: originalPty,
+                  paneKey: pane,
+                  worktreeId: turn.cwd,
+                  connectionId: null,
+                  agent: provider,
+                  providerSession: session
+                }
+              )
+            if (stock) {
+              db.db
+                .prepare("UPDATE worker_presence SET presence = 'resting' WHERE dispatch_id = ?")
+                .run(dispatch)
+              await replace(metadata)
+              expect(db.getDispatchContextById(dispatch)?.status).toBe('failed')
+              return
+            }
+            await expect(replace(metadata)).rejects.toThrow(
+              'worker_conversation_restart_unavailable'
+            )
+            db.db
+              .prepare("UPDATE worker_presence SET presence = 'resting' WHERE dispatch_id = ?")
+              .run(dispatch)
+            await expect(replace({ ...metadata, id: 'different-session' })).rejects.toThrow(
+              'worker_conversation_restart_unavailable'
+            )
+            expect(stopped).toBe(0)
+            expect(await replace(metadata)).toMatchObject({ requiresWorkerResume: true })
+            await runtime.onPtyExit(originalPty, 0, oldInc)
+            expect(db.getDispatchContextById(dispatch)?.status).toBe('dispatched')
+          },
+          async replacementReady(turn: Turn) {
+            if (stock) {
+              expect(db.getDispatchContextById(dispatch)?.status).toBe('failed')
+              return
+            }
+            expect(turn.session).toBe(metadata.id)
+            expect(turn.ptyId).not.toBe(originalPty)
+            runtime.registerPty(turn.ptyId, turn.cwd, null, {
+              ...options,
+              incarnationId: 'fixture-2' as PtyIncarnationId
+            })
+            for (const listener of listeners)
+              listener([{ paneKey: pane, sessionId: 'different-session' }])
+            expect(db.getDispatchContextById(dispatch)?.assignee_handle).toBe(oldHandle)
+            const observe = () => {
+              for (const listener of listeners)
+                listener([{ paneKey: pane, sessionId: turn.session }])
+            }
+            observe()
+            observe()
+            const handle = runtime.getTerminalHandleForPaneKey(pane)!
+            expect(handle).not.toBe(oldHandle)
+            const bound = db.getDispatchContextById(dispatch)!
+            expect(bound).toMatchObject({
+              assignee_handle: handle,
+              task_id: task.id,
+              creator_dispatch_id: lead,
+              run_id: run.id,
+              assignee_pane_key: pane,
+              status: 'dispatched'
+            })
+            expect(bound.process_incarnation).toBe(runtime.getTerminalProcessIncarnation(handle))
+            expect(
+              db.isDispatchProcessCurrent({
+                dispatchId: dispatch,
+                paneKey: pane,
+                processIncarnation: sourceIncarnation
+              })
+            ).toBe(false)
+            expect(
+              db.isDispatchProcessCurrent({
+                dispatchId: dispatch,
+                paneKey: pane,
+                processIncarnation: bound.process_incarnation
+              })
+            ).toBe(true)
+            await runtime.onPtyExit(originalPty, 0, oldInc)
+            expect(db.getDispatchContextById(dispatch)).toEqual(bound)
+            for (const runId of ownRuns) {
+              expect(
+                resolveRunScope(runtime, {
+                  runId,
+                  callerTerminalHandle: handle,
+                  callerSession: undefined,
+                  requireCurrentConsumer: true
+                }).id
+              ).toBe(runId)
+            }
+            const helper = db.getDispatchContextById(helperDispatch)!
+            expect(helper).toMatchObject({ status: 'dispatched', creator_dispatch_id: dispatch })
+            expect(dispatchReportMailbox(db, helper)).toBe('dispatch:' + dispatch)
+            expect(restartResumedCallerHandle(runtime, oldHandle, { paneKey: pane })).toBe(handle)
+            expect(db.getMessageById(waitingMail)).toMatchObject({
+              to_handle: 'dispatch:' + dispatch,
+              read: 0
+            })
+            expect(db.getGate(gate.id)).toEqual(gate)
+          },
+          resumeVerified(turn: Turn) {
+            if (stock) {
+              expect(db.getDispatchContextById(dispatch)?.status).toBe('failed')
+              return
+            }
+            expect(turn.session).toBe(metadata.id)
+            const bound = db.getDispatchContextById(dispatch)!
+            const handle = bound.assignee_handle!
+            const reportTo = dispatchReportMailbox(db, bound)
+            expect(reportTo).toBe('dispatch:' + lead)
+            const params = {
+              type: 'worker_done' as const,
+              subject: 'Fixture task complete',
+              payload: JSON.stringify({
+                taskId: task.id,
+                dispatchId: dispatch,
+                outcome: 'succeeded'
+              })
+            }
+            let receipt: unknown
+            const sent = sendPointToPointMessage({
+              db,
+              runtime,
+              params,
+              from: handle,
+              to: reportTo,
+              dispatchId: dispatch,
+              messageRunId: run.id,
+              senderPaneKey: pane,
+              legacyCoordinatorRunId: undefined,
+              resolveProcessIncarnation: () => bound.process_incarnation ?? undefined,
+              revalidateLegacyCoordinator: undefined,
+              recordMutationReceipt: (value) => {
+                receipt = value
+              },
+              markWorkerDoneMutationEffectFree: undefined,
+              withSendWarnings: (value) => value
+            })
+            expect(sent).toMatchObject({ lifecycle: { action: 'completed' } })
+            expect(replayAcceptedSend(runtime, params, receipt)).toBeDefined()
+            expect(db.getDispatchContextById(dispatch)?.status).toBe('completed')
+            expect(db.getTask(task.id)?.status).toBe('completed')
+            expect(
+              db.db.prepare("SELECT to_handle FROM messages WHERE type = 'worker_done'").all()
+            ).toEqual([{ to_handle: reportTo }])
+            expect(db.getGate(gate.id)).toEqual(gate)
+            expect(stopped).toBe(1)
+          }
+        })
+      } finally {
+        db.close()
+      }
+    },
+    120_000
+  )
+}
