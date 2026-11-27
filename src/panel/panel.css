@@ -723,6 +723,11 @@ html.light #settings {
 .s-warn svg { width: 13px; height: 13px; }
 .s-value.s-bad { color: var(--danger); }
 .s-checking { font-style: normal; color: var(--faint); }
+/* Account switching (src/panel/settings.ts pageAccounts): the one visible sentence under its switch, and what this Orca can enforce. */
+.s-note { margin: -8px 10px 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.s-note.s-need { margin-top: -10px; color: var(--warn); }
+.s-value.s-warnv { color: var(--warn); }
+.s-label.s-muted { color: var(--muted); white-space: normal; }
 .s-page { container-type: inline-size; }
 #settings { --t-violet: #c4b5fd; --t-blue: #7cc0ff; --t-pink: #ff9fc0; --t-teal: #5eead4; --t-amber: #f5d76e; --t-green: #7ee2a8; --t-red: #ff9f8a; --t-gray: #a1a1a6; }
 html.light #settings { --t-violet: #6d4fd1; --t-blue: #1668c4; --t-pink: #c2185b; --t-teal: #0f766e; --t-amber: #9a6208; --t-green: #15803d; --t-red: #c2410c; --t-gray: #6b6b73; }

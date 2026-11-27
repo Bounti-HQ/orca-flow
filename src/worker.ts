@@ -26,8 +26,9 @@ import { askingRows, asleep, CHAT_KEYS, chatTargets, FOLDED_KEY, finishedAgents,
 import type { AgentInfo, AgentState, AgentSummary, Bot, Capacity, Coordinator, LinearData, Priority, SettingsState, Snapshot, WakeOutcome, WorkspaceRow, WorkstreamCard, CoordinatorSessions, AnalyticsView, AnalyticsWindow } from './protocol.ts'
 import { claimsAsk, leadAgent, nextTarget } from './rank.ts'
 import { createWriter } from './writer.ts'
-import { configFile, configuredWriters, readSettings, writeSettings } from './config.ts'
-import { settingsToSave, WRITER_PROVIDERS, type WriterStatus } from './settings.ts'
+import { configFile, configuredWriters, readSettings, writeAccountChange, writeSettings } from './config.ts'
+import { discoverAccounts } from './accounts.ts'
+import { accountChangeOf, accountWorkspaceOf, settingsToSave, WRITER_PROVIDERS, type WriterStatus } from './settings.ts'
 import { currentSummaryJobs, findTranscript, refreshStale, summaryMatches, summarizePane, summaryProviders, turnSummarizer } from './summarize.ts'
 import { ensureOwnLinks, ensureOwnStopHook, ensureSeeds, linksFor, pluginDir, seedsFor, stopHookFor } from './install.ts'
 import { bootstrapCoordinator, coordinatorPrompt } from './coordinator-bootstrap.ts'
@@ -1881,7 +1882,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   let version: string | null = null
   try { version = JSON.parse(readFileSync(join(dir ?? '', 'orca-plugin.json'), 'utf8')).version ?? null } catch {}
   async function settingsState(fresh = false): Promise<SettingsState> {
-    const read = readSettings(DATA_DIR)
+    const read = readSettings(settingsDir.path)
     models.refresh(fresh ? AVAIL_OPEN_MS : AVAIL_MAX_MS)
     const avail = models.cached()
     if (!installedAgents) installedAgents = (await readInstalledProviders(run))?.map((a) => a.id) ?? null
@@ -1893,10 +1894,22 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { settings: read.settings, error: read.error, version, writers, ...(avail ? { availability: avail } : {}), update: updateState, updateCheck: upd.last() }
   }
   orca.panels.handle('sidebar.settings', () => settingsState(true))
+  // Read only when Settings → Account switching opens: listing accounts selects or changes nothing.
+  orca.panels.handle('sidebar.accounts', () => accountDiscovery.run(run))
+  orca.panels.handle('sidebar.saveAccountSwitching', async ({ workspace, change }) => {
+    const ws = accountWorkspaceOf(workspace), c = accountChangeOf(change)
+    if (!ws || !c) return { ok: false, error: 'That account switching change isn’t valid.', state: await settingsState() }
+    try {
+      writeAccountChange(ws, c, settingsDir.path)
+    } catch (e) {
+      return { ok: false, error: (e as Error).message, state: await settingsState() }
+    }
+    return { ok: true, state: await settingsState() }
+  })
   orca.panels.handle('sidebar.saveSettings', async ({ settings, base }) => {
     try {
       // With the dialog's base, only what it changed goes over the file: another window's or a hand edit's change since stays.
-      writeSettings(settingsToSave(readSettings(DATA_DIR).settings, base, settings), DATA_DIR)
+      writeSettings(settingsToSave(readSettings(settingsDir.path).settings, base, settings), settingsDir.path)
     } catch (e) {
       return { ok: false, error: (e as Error).message, state: await settingsState() }
     }
@@ -1904,7 +1917,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { ok: true, state: await settingsState() }
   })
   orca.panels.handle('sidebar.revealSettings', () => new Promise((resolve) => {
-    const file = configFile(DATA_DIR)
+    const file = configFile(settingsDir.path)
     execFile('/usr/bin/open', existsSync(file) ? ['-R', file] : [DATA_DIR], { timeout: 5000 }, (error) => resolve({ ok: !error }))
   }))
   const summarizer = turnSummarizer({
@@ -2049,6 +2062,10 @@ export async function discoverHere(run: (args: string[], options?: { timeoutMs?:
 
 /** The discovery the worker runs; tests swap it for a stub. */
 export const discovery = { run: (run: Parameters<typeof discoverHere>[0]) => discoverHere(run) }
+/** Settings → Account switching's account list; tests swap `run` for synthetic Orca answers. */
+export const accountDiscovery = { run: (run: Parameters<typeof discoverAccounts>[0]) => discoverAccounts(run) }
+/** Where the Settings dialog reads and saves config.json: ~/.orca-flow, or a temporary folder in tests. */
+export const settingsDir = { path: DATA_DIR }
 
 /**
  * The last availability and when it was read. `refresh` starts a lookup in the background when the

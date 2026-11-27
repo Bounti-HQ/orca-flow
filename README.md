@@ -7,6 +7,10 @@ to a lead and workers, and keep you out of the details.
 
 macOS only for now.
 
+When a Claude or Codex account reaches its usage limit, keep the affected conversation open.
+Eligible native chats can continue after reset. Automatic same-provider account substitution
+needs a session-scoped Orca API. [Recovery options and host evidence](docs/account-failover.md)
+
 **Antigravity CLI** sessions show their host-reported title, state and worker relationships.
 The Antigravity mark appears beside the role avatar in mixed-provider sidebars. Terminal
 coordination and exact-session resume have fixture coverage. Live sign-in, dispatch and resume
@@ -290,6 +294,15 @@ Changes apply at once; there is no Save button. Close it with the × or Escape.
   effort for coordinators and leads, a model, effort and fallback per worker task kind
   ([Model routing](docs/model-routing.md)). The page also lists your task types: add, edit and
   remove them, with suggestions.
+- **Account switching:** for the workspace Settings was opened in (its name is on the page), whether
+  its work may continue on another Orca-managed login of the same provider, and which logins it
+  never uses. On by default for every eligible Claude and Codex login; only a workspace's
+  deviations are saved. The logins are read when the page opens (`orca account list --agent
+  claude|codex`, nothing selected or changed). The page keeps three things apart: this saved
+  preference; the account Orca itself picks for new launches, which it never changes; and what this
+  Orca supports. No Orca release has a supported way to move a running conversation to another
+  account or stop before paid usage, so both read "Not supported" and Orca Flow shows no switch or
+  pause ([Account failover](docs/account-failover.md)).
 - **Message Check:** Off, All agents (every coordinator and lead) or Some folders, with the folder
   list ([Message format](#message-format)).
 - **Capacity:** the memory always kept free and the extra room under memory pressure

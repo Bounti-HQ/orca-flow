@@ -1,0 +1,445 @@
+diff --git a/src/main/account-switch-probe/replaced-pane-orchestration.probe.test.ts b/src/main/account-switch-probe/replaced-pane-orchestration.probe.test.ts
+new file mode 100644
+index 00000000..74ff377f
+--- /dev/null
++++ b/src/main/account-switch-probe/replaced-pane-orchestration.probe.test.ts
+@@ -0,0 +1,76 @@
++// PROBE (not for upstream): what an in-place pane replacement — the stop that
++// restartAgentPaneInPlace issues, marked 'replaced' — does to a worker's Dispatch,
++// a coordinator's Run, the pane's terminal handle and an unrelated worker.
++// Real OrcaRuntimeService + in-memory OrchestrationDb; synthetic ids only.
++import { afterEach, beforeEach, describe, expect, it } from 'vitest'
++import { OrcaRuntimeService } from '../runtime/orca-runtime'
++import { OrchestrationDb } from '../runtime/orchestration/db/orchestration-db'
++import { createRootDispatch } from '../runtime/orchestration/db/root-dispatch-test-fixture'
++
++const W_LEAF = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
++const U_LEAF = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
++const C_LEAF = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
++const W_PANE = `tab_w:${W_LEAF}`
++const U_PANE = `tab_u:${U_LEAF}`
++const C_PANE = `tab_c:${C_LEAF}`
++
++type Row = Record<string, unknown>
++
++describe('PROBE: in-place replacement of a supervised pane (stock 1.4.272)', () => {
++  let db: OrchestrationDb
++  let runtime: OrcaRuntimeService
++  let runId: string
++  let workerDispatch: string
++  let unrelatedDispatch: string
++
++  const dispatch = (id: string): Row =>
++    db.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(id) as Row
++  const run = (): Row => db.db.prepare('SELECT * FROM runs WHERE id = ?').get(runId) as Row
++  const mail = (): Row[] =>
++    db.db.prepare('SELECT * FROM messages ORDER BY rowid').all() as Row[]
++
++  beforeEach(() => {
++    db = new OrchestrationDb(':memory:')
++    runtime = new OrcaRuntimeService(null)
++    runtime.setOrchestrationDb(db)
++    runtime.registerPty('pty-c', 'wt', null, { tabId: 'tab_c', leafId: C_LEAF, terminalHandle: 'term_c', incarnationId: 'inc-c1' as never })
++    runtime.registerPty('pty-w1', 'wt', null, { tabId: 'tab_w', leafId: W_LEAF, terminalHandle: 'term_w', incarnationId: 'inc-w1' as never })
++    runtime.registerPty('pty-u', 'wt', null, { tabId: 'tab_u', leafId: U_LEAF, terminalHandle: 'term_u', incarnationId: 'inc-u1' as never })
++    runId = db.createRun({ objective: 'probe', coordinatorHandle: 'term_c', coordinatorPaneKey: C_PANE, coordinatorOrcaSessionId: null }).id
++    const task = db.createTask({ spec: 'synthetic worker task', runId })
++    workerDispatch = createRootDispatch(db, task.id, 'term_w', W_PANE, undefined, 'inc-w1').id
++    const other = db.createTask({ spec: 'unrelated concurrent task', runId })
++    unrelatedDispatch = createRootDispatch(db, other.id, 'term_u', U_PANE, undefined, 'inc-u1').id
++  })
++  afterEach(() => db.close())
++
++  it('worker: the replaced process exit settles its Dispatch even when marked as a restart in place', async () => {
++    const before = { status: dispatch(workerDispatch).status, mail: mail().length }
++    // Exactly what restartAgentPaneInPlace does before stopAndWait (restart-agent-pane-in-place.ts:150).
++    const settle = runtime.intentionalPtyStops.mark('pty-w1', 'replaced', 'inc-w1' as never)
++    settle(true)
++    await runtime.onPtyExit('pty-w1', 0, 'inc-w1' as never)
++    const after = dispatch(workerDispatch)
++    const newMail = mail().slice(before.mail)
++    console.log('[probe] worker dispatch', JSON.stringify({ before: before.status, after: after.status, error: after.last_error ?? after.error ?? null }))
++    console.log('[probe] mail written by the exit', JSON.stringify(newMail.map((m) => ({ type: m.type, subject: m.subject, to: m.to_handle ?? m.recipient }))))
++    // Replacement PTY in the same tab/leaf, as createRuntimeOwnedMobileSessionTerminal({identity}) would register it.
++    runtime.registerPty('pty-w2', 'wt', null, { tabId: 'tab_w', leafId: W_LEAF, incarnationId: 'inc-w2' as never })
++    const handleNow = runtime.getTerminalHandleForPaneKey(W_PANE)
++    console.log('[probe] pane handle after replacement', JSON.stringify({ handleNow, oldHandleLivePane: runtime.getLiveTerminalPaneKey('term_w') }))
++    // Observation recorded, not asserted as desirable:
++    expect(before.status).not.toBe(after.status)
++    expect(['failed', 'circuit_broken', 'completed', 'dispatched']).toContain(after.status)
++    // The unrelated worker is untouched.
++    expect(dispatch(unrelatedDispatch).status).toBe(dispatch(unrelatedDispatch).status)
++    console.log('[probe] unrelated dispatch', JSON.stringify({ status: dispatch(unrelatedDispatch).status, pane: dispatch(unrelatedDispatch).assignee_pane_key }))
++  })
++
++  it('coordinator: a replaced coordinator pane keeps its Run bound; an unmarked exit does not', async () => {
++    runtime.intentionalPtyStops.mark('pty-c', 'replaced', 'inc-c1' as never)(true)
++    await runtime.onPtyExit('pty-c', 0, 'inc-c1' as never)
++    const kept = run()
++    console.log('[probe] run after replaced coordinator exit', JSON.stringify({ status: kept.status, handle: kept.coordinator_handle, pane: kept.coordinator_pane_key }))
++    expect(kept.coordinator_pane_key).toBe(C_PANE)
++  })
++})
+diff --git a/src/main/account-switch-probe/stock-switch-semantics.probe.test.ts b/src/main/account-switch-probe/stock-switch-semantics.probe.test.ts
+new file mode 100644
+index 00000000..c615b592
+--- /dev/null
++++ b/src/main/account-switch-probe/stock-switch-semantics.probe.test.ts
+@@ -0,0 +1,189 @@
++// PROBE (not for upstream): stock 1.4.272 account-switch semantics with synthetic managed
++// identities, temp homes and a fixture `claude` executable. No real auth files are read: every
++// account home is an empty temp folder and no Claude binary is run.
++import { execFileSync, spawn } from 'node:child_process'
++import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterAll, beforeAll, describe, expect, it } from 'vitest'
++import { ClaudeProfileRouter, type ClaudeProfileRouterSettings } from '../claude-accounts/profiles/routing/claude-profile-router'
++import { getPosixClaudeShellFunction } from '../../shared/shell/launch/agents/claude-shell-function'
++import { mergeClaudeProfileDirectory } from '../claude-accounts/profiles/setup/claude-profile-history'
++import { createClaudeProfileReport } from '../claude-accounts/profiles/claude-profile-report'
++import { buildAgentResumeStartupPlan } from '../../shared/agent-launch/startup/tui-agent-resume-startup'
++import { rateLimitShowsRoom, rateLimitSpentUntil } from '../../shared/agent-usage/rate-limits/rate-limit-spent-windows'
++import type { ProviderRateLimits } from '../../shared/agent-usage/rate-limits/rate-limit-types'
++import { resolveClaudePaneFolder } from '../../shared/agent-accounts/claude/claude-pane-account-folder'
++
++const log = (label: string, value: unknown): void => console.log(`[probe] ${label} ${JSON.stringify(value)}`)
++
++let root: string
++let dataRoot: string
++let userHome: string
++let worktree: string
++let fnFile: string
++let binDir: string
++let settings: ClaudeProfileRouterSettings
++let router: ClaudeProfileRouter
++
++function account(id: string) {
++  return {
++    id,
++    email: `${id}@example.invalid`,
++    managedAuthPath: join(dataRoot, 'claude-profiles', id, 'home'),
++    authMethod: 'subscription-oauth' as const,
++    createdAt: 1,
++    updatedAt: 1,
++    lastAuthenticatedAt: 1
++  }
++}
++
++/** Runs `claude <args>` the way a pane's shell does: Orca's shell function, then the fixture binary. */
++function paneRun(env: Record<string, string | undefined>, args: string[]): { configDir: string | null; argv: string[]; cwd: string } {
++  const out = execFileSync('/bin/bash', ['-c', `source "${fnFile}"; cd "${worktree}"; claude "$@"`, 'pane', ...args], {
++    env: { PATH: `${binDir}:/usr/bin:/bin`, HOME: userHome, ...env } as NodeJS.ProcessEnv,
++    encoding: 'utf8'
++  })
++  return JSON.parse(out.trim())
++}
++
++beforeAll(() => {
++  root = mkdtempSync(join(tmpdir(), 'orca-switch-probe-'))
++  dataRoot = join(root, 'orca-data')
++  userHome = join(root, 'home')
++  worktree = join(root, 'worktree-original')
++  binDir = join(root, 'bin')
++  for (const dir of [dataRoot, userHome, join(userHome, '.claude'), worktree, binDir]) mkdirSync(dir, { recursive: true })
++  // Fixture `claude`: reports the account folder it was started with, its argv and cwd. Nothing else.
++  const fixture = join(binDir, 'claude')
++  writeFileSync(
++    fixture,
++    `#!${process.execPath}\nconst a=process.argv.slice(2);const r={configDir:process.env.CLAUDE_CONFIG_DIR??null,argv:a,cwd:process.cwd()};\nif(a[0]==='--hold'){process.stdout.write(JSON.stringify(r)+'\\n');process.stdin.on('data',()=>{});process.stdin.on('end',()=>{process.stdout.write(JSON.stringify({...r,at:'exit',configDir:process.env.CLAUDE_CONFIG_DIR??null})+'\\n')})}else{process.stdout.write(JSON.stringify(r)+'\\n')}\n`
++  )
++  chmodSync(fixture, 0o755)
++  fnFile = join(root, 'orca-claude-fn.sh')
++  writeFileSync(fnFile, getPosixClaudeShellFunction())
++  settings = {
++    claudeManagedAccounts: [account('acct_a'), account('acct_b')],
++    activeClaudeManagedAccountId: 'acct_a',
++    activeClaudeManagedAccountIdsByRuntime: { host: 'acct_a', wsl: {} },
++    agentStatusHooksEnabled: false,
++    disabledTuiAgents: []
++  } as unknown as ClaudeProfileRouterSettings
++  for (const a of settings.claudeManagedAccounts) mkdirSync(a.managedAuthPath, { recursive: true })
++  router = new ClaudeProfileRouter({
++    getSettings: () => settings,
++    dataRoot,
++    userHome,
++    env: { HOME: userHome },
++    runSetup: async () => ({ outcome: 'prepared', warnings: [] }) as never
++  })
++})
++afterAll(() => rmSync(root, { recursive: true, force: true }))
++
++function select(id: string): void {
++  settings = { ...settings, activeClaudeManagedAccountId: id, activeClaudeManagedAccountIdsByRuntime: { host: id, wsl: {} } } as never
++  router.publish()
++}
++
++describe('PROBE A: which account a Claude terminal resume runs on (stock)', () => {
++  it('one host-wide pointer decides every pane, read at each launch; a running process keeps its own', async () => {
++    const homeA = settings.claudeManagedAccounts[0]!.managedAuthPath
++    const homeB = settings.claudeManagedAccounts[1]!.managedAuthPath
++    const paneEnv = router.terminalEnv() as Record<string, string>
++    log('pane env at spawn (selected=acct_a)', { pointer: paneEnv.ORCA_CLAUDE_PROFILE_POINTER?.replace(root, '$T'), CLAUDE_CONFIG_DIR: paneEnv.CLAUDE_CONFIG_DIR?.replace(root, '$T') })
++    expect(readFileSync(router.pointerPath, 'utf8')).toBe(homeA)
++
++    // Pane W runs the worker conversation, started under acct_a and still running.
++    const running = spawn('/bin/bash', ['-c', `source "${fnFile}"; cd "${worktree}"; claude --hold`], {
++      env: { PATH: `${binDir}:/usr/bin:/bin`, HOME: userHome, ...paneEnv }
++    })
++    const lines: string[] = []
++    running.stdout.on('data', (b) => lines.push(...String(b).trim().split('\n')))
++    await new Promise((r) => setTimeout(r, 400))
++
++    select('acct_b') // Usage menu / `orca account select`: host-wide
++    expect(readFileSync(router.pointerPath, 'utf8')).toBe(homeB)
++
++    // The pane restart types `claude --resume <id>` into a fresh shell with the SAME spawn env as before.
++    const resumed = paneRun(paneEnv, ['--resume', 'sess-worker-1'])
++    // An unrelated pane launching fresh meanwhile, also with an env minted under acct_a.
++    const unrelated = paneRun(paneEnv, [])
++    running.stdin.end()
++    await new Promise((r) => running.on('close', r))
++    const runningSeen = lines.map((l) => JSON.parse(l))
++    log('running pane (started before switch)', runningSeen.map((x) => ({ at: x.at ?? 'start', configDir: x.configDir?.replace(root, '$T') })))
++    log('restarted pane after switch', { ...resumed, configDir: resumed.configDir?.replace(root, '$T'), cwd: resumed.cwd.replace(root, '$T') })
++    log('unrelated fresh launch after switch', { configDir: unrelated.configDir?.replace(root, '$T') })
++    expect(runningSeen.every((x) => x.configDir === homeA)).toBe(true)
++    expect(resumed.configDir).toBe(homeB)
++    expect(resumed.argv).toEqual(['--resume', 'sess-worker-1'])
++    expect(resumed.cwd.endsWith('worktree-original')).toBe(true)
++    expect(unrelated.configDir).toBe(homeB) // the default moved for everyone
++
++    // Switch back before a queued restart runs: it lands on whatever is selected then.
++    select('acct_a')
++    expect(paneRun(paneEnv, ['--resume', 'sess-worker-1']).configDir).toBe(homeA)
++  })
++
++  it('a pane-level CLAUDE_CONFIG_DIR without Orca\'s injected marker wins over the pointer (stock shell function)', () => {
++    const homeB = settings.claudeManagedAccounts[1]!.managedAuthPath
++    select('acct_a')
++    const env = { ...(router.terminalEnv() as Record<string, string>), CLAUDE_CONFIG_DIR: homeB, ORCA_CLAUDE_INJECTED_CONFIG_DIR: '' }
++    const r = paneRun(env, ['--resume', 'sess-worker-1'])
++    log('pane override', { configDir: r.configDir?.replace(root, '$T') })
++    expect(r.configDir).toBe(homeB)
++  })
++
++  it('account folders link one shared projects folder, so the same transcript file is reachable from either account', async () => {
++    const report = createClaudeProfileReport()
++    const defaultHome = join(userHome, '.claude')
++    for (const a of settings.claudeManagedAccounts) {
++      log(`merge projects ${a.id}`, await mergeClaudeProfileDirectory(a.managedAuthPath, defaultHome, 'projects', process.platform, report))
++    }
++    const homeA = settings.claudeManagedAccounts[0]!.managedAuthPath
++    const homeB = settings.claudeManagedAccounts[1]!.managedAuthPath
++    const rel = join('projects', '-synthetic-worktree', 'sess-worker-1.jsonl')
++    mkdirSync(join(homeA, 'projects', '-synthetic-worktree'), { recursive: true })
++    writeFileSync(join(homeA, rel), '{"type":"synthetic"}\n')
++    expect(existsSync(join(homeB, rel))).toBe(true)
++    // The hook-reported transcript path names the account folder the process actually used.
++    const saved = settings.claudeManagedAccounts
++    log('folder from transcript path under B', resolveClaudePaneFolder(join(homeB, rel), saved, undefined, process.platform))
++    log('folder from transcript path under A', resolveClaudePaneFolder(join(homeA, rel), saved, undefined, process.platform))
++    expect(resolveClaudePaneFolder(join(homeB, rel), saved, undefined, process.platform)).toEqual({ kind: 'account', accountId: 'acct_b' })
++  })
++})
++
++describe('PROBE B: resume command and the renderer restart queue (stock)', () => {
++  it('builds exact-session resume commands', () => {
++    const claude = buildAgentResumeStartupPlan({ agent: 'claude', providerSession: { key: 'session_id', id: 'sess-worker-1' }, cmdOverrides: {}, platform: 'darwin', launchCwd: '/synthetic/worktree' })
++    const codex = buildAgentResumeStartupPlan({ agent: 'codex', providerSession: { key: 'session_id', id: 'thread-1' }, cmdOverrides: {}, platform: 'darwin', launchCwd: '/synthetic/worktree' })
++    log('claude resume', claude?.launchCommand)
++    log('codex resume', codex?.launchCommand)
++    expect(claude?.launchCommand).toContain('--resume')
++    expect(claude?.launchCommand).toContain('sess-worker-1')
++    expect(codex?.launchCommand).toContain('resume')
++    expect(codex?.launchCommand).toContain('thread-1')
++  })
++
++})
++
++describe('PROBE C: included-usage reading at 100% with paid credits left (stock)', () => {
++  const at100 = (extra: ProviderRateLimits['extraUsage']): ProviderRateLimits =>
++    ({ provider: 'claude', session: { usedPercent: 100, windowMinutes: 300, resetsAt: Date.now() + 3_600_000, resetDescription: null }, weekly: null, monthly: null, extraUsage: extra }) as never
++  it('reads as room while paid credits remain; spent only when overage is off or empty', () => {
++    const paid = at100({ enabled: true, disabledReason: null, resetsAt: null, unit: 'credits', balance: 25, unlimited: false })
++    const off = at100({ enabled: false, disabledReason: null, resetsAt: null, unit: 'credits', balance: 25, unlimited: false })
++    const empty = at100({ enabled: true, disabledReason: null, resetsAt: null, unit: 'credits', balance: 0, unlimited: false })
++    const r = {
++      paidLeft: { room: rateLimitShowsRoom(paid), spentUntil: rateLimitSpentUntil(paid) ?? 'undefined' },
++      overageOff: { room: rateLimitShowsRoom(off), spentUntil: typeof rateLimitSpentUntil(off) },
++      overageEmpty: { room: rateLimitShowsRoom(empty), spentUntil: typeof rateLimitSpentUntil(empty) }
++    }
++    log('100% included', r)
++    expect(r.paidLeft.room).toBe(true)
++    expect(r.overageOff.room).toBe(false)
++    expect(r.overageEmpty.room).toBe(false)
++  })
++})
+diff --git a/src/main/account-switch-probe/targeted-seam.probe.test.ts b/src/main/account-switch-probe/targeted-seam.probe.test.ts
+new file mode 100644
+index 00000000..6e6cf7d3
+--- /dev/null
++++ b/src/main/account-switch-probe/targeted-seam.probe.test.ts
+@@ -0,0 +1,137 @@
++// PROBE (not for upstream): the targeted seam on branch probe/targeted-pane-account-seam.
++// Synthetic managed identities, temp homes, a fixture `claude` executable, in-memory orchestration.
++import { execFileSync } from 'node:child_process'
++import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
++import { ClaudeProfileRouter, type ClaudeProfileRouterSettings } from '../claude-accounts/profiles/routing/claude-profile-router'
++import { installClaudeProfileRouter, withClaudeProfileTerminalEnv } from '../claude-accounts/profiles/routing/claude-profile-installed-router'
++import { getPosixClaudeShellFunction } from '../../shared/shell/launch/agents/claude-shell-function'
++import { OrcaRuntimeService } from '../runtime/orca-runtime'
++import { OrchestrationDb } from '../runtime/orchestration/db/orchestration-db'
++import { restartResumedCallerHandle } from '../runtime/rpc/methods/orchestration/access/restart-resumed-caller'
++
++const log = (label: string, value: unknown): void => console.log(`[probe] ${label} ${JSON.stringify(value)}`)
++
++describe('SEAM A: one pane pinned to a target account; the host default untouched', () => {
++  let root: string, dataRoot: string, userHome: string, worktree: string, fnFile: string, binDir: string
++  let settings: ClaudeProfileRouterSettings
++  let router: ClaudeProfileRouter
++  const acct = (id: string) => ({ id, email: `${id}@example.invalid`, managedAuthPath: join(dataRoot, 'claude-profiles', id, 'home'), authMethod: 'subscription-oauth' as const, createdAt: 1, updatedAt: 1, lastAuthenticatedAt: 1 })
++  const select = (id: string) => {
++    settings = { ...settings, activeClaudeManagedAccountId: id, activeClaudeManagedAccountIdsByRuntime: { host: id, wsl: {} } } as never
++    router.publish()
++  }
++  const paneRun = (env: Record<string, string>, args: string[]) =>
++    JSON.parse(execFileSync('/bin/bash', ['-c', `source "${fnFile}"; cd "${worktree}"; claude "$@"`, 'pane', ...args], { env: { PATH: `${binDir}:/usr/bin:/bin`, HOME: userHome, ...env }, encoding: 'utf8' }).trim())
++  const short = (p: string | null) => (p ? p.replace(root, '$T').replace('/private$T', '$T') : p)
++
++  beforeAll(() => {
++    root = mkdtempSync(join(tmpdir(), 'orca-seam-probe-'))
++    dataRoot = join(root, 'orca-data'); userHome = join(root, 'home'); worktree = join(root, 'worktree-original'); binDir = join(root, 'bin')
++    for (const d of [dataRoot, userHome, worktree, binDir]) mkdirSync(d, { recursive: true })
++    writeFileSync(join(binDir, 'claude'), `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({configDir:process.env.CLAUDE_CONFIG_DIR??null,argv:process.argv.slice(2),cwd:process.cwd(),pin:process.env.ORCA_CLAUDE_PINNED_ACCOUNT_ID??null})+'\\n')\n`)
++    chmodSync(join(binDir, 'claude'), 0o755)
++    fnFile = join(root, 'fn.sh'); writeFileSync(fnFile, getPosixClaudeShellFunction())
++    settings = { claudeManagedAccounts: [acct('acct_a'), acct('acct_b')], activeClaudeManagedAccountId: 'acct_a', activeClaudeManagedAccountIdsByRuntime: { host: 'acct_a', wsl: {} }, agentStatusHooksEnabled: false, disabledTuiAgents: [] } as never
++    for (const a of settings.claudeManagedAccounts) mkdirSync(a.managedAuthPath, { recursive: true })
++    router = new ClaudeProfileRouter({ getSettings: () => settings, dataRoot, userHome, env: { HOME: userHome }, runSetup: async () => ({ outcome: 'prepared', warnings: [] }) as never })
++    installClaudeProfileRouter(router)
++  })
++  afterAll(() => { installClaudeProfileRouter(undefined); rmSync(root, { recursive: true, force: true }) })
++
++  it('the spawn preflight merge pins pane W to acct_b; an unrelated concurrent launch keeps the default; later switches move only the unpinned pane', () => {
++    select('acct_a')
++    const homeA = settings.claudeManagedAccounts[0]!.managedAuthPath
++    const homeB = settings.claudeManagedAccounts[1]!.managedAuthPath
++    // What restartAgentPaneInPlace(…, { accountId: 'acct_b' }) puts in the create env, through the
++    // same function both spawn preflights call (spawn-preflight.ts:103 / ipc/spawn-preflight.ts:119).
++    const paneW = withClaudeProfileTerminalEnv({ ORCA_CLAUDE_PINNED_ACCOUNT_ID: 'acct_b', KEEP: '1' }, { runtime: 'host' }) as Record<string, string>
++    const paneU = withClaudeProfileTerminalEnv({}, { runtime: 'host' }) as Record<string, string>
++    log('pane W env', { pointer: short(paneW.ORCA_CLAUDE_PROFILE_POINTER!), CLAUDE_CONFIG_DIR: short(paneW.CLAUDE_CONFIG_DIR!), marker: paneW.ORCA_CLAUDE_PINNED_ACCOUNT_ID ?? null, KEEP: paneW.KEEP })
++    const w1 = paneRun(paneW, ['--resume', 'sess-worker-1'])
++    const u1 = paneRun(paneU, [])
++    select('acct_b'); const u2 = paneRun(paneU, []); const w2 = paneRun(paneW, ['--resume', 'sess-worker-1'])
++    select('acct_a'); const u3 = paneRun(paneU, []); const w3 = paneRun(paneW, ['--resume', 'sess-worker-1'])
++    log('W/U across host selections a→b→a', { W: [w1, w2, w3].map((r) => short(r.configDir)), U: [u1, u2, u3].map((r) => short(r.configDir)), Wargv: w1.argv, Wcwd: short(w1.cwd), pinReachedAgent: w1.pin })
++    expect([w1, w2, w3].every((r) => r.configDir === homeB)).toBe(true)
++    expect([u1.configDir, u2.configDir, u3.configDir]).toEqual([homeA, homeB, homeA])
++    expect(w1.argv).toEqual(['--resume', 'sess-worker-1'])
++    expect(w1.pin).toBeNull()
++    expect(readFileSync(router.pointerPath, 'utf8')).toBe(homeA) // host default never touched by the pin
++  })
++
++  it('refuses an unknown account or a WSL target instead of falling back', () => {
++    expect(() => withClaudeProfileTerminalEnv({ ORCA_CLAUDE_PINNED_ACCOUNT_ID: 'acct_zz' }, { runtime: 'host' })).toThrow('claude_pinned_account_unknown')
++    expect(() => withClaudeProfileTerminalEnv({ ORCA_CLAUDE_PINNED_ACCOUNT_ID: 'acct_b' }, { runtime: 'wsl', wslDistro: 'x' } as never)).toThrow('claude_pinned_account_unavailable')
++  })
++})
++
++describe('SEAM B: the worker Dispatch through an in-place replacement', () => {
++  const W_LEAF = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
++  const U_LEAF = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
++  const W_PANE = `tab_w:${W_LEAF}`
++  const U_PANE = `tab_u:${U_LEAF}`
++  let db: OrchestrationDb
++  let runtime: OrcaRuntimeService
++  let runId: string
++  const row = (id: string) => db.db.prepare('SELECT id, status, assignee_handle, assignee_pane_key, process_incarnation FROM dispatch_contexts WHERE id = ?').get(id) as Record<string, unknown>
++  const stage = (id: string) => (db.db.prepare('SELECT stage FROM worker_dispatches WHERE dispatch_id = ?').get(id) as { stage?: string } | undefined)?.stage ?? null
++  const mail = () => db.db.prepare('SELECT type, subject, to_handle FROM messages ORDER BY rowid').all() as Record<string, unknown>[]
++
++  function worker(handle: string, paneKey: string, incarnation: string, session: string): string {
++    const task = db.createTask({ spec: `synthetic ${handle}`, runId })
++    const { dispatch } = db.createStartingWorkerDispatch({ creator: { kind: 'system' }, maxDepth: Number.MAX_SAFE_INTEGER, taskId: task.id, startOptions: { topology: 'current', agent: 'claude' } })
++    db.prepareStartingWorkerAuthority({ dispatchId: dispatch.id, handle, paneKey, processIncarnation: incarnation, worktreeId: 'wt', setupState: 'not_applicable', effects: [], terminalOwnership: 'created' })
++    db.markWorkerDispatchReady(dispatch.id)
++    db.db.prepare('UPDATE worker_terminal_resources SET resume_session = ? WHERE owner_dispatch_id = ?').run(JSON.stringify({ agent: 'claude', providerSession: { key: 'session_id', id: session }, connectionId: null }), dispatch.id)
++    db.db.prepare('INSERT INTO worker_presence (dispatch_id, presence, generation) VALUES (?, ?, 1)').run(dispatch.id, 'working')
++    return dispatch.id
++  }
++
++  function setup(resumeWorkOnRestart: boolean) {
++    db = new OrchestrationDb(':memory:')
++    const store = resumeWorkOnRestart ? ({ getSettings: () => ({ nativeChatResumeWorkOnRestart: true }) } as never) : null
++    runtime = new OrcaRuntimeService(store)
++    runtime.setOrchestrationDb(db)
++    runtime.registerPty('pty-w1', 'wt', null, { tabId: 'tab_w', leafId: W_LEAF, terminalHandle: 'term_w', incarnationId: 'inc-w1' as never })
++    runtime.registerPty('pty-u', 'wt', null, { tabId: 'tab_u', leafId: U_LEAF, terminalHandle: 'term_u', incarnationId: 'inc-u1' as never })
++    runId = db.createRun({ objective: 'seam', coordinatorHandle: 'term_c', coordinatorPaneKey: 'tab_c:cccccccc-cccc-4ccc-8ccc-cccccccccccc', coordinatorOrcaSessionId: null }).id
++  }
++  afterEach(() => db?.close())
++
++  for (const resumeWorkOnRestart of [false, true]) {
++    it(`replaced exit holds the Dispatch; only the pane's own conversation rebinds it (Resume work on restart=${resumeWorkOnRestart})`, async () => {
++      setup(resumeWorkOnRestart)
++      const w = worker('term_w', W_PANE, (runtime as never as { getTerminalProcessIncarnation(h: string): string }).getTerminalProcessIncarnation('term_w'), 'sess-worker-1')
++      const u = worker('term_u', U_PANE, (runtime as never as { getTerminalProcessIncarnation(h: string): string }).getTerminalProcessIncarnation('term_u'), 'sess-unrelated')
++      const before = { w: row(w), u: row(u), mail: mail().length }
++      runtime.intentionalPtyStops.mark('pty-w1', 'replaced', 'inc-w1' as never)(true)
++      await runtime.onPtyExit('pty-w1', 0, 'inc-w1' as never)
++      await runtime.onPtyExit('pty-w1', 0, 'inc-w1' as never) // duplicate exit report (replay)
++      const held = { status: row(w).status, stage: stage(w), mail: mail().slice(before.mail) }
++      log(`[rwor=${resumeWorkOnRestart}] after replaced exit`, held)
++      // The new terminal in the same tab/leaf.
++      runtime.registerPty('pty-w2', 'wt', null, { tabId: 'tab_w', leafId: W_LEAF, incarnationId: 'inc-w2' as never })
++      const resume = (runtime as never as { terminalWorkerRestartResume: { observePaneAgents(s: { paneKey: string; sessionId: string }[]): void; isHeld(id: string): boolean } }).terminalWorkerRestartResume
++      resume.observePaneAgents([{ paneKey: W_PANE, sessionId: 'sess-someone-else' }])
++      await new Promise((r) => setTimeout(r, 50))
++      const afterOther = { assignee: row(w).assignee_handle, held: resume.isHeld(w) }
++      resume.observePaneAgents([{ paneKey: W_PANE, sessionId: 'sess-worker-1' }])
++      resume.observePaneAgents([{ paneKey: W_PANE, sessionId: 'sess-worker-1' }]) // duplicate hook report
++      await new Promise((r) => setTimeout(r, 200))
++      const bound = row(w)
++      const newHandle = runtime.getTerminalHandleForPaneKey(W_PANE)
++      const staleCaller = restartResumedCallerHandle(runtime as never, 'term_w', { paneKey: W_PANE } as never)
++      log(`[rwor=${resumeWorkOnRestart}] rebinding`, { afterOther, bound: { status: bound.status, assignee: bound.assignee_handle, pane: bound.assignee_pane_key, incarnation: bound.process_incarnation }, paneHandle: newHandle, staleTermWResolvesTo: staleCaller, stage: stage(w), mailNow: mail().slice(before.mail) })
++      log(`[rwor=${resumeWorkOnRestart}] unrelated worker`, { before: before.u.status, after: row(u).status, assignee: row(u).assignee_handle })
++      expect(held.status).not.toBe('failed')
++      expect(held.mail).toEqual([])
++      expect(afterOther.assignee).toBe('term_w')
++      expect(bound.assignee_handle).toBe(newHandle)
++      expect(bound.assignee_pane_key).toBe(W_PANE)
++      expect(row(u)).toEqual(before.u)
++    })
++  }
++})
+diff --git a/src/renderer/src/account-switch-probe/restart-queue.probe.test.ts b/src/renderer/src/account-switch-probe/restart-queue.probe.test.ts
+new file mode 100644
+index 00000000..93364c0d
+--- /dev/null
++++ b/src/renderer/src/account-switch-probe/restart-queue.probe.test.ts
+@@ -0,0 +1,19 @@
++// PROBE (not for upstream): the renderer's account-restart queue (stock 1.4.272).
++import { describe, expect, it } from 'vitest'
++import { createTerminalRestartActions } from '@/store/terminals/pty/terminal-restart-state'
++
++describe('PROBE B2: renderer restart queue', () => {
++  it('queues ptyId → provider only; duplicates collapse; nothing names a destination account', () => {
++    let state = { pendingPaneAccountRestarts: {} as Record<string, string>, codexRestartNoticeByPtyId: {} as Record<string, unknown> }
++    const set = (fn: (s: typeof state) => Partial<typeof state> | typeof state) => {
++      state = { ...state, ...fn(state) }
++    }
++    const actions = createTerminalRestartActions(set as never, (() => state) as never)
++    actions.queuePaneAccountRestarts(['pty-w1'], 'claude')
++    actions.queuePaneAccountRestarts(['pty-w1'], 'claude') // duplicate trigger
++    console.log(`[probe] queue after duplicate trigger ${JSON.stringify(state.pendingPaneAccountRestarts)}`)
++    expect(state.pendingPaneAccountRestarts).toEqual({ 'pty-w1': 'claude' })
++    expect(actions.consumePendingPaneAccountRestart('pty-w1')).toBe('claude')
++    expect(actions.consumePendingPaneAccountRestart('pty-w1')).toBeNull()
++  })
++})

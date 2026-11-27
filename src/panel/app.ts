@@ -19,6 +19,7 @@ import { findByKey, stableKey } from './stable.ts'
 import { canRemove } from '../rank.ts'
 import { sessionChoices } from '../coordinator-sessions.ts'
 import { providerBadge, providerOf } from '../providers.ts'
+import { currentWorkspace } from '../accounts.ts'
 import { PROVIDER_LOGOS } from '../provider-logos.ts'
 import { coordinatorHandover } from '../handover-providers.ts'
 import { openSettings, settingsHooks, settingsOpen, settingsUpdateState } from './settings.ts'
@@ -426,7 +427,7 @@ function setSearching(on: boolean): void {
 searchOpen.addEventListener('click', () => setSearching(true))
 // The gear: Orca Flow's Settings dialog (src/panel/settings.ts).
 const settingsBtn = $('settings-open')
-settingsBtn.addEventListener('click', () => openSettings())
+settingsBtn.addEventListener('click', () => openSettings(currentWorkspace(snap)))
 // Settings' Update button goes through the same confirm and sidebar.update as the top bar's.
 settingsHooks.update = (state) => void updateClick(state)
 $('search-close').addEventListener('click', () => setSearching(false))

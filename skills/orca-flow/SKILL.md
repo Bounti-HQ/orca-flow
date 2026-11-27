@@ -168,6 +168,15 @@ it came from, its fallback and why, without starting anything.
   marked failed: `orca orchestration task-update --id <task> --status failed --result "<why>"`.
   Never escalate because a task looks hard, and never start on a stronger model "to be safe".
 
+### Account usage limits
+
+When Claude or Codex confirms a usage limit, keep the original assignment open. On Orca 1.4.272
+Flow cannot select a substitute account for one session. Give the user the reset time if known.
+A native chat may already show a scheduled continuation. Otherwise continue once in the original
+conversation after capacity returns, checking the last completed action first. A transient provider
+retry can finish on its own. A generic 429, blocked state or silent worker is insufficient evidence
+of an account limit. Never change the host default or redispatch a task to recover from a usage limit.
+
 ### Splitting work
 
 Split only into independent, bounded tasks, each owning named files. Do not split trivial work:

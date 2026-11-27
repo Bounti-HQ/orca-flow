@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Account switching · Orca Flow 0.2.98 preview</title>
+<!--
+  Review shell only. The panel in the frame is this worktree's Orca Flow renderer, HTML and CSS
+  with synthetic data (docs/account-failover-preview/panel.html, written by
+  scripts/account-failover-preview.mjs). Everything on this page outside the frame is for review.
+  URL: ?state=healthy|included|switched|spent|notproof|scope|settings&trigger=included|error
+       &reason=rounded|stale|othermodel|retry&page=accounts|models&provider=claude|codex&host=ready|today
+-->
+<style>
+  :root { color-scheme: dark; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  body { margin: 0; background: #1b1b1e; color: #d8d8dc; }
+  .wrap { display: flex; flex-wrap: wrap; gap: 20px; padding: 16px; align-items: flex-start; }
+  .review { flex: 1 1 280px; max-width: 440px; display: grid; gap: 13px; }
+  h1 { margin: 0; font-size: 15px; }
+  p { margin: 0; color: #a5a5ad; font-size: 12.5px; }
+  .group { display: grid; gap: 6px; }
+  .group > b { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #85858e; font-weight: 600; }
+  .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+  .seg a { padding: 4px 10px; border-radius: 6px; background: #26262a; color: #c9c9cf; text-decoration: none; font-size: 12.5px; }
+  .seg a[aria-current="true"] { background: #3a3a40; color: #fff; }
+  .seg a:focus-visible { outline: 2px solid #8fb3ff; outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .what { padding: 10px 12px; border-left: 2px solid #4fc7c0; background: #222225; color: #cfcfd4; font-size: 12.5px; }
+  .host { padding: 10px 12px; border-left: 2px solid #e8b64c; background: #222225; font-size: 12px; color: #c4c4ca; display: grid; gap: 6px; }
+  .host b { color: #e9e9ec; }
+  ul { margin: 0; padding-left: 18px; color: #a5a5ad; font-size: 12px; }
+  li + li { margin-top: 3px; }
+  code { font: 11px ui-monospace, "SF Mono", Menlo, monospace; color: #c9c9cf; }
+  /* Orca draws the panel at 110%; the frame is the panel's real CSS width. */
+  .frame { flex: none; width: 572px; height: 1348px; zoom: 1.1; border: 0; border-radius: 8px; background: #000; box-shadow: 0 0 0 1px #2c2c31; max-width: calc((100vw - 32px) / 1.1); }
+</style>
+<body>
+<div class="wrap">
+  <section class="review" aria-label="Review controls">
+    <div>
+      <h1>Account switching in Orca Flow</h1>
+      <p>Orca Flow’s panel with synthetic data. Settings → Account switching is the production page. The sidebar states for a host that can switch or pause are a proposal: healthy is the panel unchanged, and the others add only what is described below.</p>
+    </div>
+    <div class="group"><b>State</b><nav class="seg" id="state"></nav></div>
+    <div class="group" id="reasonGroup"><b>Not proof because</b><nav class="seg" id="reason"></nav></div>
+    <div class="group" id="triggerGroup"><b>Trigger</b><nav class="seg" id="trigger"></nav></div>
+    <div class="group" id="pageGroup"><b>Settings page</b><nav class="seg" id="page"></nav></div>
+    <div class="group"><b>Provider</b><nav class="seg" id="provider"></nav></div>
+    <div class="group"><b>Host</b><nav class="seg" id="host"></nav></div>
+    <div class="what" id="what" role="status"></div>
+    <div class="host">
+      <div><b>Orca 1.4.272 today:</b> nothing reacts to included usage. At 100% with paid credits left, Orca’s own reading counts as room (<code>rateLimitShowsRoom</code> true, <code>rateLimitSpentUntil</code> undefined), so the conversation goes on to paid usage. Only a hard usage-limit error stops it.</div>
+      <div><b>Proposed:</b> the host checks a fresh reading at each provider-request boundary and continues on a login with included usage, or pauses. Readings and this UI are not a spend cap. A request already in flight can still cost paid usage, so zero paid usage is not guaranteed.</div>
+    </div>
+    <div class="group"><b>Decisions kept</b>
+      <ul>
+        <li>On by default for every eligible login of the same provider, discovered automatically. No prompt, picker, setup or usage dashboard.</li>
+        <li>Eligible means inside the workspace’s authorized sharing scope, not covered by the same organization window, able to run the model, and with confirmed included usage. The Acme Codex login is never used.</li>
+        <li>System default is collapsed onto the login it points to.</li>
+        <li>A rounded 100, a stale or unknown reading, another model’s window and a retry are not proof.</li>
+        <li>When no eligible login has included usage, one line shows the earliest known reset and <b>Check now</b>. It doesn’t cycle.</li>
+      </ul>
+    </div>
+    <p>Hover the account label, the row status or the line in the panel for the full record.</p>
+  </section>
+  <iframe class="frame" id="frame" title="Orca Flow panel (preview)"></iframe>
+</div>
+<script>
+'use strict'
+const OPTIONS = {
+  state: [['healthy', 'Healthy'], ['included', '100% included, paid left'], ['switched', 'Switched'], ['spent', 'All included used up'], ['notproof', 'Not proof'], ['scope', 'Scope unknown'], ['settings', 'Settings']],
+  reason: [['rounded', 'Rounded 100'], ['stale', 'Stale reading'], ['othermodel', 'Other model’s window'], ['retry', 'Temporary retry']],
+  trigger: [['included', 'Included usage at 100%'], ['error', 'Usage-limit error (fallback)']],
+  page: [['accounts', 'Account switching'], ['models', 'Models']],
+  provider: [['claude', 'Claude'], ['codex', 'Codex']],
+  host: [['ready', 'Checks at each request (proposed)'], ['today', 'Orca 1.4.272 (today)']]
+}
+const WHAT = {
+  healthy: 'Nothing added. This is the released panel.',
+  included: 'dev@studio has a fresh reading of 100% of its included 5-hour usage. Paid credits are left and no error appeared. Before the next request, the row’s age becomes the panel’s own pending status, “Moving to qa@studio”.',
+  switched: 'qa@studio is verified to have included usage. The row gets one faint label, ⇄ qa@studio (ops@studio for Codex), next to the project and age. Its tooltip is the record. Nothing else changes.',
+  spent: 'Every eligible login has used its included usage. Work pauses before the next paid request: the row shows “Paused · 3:45 PM”, and one line under Coordinators shows the earliest known reset and Check now.',
+  notproof: 'Not proof, so nothing changes: the panel is identical to healthy.',
+  scope: 'At 100% included, Orca can’t confirm which accounts may receive the work. It pauses before paid usage, and the line says why.',
+  settings: 'Production: Account switching is its own page beside Models, for the workspace Settings was opened in (Weekly hours target here); only its deviations are saved. It says every eligible login is used by default at 100% included usage, keeps the off switch and the per-login exclusions, and says this Orca doesn’t enforce it yet. Models has no account section. Nothing is saved in this preview.',
+  todayIncluded: 'On 1.4.272 nothing reacts to included usage: the panel stays healthy while the provider goes on to paid usage.',
+  todayError: 'On 1.4.272 a hard usage-limit error shows only as the row status. The conversation continues after its reset.',
+  error: ' Trigger: a hard usage-limit error, kept as the fallback.'
+}
+const LEGACY_STATE = { exhausted: 'spent', conversation: 'spent', limit: 'spent', normal: 'healthy', usage: 'healthy' }
+const q = new URLSearchParams(location.search)
+const pick = (key, fallback) => { const v = q.get(key); const ok = OPTIONS[key].map(([k]) => k); return ok.includes(v) ? v : fallback }
+const cur = {
+  state: pick('state', LEGACY_STATE[q.get('state')] || LEGACY_STATE[q.get('placement')] || LEGACY_STATE[q.get('variant')] || 'healthy'),
+  reason: pick('reason', 'rounded'), trigger: pick('trigger', 'included'), page: pick('page', 'accounts'),
+  provider: pick('provider', q.get('provider') === 'Codex' ? 'codex' : 'claude'), host: pick('host', 'ready')
+}
+function render() {
+  for (const key of Object.keys(OPTIONS)) {
+    document.getElementById(key).innerHTML = OPTIONS[key].map(([k, label]) => {
+      const next = new URLSearchParams({ ...cur, [key]: k })
+      return `<a href="?${next}" data-key="${key}" data-value="${k}" aria-current="${cur[key] === k}">${label}</a>`
+    }).join('')
+  }
+  document.getElementById('reasonGroup').hidden = cur.state !== 'notproof'
+  document.getElementById('triggerGroup').hidden = !['switched', 'spent'].includes(cur.state)
+  document.getElementById('pageGroup').hidden = cur.state !== 'settings'
+  const params = new URLSearchParams(cur)
+  document.getElementById('frame').src = 'account-failover-preview/panel.html?' + params
+  const limitState = ['included', 'switched', 'spent', 'scope'].includes(cur.state)
+  const error = ['switched', 'spent'].includes(cur.state) && cur.trigger === 'error'
+  document.getElementById('what').textContent = cur.host === 'today' && limitState ? (error ? WHAT.todayError : WHAT.todayIncluded) : WHAT[cur.state] + (error ? WHAT.error : '')
+  history.replaceState(null, '', '?' + params)
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-key]')
+  if (!a) return
+  e.preventDefault(); cur[a.dataset.key] = a.dataset.value; render()
+})
+render()
+</script>
+</body>
+</html>

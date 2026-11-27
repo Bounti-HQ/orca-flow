@@ -4,13 +4,16 @@
 //   node scripts/settings-preview.mjs                 serve; open the printed URL (add ?page=format&theme=light)
 //   node scripts/settings-preview.mjs --shots <dir>   capture every page, dark and light, narrow and wide, then exit
 //                                                     (--broken adds an unreadable config.json; --tips adds tooltips shown;
-//                                                     --models captures only Models; --updates captures About in every Check for Updates state instead)
+//                                                     --models captures only Models; --updates captures About in every Check for Updates state instead;
+//                                                     --accounts captures only Account switching, in its states)
+// Account switching: ?accounts=fail|loading, ?workspace=none (nothing focused), ?saved=1 (an exclusion saved for this workspace).
 import { execFile, execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ENFORCEMENT } from '../src/accounts.ts'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const build = mkdtempSync(join(tmpdir(), 'orca-flow-settings-preview-'))
@@ -53,12 +56,32 @@ const settings = {
     { provider: 'antigravity', lastSuccessAt: null, failure: null, installed: true }
   ]
 }
+// Settings → Account switching: what sidebar.accounts answers (src/accounts.ts), made-up identities only.
+const accounts = {
+  claude: { accounts: [
+    { id: 'acct-c1', label: 'dev@studio.example', organization: 'Studio', systemDefault: true, needsSignIn: false },
+    { id: 'acct-c2', label: 'QA (qa@studio.example)', organization: 'Studio', systemDefault: false, needsSignIn: false }
+  ], error: null },
+  codex: { accounts: [
+    { id: 'acct-x1', label: 'dev@studio.example', organization: 'Studio', systemDefault: false, needsSignIn: false },
+    { id: 'acct-x2', label: 'ops@studio.example', organization: 'Studio', systemDefault: false, needsSignIn: true }
+  ], error: null },
+  enforcement: ENFORCEMENT
+}
 const LIGHT = { '--orca-background': '#f7f7f9', '--orca-foreground': '#1c1c20', '--orca-muted-foreground': '#5f5f69', '--orca-border': '#e1e1e7', '--orca-accent': '#ececf0', '--orca-popover': '#ffffff', '--orca-popover-foreground': '#1c1c20' }
 const bridge = `<style>.tip { transition: none !important; }</style><script>
 const q = new URLSearchParams(location.search);
 if (q.get('theme') === 'light') { document.documentElement.classList.add('light'); for (const [k, v] of Object.entries(${JSON.stringify(LIGHT)})) document.documentElement.style.setProperty(k, v); }
 const snapshot = ${JSON.stringify(snapshot)};
 const settings = ${JSON.stringify(settings)};
+const accounts = ${JSON.stringify(accounts)};
+if (q.get('workspace') === 'none') for (const r of snapshot.rows) r.active = false;
+settings.settings.accountSwitching ??= { workspaces: {} };
+if (q.get('saved')) settings.settings.accountSwitching = { workspaces: { feature: { enabled: true, exclude: { claude: ['acct-c2'], codex: [] } } } };
+const applyChange = (all, ws, c) => { const o = structuredClone(all[ws] ?? { enabled: true, exclude: { claude: [], codex: [] } }); if (c.kind === 'reset') { delete all[ws]; return } if (c.kind === 'enabled') o.enabled = c.enabled; else o.exclude[c.provider] = c.excluded ? [...o.exclude[c.provider], c.id].sort() : o.exclude[c.provider].filter((x) => x !== c.id); if (o.enabled && !o.exclude.claude.length && !o.exclude.codex.length) delete all[ws]; else all[ws] = o; };
+const accountsAnswer = () => q.get('accounts') === 'loading' ? new Promise(() => {}) : q.get('accounts') === 'fail'
+  ? { claude: { accounts: [], error: 'Orca took too long to list Claude accounts.' }, codex: { accounts: [], error: 'This Orca can’t list Codex accounts. Update Orca to see them here.' }, enforcement: accounts.enforcement }
+  : accounts;
 // ?update=idle|checking|current|available|failed|cannot: what Check for Updates answers. No real check or update runs.
 const at = Date.now() - 60000;
 const CHECKS = {
@@ -94,7 +117,7 @@ if (q.get('state') === 'broken') settings.error = '~/.orca-flow/config.json isn�
 window.previewCalls = [];
 window.orca = {
   plugin: {
-    request: async (name, data) => { previewCalls.push({ name, data }); return name === 'sidebar.list' ? snapshot : name === 'sidebar.settings' ? settings : name === 'sidebar.checkUpdates' ? (upd === 'checking' ? new Promise(() => {}) : CHECKS[upd] ?? CHECKS.current) : name === 'sidebar.update' ? { started: false, message: 'preview: no update runs' } : name === 'sidebar.saveSettings' ? { ok: true, state: { ...settings, settings: data.settings } } : name === 'sidebar.linear' ? null : { ok: true }; },
+    request: async (name, data) => { previewCalls.push({ name, data }); return name === 'sidebar.list' ? snapshot : name === 'sidebar.settings' ? settings : name === 'sidebar.checkUpdates' ? (upd === 'checking' ? new Promise(() => {}) : CHECKS[upd] ?? CHECKS.current) : name === 'sidebar.update' ? { started: false, message: 'preview: no update runs' } : name === 'sidebar.saveSettings' ? { ok: true, state: { ...settings, settings: data.settings } } : name === 'sidebar.linear' ? null : name === 'sidebar.accounts' ? accountsAnswer() : name === 'sidebar.saveAccountSwitching' ? (applyChange(settings.settings.accountSwitching.workspaces, data.workspace, data.change), { ok: true, state: settings }) : { ok: true }; },
     on: () => () => {}
   },
   storage: { get: async () => null, set: async () => {} }, shell: { openExternal: async () => {} }
@@ -139,7 +162,7 @@ server.listen(0, '127.0.0.1', () => {
   const profile = mkdtempSync(join(tmpdir(), 'orca-flow-chrome-'))
   const sizes = { 360: [360, 820], wide: [1180, 780] }
   const jobs = []
-  for (const page of ['summaries', 'models', 'format', 'capacity', 'features', 'advanced']) for (const theme of ['dark', 'light']) for (const [w, [width, height]] of Object.entries(sizes)) jobs.push({ page, theme, w, width, height })
+  for (const page of ['summaries', 'models', 'accounts', 'format', 'capacity', 'features', 'advanced']) for (const theme of ['dark', 'light']) for (const [w, [width, height]] of Object.entries(sizes)) jobs.push({ page, theme, w, width, height })
   if (process.argv.includes('--broken')) jobs.push({ page: 'summaries', theme: 'dark', w: 'wide', width: 1180, height: 780, state: 'broken' })
   // --updates: About's rows in every Check for Updates state, instead of the four pages.
   if (process.argv.includes('--updates')) {
@@ -163,6 +186,15 @@ server.listen(0, '127.0.0.1', () => {
     jobs.push({ page: 'models', theme: 'dark', w: 'wide', width: 1180, height: 780, avail: 'none', name: 'models-checking' })
     jobs.push({ page: 'models', theme: 'dark', w: 'wide', width: 1180, height: 780, fixture: 'types', tip: card('kind:normal'), name: 'models-unavailable-tooltip' })
   }
+  // --accounts: only Account switching: its default, a saved exclusion, no workspace, failed and loading reads.
+  if (process.argv.includes('--accounts')) {
+    jobs.length = 0
+    for (const theme of ['dark', 'light']) for (const [w, [width, height]] of Object.entries(sizes)) jobs.push({ page: 'accounts', theme, w, width, height, name: 'accounts' })
+    jobs.push({ page: 'accounts', theme: 'dark', w: 'wide', width: 1180, height: 780, extra: '&saved=1', name: 'accounts-excluded' })
+    jobs.push({ page: 'accounts', theme: 'dark', w: 'wide', width: 1180, height: 780, extra: '&workspace=none', name: 'accounts-no-workspace' })
+    jobs.push({ page: 'accounts', theme: 'dark', w: 'wide', width: 1180, height: 780, extra: '&accounts=fail', name: 'accounts-failed' })
+    jobs.push({ page: 'accounts', theme: 'light', w: '360', width: 360, height: 820, extra: '&accounts=loading', name: 'accounts-loading' })
+  }
   if (process.argv.includes('--tips')) {
     jobs.push({ page: 'summaries', theme: 'dark', w: 'wide', width: 1180, height: 780, tip: '.s-gh .s-label', name: 'tooltip-writers' })
     jobs.push({ page: 'summaries', theme: 'light', w: '360', width: 360, height: 820, tip: '[data-writer="claude"] .s-dot', name: 'tooltip-status' })
@@ -172,7 +204,7 @@ server.listen(0, '127.0.0.1', () => {
     for (const j of jobs) {
       const file = join(out, `${j.name ? `${j.name}-${j.theme}-${j.w}` : `${j.page}-${j.theme}-${j.w}${j.state ? `-${j.state}` : ''}`}.png`)
       await new Promise((resolve, reject) => {
-        const query = `page=${j.page}&theme=${j.theme}${j.state ? `&state=${j.state}` : ''}${j.update ? `&update=${j.update}` : ''}${j.tip ? `&tip=${encodeURIComponent(j.tip)}` : ''}${j.scroll ? '&scroll=1' : ''}${j.avail ? `&avail=${j.avail}` : ''}${j.fixture ? `&fixture=${j.fixture}` : ''}${j.click ? `&click=${encodeURIComponent(j.click)}` : ''}`
+        const query = `page=${j.page}&theme=${j.theme}${j.state ? `&state=${j.state}` : ''}${j.update ? `&update=${j.update}` : ''}${j.tip ? `&tip=${encodeURIComponent(j.tip)}` : ''}${j.scroll ? '&scroll=1' : ''}${j.avail ? `&avail=${j.avail}` : ''}${j.fixture ? `&fixture=${j.fixture}` : ''}${j.click ? `&click=${encodeURIComponent(j.click)}` : ''}${j.extra ?? ''}`
         const framed = j.width < 600 || !!j.tip || !!j.click
         const args = ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--user-data-dir=${profile}`, `--window-size=${framed ? Math.max(600, j.width + 100) : j.width},${framed ? j.height + 100 : j.height}`, '--virtual-time-budget=4000', `--screenshot=${file}`,
           framed ? `${base}frame?${query}&w=${j.width}&h=${j.height}` : `${base}?${query}`]

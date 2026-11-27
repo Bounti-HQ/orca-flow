@@ -1,0 +1,232 @@
+# Continuing work after a Claude or Codex account limit
+
+**Flow may change the provider default host-wide and leave the replacement selected.** Other work
+using that provider may follow the switch. Use a managed account authorized to receive the affected
+work, including work in other workspaces. A host-wide selection cannot enforce a workspace exclusion
+on a different chat that follows the default. If those policies conflict, hold the switch.
+
+The desired trigger is a fresh reading of 100% included usage, even while paid usage is available.
+On Orca 1.4.272, Flow can select a host default through the public CLI. What happens to existing
+work depends on its surface. Native chats already have recovery after a confirmed account limit.
+Restarting a supervised terminal can fail its dispatch. Flow does not yet perform automatic
+selection in production.
+
+A disposable Orca host patch fixes the resting worker's assignment loss in the Claude and Codex
+integration tests. The same provider conversation completes once on a second fixture login and
+reports back to the original lead. The installed host still has the stock behavior.
+[Reproduction and coverage](account-switch-host-probe/README.md#supervised-worker-acceptance-test)
+
+## Recover on this host
+
+| Where the limit appeared | What to do |
+| --- | --- |
+| Native Claude or Codex chat | Read the usage-limit row for the interrupted turn. If it says Orca will continue at a given time, leave that continuation to Orca. Otherwise use **Continue** once available. An unknown reset may require a manual check. |
+| Coordinator, lead or worker in a terminal | Keep the original pane open. After capacity returns, check what the interrupted turn already completed and continue once in that pane. Keep the assigned run, dispatch, pending questions and gates in place. Verify any tool action whose result is uncertain before repeating it. |
+| All eligible accounts are exhausted, share the exhausted allowance, or its scope is unknown | Wait for the displayed reset or for the provider to confirm capacity. A transient retry or HTTP 429 alone gives no reason to change accounts. |
+
+If ownership is unclear, use **Copy Orca Session ID** and `orca agent show <orca_session_id:…> --json`
+to inspect the conversation's locations. Zero or multiple locations require reconciliation before
+sending a continuation. A coordinator can inspect `orca orchestration run-show --id <run> --full`,
+`orca orchestration inbox --terminal run:<run>` and `orca orchestration gate-list --run <run> --status pending`.
+For a lead or worker, `orca orchestration worker-show --dispatch <dispatch> --full` identifies the
+existing assignment. Silence or an unknown process state does not establish that it stopped.
+
+### Manual account controls
+
+For an independent conversation whose context both accounts may receive, a user can intentionally
+select a new provider default. In **Settings → AI Provider Accounts**, check Claude's running-terminal
+preference first. **Ask** lets the user review which terminal conversations to restart. Restarting
+a busy one stops its current work. Eligible native Claude chats also expose **Switch account** on
+the usage-limit row. This checks the chat's eligibility and then calls the host account selector.
+For an eligible Codex terminal showing **Account switched**, **Restart** applies the new selection
+to that pane and **Keep old account** keeps it on the previous one.
+
+These controls supply no proof that a restarted process retains a supervised dispatch or every
+run binding. Use the original-conversation recovery for active supervised work. Flow has no
+automatic select/launch/restore sequence, account-home override or credential migration.
+
+### How the account picker keeps a terminal conversation
+
+The Claude account row in the **Usage** menu calls the desktop account selector with the chosen
+account and runtime. Orca then queues the eligible terminal panes selected for restart. The queue
+stores a pane's PTY ID and provider. It carries no independent destination account ID.
+
+For a resumable terminal, Orca reads that pane's recorded provider session and launch settings.
+The resume command is `claude --resume <session-id>` or `codex resume <session-id>` (with
+applicable launch options). Orca restarts the process in the same pane and worktree. The provider
+session ID gives the user their conversation back. Claude checks whether the same session is open
+in another pane before resuming it. Codex can fall back to a fresh process when it cannot build
+a resume command, so clicking **Restart** by itself is insufficient proof of continuity.
+
+### Host-wide selection and continuation
+
+For a verified eligible destination, the supported selection is a single
+`orca account select --agent <provider> --account <managed-id>`. Leave that selection in place
+until another confirmed limit or the user's next choice. Serialize automatic decisions per host and
+provider. Re-read the selected identity before acting on a delayed observation, and verify which
+identity took the next turn. A lost response requires reconciliation with the host before another
+selection or continuation. Host-wide selection alone does not establish permission for every
+workspace to use that identity.
+
+- **Native chat:** let Orca own the continuation for a confirmed limited turn when auto-continue
+  is enabled. Its Codex recovery fixture resumed on fresh quota, delivered queued mail after the
+  continuation settled, and suppressed replay after an ambiguous send. Do not submit a second
+  prompt from Flow. These tests start with a failed turn and simulate the account change. They do
+  not exercise the proactive 100% case or establish lead and worker ownership.
+- **Supervised terminal:** the selected account applies to future launches. A running Codex terminal
+  still needs a restart. A Claude selection may restart panes immediately depending on the host's
+  running-terminal setting. A stock in-place restart can fail the existing worker dispatch even
+  when the provider conversation resumes. Until Orca can retain that assignment and its pending
+  work, an automatic global selection that would cause this restart is unsafe.
+- **Billing:** a fresh 100% reading can guide a subsequent account choice. Native hard-limit
+  recovery starts after a failed turn. The installed host counts remaining paid credits as room,
+  and a terminal agent can issue more requests inside a turn.
+
+On November 26 the three v1.4.272 native-chat fixture suites for usage-limit account holds, relaunch
+and queue recovery passed all 19 cases with synthetic accounts. The account selector, terminal
+exit lifecycle and in-place restart source files are identical in the v1.4.277 tag.
+[Native-chat queue recovery tests](https://github.com/stablyai/orca/blob/v1.4.272/src/main/native-chat/agent-session-wire/host/testing/structured-agent-session-usage-limit-queue-recovery.test.ts)
+
+## Included usage before paid usage
+
+**Proposed, not available on 1.4.272.** When a fresh, attributable provider reading shows 100% or more
+of an included window that applies to this conversation's model and login, the host selects an
+eligible same-provider login with confirmed included usage at the next safe pause between turns.
+The active turn may finish on paid usage. Begin the switch on the reading without waiting for a spending-limit error.
+
+- **What counts.** A reading taken recently enough for this request, attributed to the source login,
+  for a window that covers its model. A meter that rounds 99.6% to 100%, a stale or unknown reading, a
+  window for another model and a temporary retry or HTTP 429 are not proof. They leave the work where
+  it is.
+- **Who may receive it.** The same eligibility as every switch: inside the workspace's authorized
+  sharing scope, not covered by the same organization or team window, aliases such as System default
+  collapsed, able to run the chosen model and effort, and with a fresh reading showing included usage
+  left. A login whose usage is unknown is not a destination.
+- **When none has any.** Pause at that turn boundary. Show the earliest known reset, or that
+  it is unknown, with **Check now**. Don't cycle through logins.
+- **Fallback.** A hard usage-limit error still triggers the same continuation when the reading was
+  missed or unavailable.
+- **Boundary.** Paid usage during detection and completion of the active turn is acceptable. The host must
+  preserve the assignment and admit the resumed turn once. The provider enforces any spend limit
+  configured for the billing plan used by the session.
+
+The sidebar stays as it is. Moving shows on the row as the panel's pending status ("Moving to …"), a
+completed move as one faint account label, and a pause as the row's warn status plus one line under
+Coordinators. There is no usage or cost dashboard and no setup decision. The **Account switching**
+page in Settings, beside Models, says that every eligible login is used by default at 100% included
+usage, and holds the off switch and per-login exclusions. Off means Flow doesn't step in, so the
+provider goes on to paid usage.
+
+## Settings → Account switching (implemented)
+
+Orca Flow ships the preferences, not the enforcement. The page sits next to **Models** in Settings
+and edits the workspace Settings was opened in: the focused Orca Flow row, else the focused
+coordinator's folder workspace. Its name is shown beside the controls. With no focused workspace,
+or two different ones, nothing can be changed and the page says a workspace is needed.
+
+- **Default and storage.** Every workspace is on, for every eligible login. `~/.orca-flow/config.json`
+  holds only deviations, as `accountSwitching.workspaces[<row id>] = { enabled, exclude: { claude,
+  codex } }` with Orca's managed account ids. A workspace back at the default is removed, and an
+  older file without the key reads as on everywhere. A file that can't be read is never overwritten.
+  Each change on the page is sent as one change for one workspace (`sidebar.saveAccountSwitching`)
+  and applied to the file as it is then, reset included. A dialog opened for another workspace, or
+  opened earlier, therefore never puts back an older override. The ordinary whole-settings save never
+  writes `accountSwitching`, so a stale dialog, or a caller that predates the key, keeps the file's
+  overrides.
+  An exclusion only removes destinations. Nothing on the page grants a workspace access to a login.
+- **Discovery.** It runs only when the page opens (or on **Try Again**), as `orca account list
+  --agent claude --json` and `--agent codex --json`. These read Orca's saved list with
+  `refreshUsage: false`. Plain `orca account list --json` would refresh stale usage readings. It
+  never selects, adds or removes an account or reads a token file. The panel receives only each
+  login's Orca id, its label (email, or a name with the email), its organization or workspace name,
+  whether it needs a new sign-in, and whether it is System default. Home paths, organization and
+  provider account ids stay in the worker, and WSL logins are left out. System default needs identity
+  evidence. A Claude login matches by email and an organization known on both sides, or when Orca
+  says `runsOnSystemDefault`. A Codex login matches by email and a provider account known on both
+  sides. An email alone, a workspace name, or fields missing on both sides are not proof, and a
+  match that would fit two logins is not made.
+- **Failures.** Each provider is read separately, so one failing never hides the other. An Orca
+  without the command, a missing CLI, a timeout and an unusable answer each have a fixed sentence.
+  Any other error shows a generic one: Orca's own error text, which can hold home paths or
+  identities, never reaches the panel.
+- **What the page keeps apart.** The preference is saved for the workspace. **New launches** keep
+  the account Orca selects (its status-bar picker or `orca account select`), which the page never
+  changes. **Move to another account** and **Stop before paid usage** read "Not supported", each
+  with its reason, because no host status offers them. Orca Flow shows no switch, Moving, Paused
+  or waiting line in the sidebar. Those states
+  remain a proposal in the preview below, for when the host can verify them.
+
+`src/accounts.ts` (discovery and projection), `src/settings.ts` (the stored preference) and
+`src/panel/settings.ts` (`pageAccounts`) hold the code. `scripts/settings-preview.mjs --accounts`
+captures the page in its states. `node scripts/account-failover-preview.mjs --shots <dir>` builds this
+worktree's panel with synthetic data, checks the page's navigation, saves, reset, missing workspace
+and failed reads, and draws the proposed sidebar states.
+
+## Installed-host evidence
+
+Checked on 2026-11-24 using the installed CLI, generated plugin types and bundled contracts.
+
+| Surface | Evidence | Consequence |
+| --- | --- | --- |
+| Accounts | `orca account list --help` and `orca account select --help` describe selection for future launches on this host. A runtime lane such as a WSL distribution also covers many launches. | A host default or shared email cannot identify the account that owns an existing conversation. |
+| Launch and resume | `orca agent-context --json` lists the flags for `agent launch`, `worktree create` and `orchestration worker-start`. None accepts a managed account ID. The worker types generated by `orca plugin types` give `agent.launch` a workspace, agent and optional prompt, and `agent.resume` a workspace, agent and session ID. | No supported target-account argument or effective-account receipt. Replay IDs deduplicate requests but cannot bind them to an account. |
+| Internal launch environment | Bundled `shared/rpc-contract/agent-launch/agent-launch-params.js` documents `accountEnv` as desktop-prepared WSL terminal routing, outside replay identity. Structured launches keep their host account. | This field cannot provide targeted managed-account continuation. |
+| Limit signal | The public `agent.status.changed` event gives pane, session, state and optional turn outcome. Native chat separately distinguishes `usageLimitReached` from `providerRetrying`, which can carry HTTP 429. | Flow lacks a public event proving the interrupted turn, affected account and quota scope together. Transcript text and usage meters cannot authorize a transfer. |
+| Included usage | Installed `shared/agent-usage/rate-limits/rate-limit-spent-windows.js` (SHA-256 `5eed6448…63d32e2`), given a synthetic reading with the session window at 100% and paid credits enabled with a positive balance: `rateLimitShowsRoom` returns true and `rateLimitSpentUntil` returns undefined. Without paid usage, or with it spent, the same reading is spent until its reset. A 99.6% reading is room. | On 1.4.272 a login at 100% included usage with paid credits left reads as available, so nothing in the host stops it going on to paid usage. This is narrow evidence about one pure function, not about billing or every reader. |
+| Coordinator transfer | The multi-run handover fixture on 1.4.272 moved two runs to **two separate receivers**. It observed unread mail, subsequent worker reports and pending gates. A receiver's `run-use` releases its other bindings. | Adopting multiple runs successively in one replacement would lose earlier bindings. Moving a run cannot transfer a worker dispatch or a lead's parent assignment. |
+
+The installed renderer's native chat usage-limit actions, Claude switcher and restart dialog,
+and Codex restart chip supply the manual control evidence. The multi-run evidence is in
+`git show 1321f9d:docs/coordinator-handover.md` and its disposable `scripts/handover-fixture.mjs`.
+
+Run `node scripts/account-limit-fixture.mjs` on this build to exercise the installed native chat
+journal readers with synthetic turns. A confirmed limit with a known reset is eligible for scheduling.
+A transient retry, a child agent's limit, a different turn's schedule, a newer request or a pending
+submission cannot authorize continuation of the original turn. An unknown reset alone cannot
+schedule it. The fixture exercises the recovery decision. It makes no provider calls or live sends.
+The same script also checks the included-usage reading above with synthetic readings.
+A live cross-account task continuation, the desktop restart controls, real usage readings and billing
+were not exercised.
+
+## Contract for automatic substitution
+
+1. **Use every eligible account by default.** When the host can preserve the assignment and enforce workspace eligibility, switching
+   is on with no setup, prompt or picker. Candidates are all automatically discovered managed logins
+   of the same provider on the same execution host, with System default and other aliases collapsed
+   onto the one login they point to. A candidate is eligible only inside the workspace's already
+   authorized context-sharing scope, as Orca reports it for both the workspace and the login.
+   Discovering a login, or its email, label, shared host or organization name, does not establish
+   that scope. Defaulting to all never sends private work to an unrelated identity. When Orca cannot
+   establish the scope, leave the work in place and say why. Reauthentication under a different
+   identity makes a login a new candidate that has to be checked again. Offer a quiet override,
+   reached only when the user looks for it, to exclude logins or turn switching off for one
+   workspace. It lives on its own **Account switching** Settings page, implemented in Orca Flow
+   (see above). Healthy work shows no account chrome. A successful switch leaves one inline record.
+   `docs/account-failover-prototype.html` previews this in the released Orca Flow 0.2.98 panel with
+   synthetic data (`node scripts/account-failover-preview.mjs` rebuilds it).
+2. **Require a confirmed trigger.** The primary trigger is a fresh, attributable reading at 100% or
+   more of an included window that applies to the conversation's model and login, acted on at the
+   next safe pause between turns. The fallback is a hard usage-limit error. Orca supplies a stable
+   event ID, exact source session, turn, account, owner generation and scope of the spent allowance.
+   A rounded display, a stale or unknown reading, another model's window and a transient retry are not
+   triggers. Exclude every candidate covered by the same organization or team window, and every
+   candidate without a fresh reading showing included usage left. Unknown scope holds the transfer
+   and says why. Keep the chosen model and effort. A candidate that cannot run them
+   is ineligible for this incident.
+3. **Continue once.** Keep the original session as the sole owner of the continuation after a host-wide selection.
+   Bind admission of that turn to the expected account, source checkpoint, owner generation and
+   idempotency key. Fence the source before the target acts. Verify the effective destination before
+   releasing context. Coordinate native reset timers and pending sends so only one continuation
+   can win. Reconcile ambiguous replies by operation ID and uncertain tool effects before replay.
+4. **Preserve the assignment.** Require an effective account receipt plus session continuity,
+   workspace, role, model and owner. Coordinators keep all their run consumers and mailboxes.
+   Workers keep their dispatch and parent reply route. Leads keep both their parent assignment
+   and their children, including unanswered questions and gates. A replacement session requires
+   an atomic transfer of these bindings or refusal before releasing the source.
+5. **Bound retries.** Persist the source and attempted identities per incident, including known reset
+   times. Try each eligible identity at most once. Duplicate events, concurrent observers and plugin
+   restarts reconcile the same incident. When no eligible login has included usage, pause before the
+   next turn and show one actionable waiting line with the earliest known reset, without
+   cycling through accounts. Recheck capacity on a fresh host signal
+   or explicit user retry.
+   Store opaque IDs and recovery metadata in Flow. Orca owns authentication and context migration.

@@ -8,7 +8,8 @@ import { approvalTip } from '../approval.ts'
 import { PROVIDER_LOGOS } from '../provider-logos.ts'
 import { addTaskType, cardName, cardProblem, canAddType, choiceText, editTaskType, effortBar, effortsFor, fallbackText, pickEffort, pickModel, pickNone, pickPreset, popoverView, presetView, refFrom, removeTaskType, routingRows, saveNamed, suggestedTypes, UNKNOWN, type RoutingRow, type Slot } from './models.ts'
 import { deletePreset, MAX_TYPE_DESCRIPTION, MAX_TYPE_NAME, MAX_TYPES, resetRouting, type Effort, type ModelChoice, type Preset, type RoutingSettings } from '../routing.ts'
-import { ago, same, settingsSession, statusView, WRITABLE, type Draft, type DraftKey, type WriterProvider } from '../settings.ts'
+import { accountOverrideFor, ago, DEFAULT_ACCOUNT_OVERRIDE, same, settingsSession, statusView, WRITABLE, type AccountChange, type Draft, type DraftKey, type WriterProvider } from '../settings.ts'
+import { ENFORCEMENT, NEW_LAUNCHES, PROVIDER_NAME, SWITCH_PROVIDERS, type AccountsState, type SwitchProvider, type WorkspaceRef } from '../accounts.ts'
 
 const glyph = (d: string) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`
 const ICON = {
@@ -18,6 +19,7 @@ const ICON = {
   models: glyph('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 2v2M9.5 2v2M6.5 12v2M9.5 12v2M2 6.5h2M2 9.5h2M12 6.5h2M12 9.5h2"/>'),
   features: glyph('<rect x="3" y="5" width="10" height="7" rx="2"/><path d="M8 5V3M6 8.2v.1M10 8.2v.1"/>'),
   about: glyph('<circle cx="8" cy="8" r="5.6"/><path d="M8 7.2v3.6M8 5.1v.1"/>'),
+  accounts: glyph('<path d="M3 5.5h8.5M9 3l2.5 2.5L9 8M13 10.5H4.5M7 8l-2.5 2.5L7 13"/>'),
   advanced: glyph('<path d="M2.5 5h6M11.5 5h2M2.5 11h2M7.5 11h6"/><circle cx="10" cy="5" r="1.5"/><circle cx="6" cy="11" r="1.5"/>'),
   grip: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/></svg>',
   minus: glyph('<path d="M4.5 8h7"/>'),
@@ -38,12 +40,14 @@ const PROVIDERS: Record<WriterProvider, { name: string; logo: string; tip: strin
 }
 const MODEL_LABEL: Record<string, string> = { haiku: 'Claude Haiku', sonnet: 'Claude Sonnet', 'gpt-6-luna': 'GPT-6 Luna', 'gemini-3.8-flash-low': 'Gemini 3.8 Flash', 'gemini-4-carbon-low': 'Gemini 4 Carbon', 'gemini-4-neon-low': 'Gemini 4 Neon', 'gemini-4-hydrogen-low': 'Gemini 4 Hydrogen', 'gemini-4-argon-low': 'Gemini 4 Argon', 'agy-default': 'Antigravity' }
 
-type PageId = 'summaries' | 'models' | 'format' | 'capacity' | 'features' | 'advanced' | 'about'
+type PageId = 'summaries' | 'models' | 'accounts' | 'format' | 'capacity' | 'features' | 'advanced' | 'about'
 const PAGES: { id: PageId; label: string; tint: string; keys: DraftKey[]; tip: string }[] = [
   { id: 'summaries', label: 'Titles & Summaries', tint: '#0a84ff', keys: ['writers', 'enabled', 'models'],
     tip: 'After each agent turn, one request writes the title, summary and ask on its Orca Flow card. Only Orca Flow’s sidebar cards change: Orca names its own tabs and chats.' },
   { id: 'models', label: 'Models', tint: '#5e5ce6', keys: ['routing'],
     tip: 'The model each coordinator, lead and worker starts with. Applies to new launches only: running and resumed sessions keep their model.' },
+  { id: 'accounts', label: 'Account switching', tint: '#0f9d8a', keys: ['accountSwitching'],
+    tip: 'Which Orca-managed Claude and Codex logins this workspace’s work may continue on when its account has used its included usage. Finding a login never lets a workspace share with it: that stays the host’s to decide.' },
   { id: 'format', label: 'Message Check', tint: '#30b158', keys: ['format', 'folders'],
     tip: 'Checks that coordinators and leads end each message with the status line and ask the sidebar reads. A miss stops the turn once so the agent can fix it. Your own chats and workers are never checked.' },
   { id: 'capacity', label: 'Memory', tint: '#f08c00', keys: ['marginGB', 'warnHeadroomGB'],
@@ -66,6 +70,14 @@ let pageId: PageId = 'summaries'
 let newFolder = ''
 let focusAfter: string | null = null
 let opener: HTMLElement | null = null
+/** The workspace Settings was opened in: Account switching edits only its override. Null: none to edit. */
+let workspace: WorkspaceRef | null = null
+/** Orca's managed logins, read when Account switching opens (null until then), and that read's state. */
+let accounts: AccountsState | null = null
+let accountsLoading = false
+let accountsError: string | null = null
+/** Why the last Account switching change was not saved; cleared by the next one. */
+let accountSaveError: string | null = null
 
 const session = settingsSession(async (settings, base) => {
   const r = await orca.plugin.request('sidebar.saveSettings', { settings, base }) as { ok: boolean; error?: string; state: SettingsState }
@@ -121,6 +133,7 @@ function errorLine(): string {
   const err = state?.error
     ? { text: 'Settings file can’t be read', tip: `${state.error} Orca Flow uses the defaults and saves nothing until you fix or remove the file.` }
     : session.error ? { text: 'Couldn’t save', tip: session.error }
+    : accountSaveError && pageId === 'accounts' ? { text: 'Couldn’t save', tip: accountSaveError }
     : loadError ? { text: 'Couldn’t load settings', tip: loadError } : null
   return err ? `<div class="s-err" role="alert" tabindex="0" data-tip="${esc(err.tip)}" aria-description="${esc(err.tip)}">${ICON.warn}<span>${esc(err.text)}</span></div>` : ''
 }
@@ -170,6 +183,75 @@ function pageAdvanced(): string {
     row(label('Linear test mode', 'Log the Linear comments and status changes Orca Flow would send, and send nothing.'), toggle('s-linear', d().linearDryRun, 'Linear test mode', 'Log the Linear comments and status changes Orca Flow would send, and send nothing.')),
     row(label('Settings file', 'Saved in ~/.orca-flow/config.json. Settings you never change stay out of the file.'), '<button type="button" class="s-push" id="s-reveal">Show in Finder</button>')
   ])
+}
+
+// ---------- Account switching ----------
+
+const NEED_WORKSPACE = 'Open a workspace in Orca, then Settings, to change its account switching.'
+const ON_TIP = 'Off: Orca Flow never moves this workspace’s work to another account. Other workspaces keep their own choice.'
+
+/**
+ * Saves one change for the workspace Settings was opened in. The worker applies it to the file as it
+ * is now, so another dialog's overrides, or this dialog's other settings, are never written with it.
+ */
+function saveAccount(change: AccountChange): void {
+  const ws = workspace?.id
+  if (!ws || locked()) return
+  accountSaveError = null
+  orca.plugin.request('sidebar.saveAccountSwitching', { workspace: ws, change })
+    .then((r) => {
+      const reply = r as { ok: boolean; error?: string; state: SettingsState }
+      state = reply.state
+      if (!reply.ok) accountSaveError = reply.error ?? 'The change could not be saved.'
+      session.adopt(reply.state.settings)
+    })
+    .catch((e: Error) => { accountSaveError = e.message; render() })
+}
+
+function loadAccounts(): void {
+  accountsLoading = true
+  accountsError = null
+  render()
+  orca.plugin.request('sidebar.accounts')
+    .then((a) => { accounts = a as AccountsState })
+    .catch((e: Error) => { accountsError = e.message })
+    .finally(() => { accountsLoading = false; if (pageId === 'accounts') render() })
+}
+
+function accountRows(p: SwitchProvider, o: typeof DEFAULT_ACCOUNT_OVERRIDE): string[] {
+  const name = PROVIDER_NAME[p]
+  const plain = (text: string) => `<span class="s-label">${esc(text)}</span>`
+  if (accountsLoading && !accounts) return [row(plain(`Looking for ${name} accounts…`), '')]
+  const failed = accountsError ?? accounts?.[p].error
+  if (failed) return [row(`<span class="s-label s-muted" data-tip="${esc(failed)}">${esc(failed)}</span>`, '<button type="button" class="s-push" data-acct-retry>Try Again</button>')]
+  const list = accounts?.[p].accounts ?? []
+  if (!list.length) return [row(plain(`No ${name} accounts in Orca`), '')]
+  return list.map((a, i) => {
+    const tip = `${a.organization ? `${a.organization}. ` : ''}${a.systemDefault ? 'Also the provider’s own sign-in (System default). ' : ''}${a.needsSignIn ? 'Orca needs a new sign-in for it. ' : ''}Used when another ${name} login has used its included usage, if this workspace may share with it. Off: never used in this workspace.`
+    const value = a.systemDefault ? 'System default' : a.needsSignIn ? 'Sign in again' : ''
+    const on = !o.exclude[p].includes(a.id)
+    return row(label(a.label, tip), `${value ? `<span class="s-value">${esc(value)}</span>` : ''}${toggle(`s-acct-${p}-${i}`, on, `Use ${a.label} in this workspace`, workspace ? tip : NEED_WORKSPACE, !workspace || !o.enabled, `data-acct="${p}" data-acct-id="${esc(a.id)}"`)}`)
+  })
+}
+
+function pageAccounts(): string {
+  const o = workspace ? accountOverrideFor(d().accountSwitching, workspace.id) : DEFAULT_ACCOUNT_OVERRIDE
+  const enforcement = accounts?.enforcement ?? ENFORCEMENT
+  const state = (supported: boolean, tip: string) => supported
+    ? `<span class="s-value">Supported</span>`
+    : `<span class="s-value s-warnv" tabindex="0" data-tip="${esc(tip)}" aria-description="${esc(tip)}">Not supported</span>`
+  return group([
+    row(label('Workspace', 'Changes here apply only to the workspace Settings was opened in. Every other workspace keeps its own choice, by default on for every eligible login.'), `<span class="s-value" id="s-acct-ws">${esc(workspace ? workspace.name : 'None open')}</span>`),
+    row(label('Continue on another account', ON_TIP), toggle('s-acct-on', o.enabled, 'Continue on another account', workspace ? ON_TIP : NEED_WORKSPACE, !workspace))
+  ])
+    + `<p class="s-note">A saved preference for this workspace. Every workspace starts on, for every eligible Claude and Codex login: when a login has used 100% of its included usage, work is to move to another login of the same provider that this workspace may share with and that still has included usage, before its next paid request, and to pause until a reset when none has any.</p>`
+    + (workspace ? '' : `<p class="s-note s-need" role="note">${esc(NEED_WORKSPACE)}</p>`)
+    + group([
+      row(label('New launches', NEW_LAUNCHES), `<span class="s-value">Orca’s selected account</span>`),
+      row(label('Move to another account', enforcement.transferReason), state(enforcement.transfer, enforcement.transferReason)),
+      row(label('Stop before paid usage', enforcement.paidUsageReason), state(enforcement.paidUsageStop, enforcement.paidUsageReason))
+    ], { text: 'On this Orca', tip: 'What this Orca does today. The preference above is saved either way.' })
+    + SWITCH_PROVIDERS.map((p) => group(accountRows(p, o), { text: PROVIDER_NAME[p], tip: `Orca-managed ${PROVIDER_NAME[p]} logins on this host. System default is one of them, never a second account.` })).join('')
 }
 
 // ---------- Models: the routing map ----------
@@ -511,8 +593,8 @@ function render(): void {
   const narrow = window.innerWidth <= 520
   $('s-title').dataset.tip = state?.version ? `Orca Flow ${state.version}` : 'Orca Flow'
   $('s-nav').innerHTML = PAGES.map((p) => `<button class="s-nav-btn" type="button" data-page="${p.id}" ${p.id === pageId ? 'aria-current="page"' : ''} aria-label="${esc(p.label)}"${narrow ? ` data-tip="${esc(p.label)}"` : ''}><span class="s-tile" style="background:${p.tint}">${ICON[p.id]}</span><span class="s-nav-label">${esc(p.label)}</span></button>`).join('')
-  const body = !state && !loadError ? '<p class="s-loading">Loading…</p>' : { summaries: pageSummaries, models: pageModels, format: pageFormat, capacity: pageCapacity, features: pageFeatures, advanced: pageAdvanced, about: pageAbout }[pageId]()
-  const atDefault = page.id === 'models' ? modelsAtDefault() : session.isDefault(page.keys)
+  const body = !state && !loadError ? '<p class="s-loading">Loading…</p>' : { summaries: pageSummaries, models: pageModels, accounts: pageAccounts, format: pageFormat, capacity: pageCapacity, features: pageFeatures, advanced: pageAdvanced, about: pageAbout }[pageId]()
+  const atDefault = page.id === 'models' ? modelsAtDefault() : page.id === 'accounts' ? !workspace || !d().accountSwitching.workspaces[workspace.id] : session.isDefault(page.keys)
   const reset = state && !locked() && !atDefault ? `<div class="s-foot"><button type="button" class="s-push" data-reset="${page.id}">Reset to Defaults</button></div>` : ''
   $('s-page').innerHTML = `<h3 class="s-ptitle">${label(page.label, page.tip)}</h3>${errorLine()}${body}${reset}`
   if (focusAfter) {
@@ -535,7 +617,11 @@ orca.plugin.on('sidebar.settingsChanged', (s) => {
   render()
 })
 
-export function openSettings(): void {
+export function openSettings(current: WorkspaceRef | null = null): void {
+  workspace = current
+  accountSaveError = null
+  accounts = null
+  accountsError = null
   opener = document.activeElement as HTMLElement | null
   state = null
   loadError = null
@@ -599,7 +685,9 @@ function onClick(e: MouseEvent): void {
   if (ds.edit) { openTypeForm('edit', ds.edit); return }
   if (ds.suggest !== undefined) { const pick = suggestedTypes(r())[Number(ds.suggest)]; if (pick && typeForm) { typeForm.name = pick.name; typeForm.description = pick.description; typeForm.error = null; focusAfter = '#m-type-save'; render() } return }
   if (ds.rmtype) { removeTypeNow(ds.rmtype); return }
-  if (ds.page) { pageId = ds.page as PageId; popover = null; typeForm = null; render(); return }
+  if (ds.page) { pageId = ds.page as PageId; popover = null; typeForm = null; render(); if (pageId === 'accounts' && !accounts && !accountsLoading) loadAccounts(); return }
+  if (ds.acctRetry !== undefined) { loadAccounts(); return }
+  if (ds.reset === 'accounts') { saveAccount({ kind: 'reset' }); return }
   if (ds.reset === 'models') { resetModels(); return }
   if (ds.reset) { void session.reset(PAGES.find((p) => p.id === ds.reset)!.keys); return }
   if (ds.rmpreset) { const id = ds.rmpreset; focusAfter = '#s-saveas'; void session.change((x) => { x.routing = deletePreset(x.routing, id) }); return }
@@ -643,6 +731,8 @@ function onChange(e: Event): void {
   else if (t.id === 's-linear-on') void session.change((x) => { x.linear = t.checked })
   else if (t.id === 's-speed') void session.change((x) => { x.tokenSpeed = t.checked })
   else if (t.id === 's-linear') void session.change((x) => { x.linearDryRun = t.checked })
+  else if (t.id === 's-acct-on') saveAccount({ kind: 'enabled', enabled: t.checked })
+  else if (t.dataset.acct) saveAccount({ kind: 'exclude', provider: t.dataset.acct as SwitchProvider, id: t.dataset.acctId!, excluded: !t.checked })
 }
 
 function onKey(e: KeyboardEvent): void {

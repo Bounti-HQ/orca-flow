@@ -1,0 +1,364 @@
+diff --git a/src/main/ipc/pty/ipc/spawn-run.ts b/src/main/ipc/pty/ipc/spawn-run.ts
+index 4668e676..e5b72330 100644
+--- a/src/main/ipc/pty/ipc/spawn-run.ts
++++ b/src/main/ipc/pty/ipc/spawn-run.ts
+@@ -7,6 +7,7 @@ import { keepAbsentBindingForSwap } from './spawn-absent-binding-swap'
+ import { planPaneAgentLaunch } from './spawn-agent-launch'
+ import { applyAgentLaunchPluginHook } from '../spawn/spawn-agent-launch-plugin-hook'
+ import { endPaneAgentLaunch } from './spawn-agent-launch-end'
++import { resumeSpawnRefusal } from '../host-env/saved-resume-admission'
+ import { preparePtyIpcSpawnPreflight } from './spawn-preflight'
+ import { assemblePtyIpcSpawnEnv } from './spawn-env'
+ import { preparePtyIpcQoderCommand } from './spawn-qoder-command'
+@@ -75,6 +76,12 @@ export async function runPtyIpcSpawn(deps: PtySpawnIpcDeps, request: PtySpawnIpc
+       replacedPaneOwner: ctx.replacedPaneOwner,
+       attachOnlyView: attachOnlyViewOf(ctx.args),
+       beforeProviderSpawn: () => {
++        if (
++          ctx.replacedPaneOwner?.requiresWorkerResume &&
++          (ctx.codexResumeLaunch.droppedResumeArgv || resumeSpawnRefusal(ctx.resumeAdmission))
++        ) {
++          throw new Error('worker_conversation_restart_unavailable')
++        }
+         if (ctx.paneAgentLaunch) {
+           ctx.paneAgentLaunch.dispatched = true
+         }
+@@ -107,6 +114,8 @@ export async function runPtyIpcSpawn(deps: PtySpawnIpcDeps, request: PtySpawnIpc
+           replace: async () => {
+             ctx.replacedPaneOwner = await stopReplacedPaneOwner(deps, {
+               replacesPtyId: args.replacesPtyId!,
++              agent: args.launchAgent,
++              providerSession: args.resumeProviderSession,
+               paneKey: resolveEarlyPaneKey(args),
+               worktreeId: args.worktreeId,
+               connectionId: args.connectionId
+diff --git a/src/main/ipc/pty/pane/pane-owner-replacement.ts b/src/main/ipc/pty/pane/pane-owner-replacement.ts
+index 2d42dea9..a543c312 100644
+--- a/src/main/ipc/pty/pane/pane-owner-replacement.ts
++++ b/src/main/ipc/pty/pane/pane-owner-replacement.ts
+@@ -1,3 +1,4 @@
++import type { AgentProviderSessionMetadata } from '../../../../shared/agent-session/lifecycle/agent-session-resume'
+ import { toSshExecutionHostId } from '../../../../shared/execution-host/execution-host'
+ import { parsePaneKey } from '../../../../shared/workspace-layout/stable-pane-id'
+ import type { Store } from '../../../persistence/loading-store/store'
+@@ -14,6 +15,8 @@ export async function stopReplacedPaneOwner(
+     stopReplacedPty: (id: string) => Promise<void>
+   },
+   args: {
++    agent?: string
++    providerSession?: AgentProviderSessionMetadata
+     replacesPtyId: string
+     paneKey: string | null
+     worktreeId: string | undefined
+@@ -30,10 +33,25 @@ export async function stopReplacedPaneOwner(
+   if (owner && owner.ptyId !== args.replacesPtyId) {
+     throw new Error('terminal_pane_owner_changed')
+   }
+-  await deps.stopReplacedPty(args.replacesPtyId)
++  const settleWorker =
++    args.agent === 'claude' || args.agent === 'codex'
++      ? deps.runtime?.beginWorkerConversationReplacement(
++          args.replacesPtyId,
++          args.agent,
++          args.providerSession
++        )
++      : undefined
++  let stopped = false
++  try {
++    await deps.stopReplacedPty(args.replacesPtyId)
++    stopped = true
++  } finally {
++    settleWorker?.(stopped)
++  }
+   const pane = args.paneKey ? parsePaneKey(args.paneKey) : null
+   return {
+     ptyId: args.replacesPtyId,
++    ...(settleWorker ? { requiresWorkerResume: true as const } : {}),
+     pane:
+       pane && args.worktreeId
+         ? {
+diff --git a/src/main/ipc/pty/pane/replaced-pane-owner.ts b/src/main/ipc/pty/pane/replaced-pane-owner.ts
+index 59a620f1..14718d00 100644
+--- a/src/main/ipc/pty/pane/replaced-pane-owner.ts
++++ b/src/main/ipc/pty/pane/replaced-pane-owner.ts
+@@ -4,6 +4,7 @@ export type ReplacedPaneOwner = {
+   pane: { worktreeId: string; tabId: string; leafId: string; hostId: string | undefined } | null
+   /** A gone process's: its swap clears the incarnation as the retire it stands in for would. */
+   dropsIncarnation?: true
++  requiresWorkerResume?: true
+ }
+
+ /** The stopped id is dead whatever its incarnation, so a binding naming it must not be reattached. */
+diff --git a/src/main/runtime/orchestration/db/worker-dispatch/worker-restart-resume.ts b/src/main/runtime/orchestration/db/worker-dispatch/worker-restart-resume.ts
+index dd670f61..798e58f1 100644
+--- a/src/main/runtime/orchestration/db/worker-dispatch/worker-restart-resume.ts
++++ b/src/main/runtime/orchestration/db/worker-dispatch/worker-restart-resume.ts
+@@ -34,11 +34,14 @@ export type WorkerRestartResumeClaim = {
+ export function claimWorkerRestartResume(
+   db: OrchestrationDb,
+   dispatchId: string,
+-  stage: WorkerRestartStage = WORKER_RESTART_RESUMED_STAGE
++  stage: WorkerRestartStage = WORKER_RESTART_RESUMED_STAGE,
++  plannedAtRest = false
+ ): WorkerRestartResumeClaim | null {
+   db.db.exec('BEGIN IMMEDIATE')
+   try {
+-    const claim = readClaimable(db, dispatchId)
++    const claim = plannedAtRest
++      ? readClaimableWorkerAtRest(db, dispatchId)
++      : readClaimable(db, dispatchId)
+     if (claim) {
+       // Claimed again at the same stage, it keeps the time it was first offered.
+       db.db
+@@ -60,10 +63,11 @@ export function claimWorkerRestartResume(
+ export function claimLostWorkerRestart(
+   db: OrchestrationDb | null,
+   dispatchId: string,
+-  stage: WorkerRestartStage
++  stage: WorkerRestartStage,
++  plannedAtRest = false
+ ): WorkerRestartResumeClaim | null {
+   try {
+-    const claim = db ? claimWorkerRestartResume(db, dispatchId, stage) : null
++    const claim = db ? claimWorkerRestartResume(db, dispatchId, stage, plannedAtRest) : null
+     if (claim) {
+       console.info('[orchestration] holding a terminal worker for its restart resume', {
+         dispatchId,
+@@ -78,7 +82,19 @@ export function claimLostWorkerRestart(
+   }
+ }
+
+-function readClaimable(db: OrchestrationDb, dispatchId: string): WorkerRestartResumeClaim | null {
++export function readClaimableWorkerAtRest(
++  db: OrchestrationDb,
++  dispatchId: string
++): WorkerRestartResumeClaim | null {
++  const claim = readClaimable(db, dispatchId, true)
++  return claim?.presence === 'resting' ? claim : null
++}
++
++function readClaimable(
++  db: OrchestrationDb,
++  dispatchId: string,
++  plannedAtRest = false
++): WorkerRestartResumeClaim | null {
+   const dispatch = db.getDispatchContextById(dispatchId)
+   const worker = db.getWorkerDispatch(dispatchId)
+   const resource = db.getWorkerTerminalResourceByOwner(dispatchId)
+@@ -88,7 +104,7 @@ function readClaimable(db: OrchestrationDb, dispatchId: string): WorkerRestartRe
+     !dispatch ||
+     (dispatch.status !== 'pending' && dispatch.status !== 'dispatched') ||
+     worker?.state !== 'ready' ||
+-    worker.stage === WORKER_RESTART_RESUMED_STAGE ||
++    (!plannedAtRest && worker.stage === WORKER_RESTART_RESUMED_STAGE) ||
+     !resource?.worktree_id ||
+     resource.ownership_state !== 'owned' ||
+     resource.release_state !== 'not_requested' ||
+diff --git a/src/main/runtime/orchestration/workers/restart-resume/terminal-worker-restart-resume.ts b/src/main/runtime/orchestration/workers/restart-resume/terminal-worker-restart-resume.ts
+index 411c8cf7..6d37c96c 100644
+--- a/src/main/runtime/orchestration/workers/restart-resume/terminal-worker-restart-resume.ts
++++ b/src/main/runtime/orchestration/workers/restart-resume/terminal-worker-restart-resume.ts
+@@ -69,13 +69,15 @@ export class TerminalWorkerRestartResume extends RestartResumeHolds {
+     dispatchId: string,
+     paneKey: string,
+     lostIncarnation: string | null,
+-    fail: () => void
++    fail: () => void,
++    plannedAtRest = false
+   ): boolean {
+     if (this.held.has(dispatchId)) {
+       return true
+     }
+-    const offered = !this.deps.resumeWorkOnRestart() || this.isOffered(dispatchId)
+-    if (!this.hold(dispatchId, fail, offered)) {
++    const offered =
++      !plannedAtRest && (!this.deps.resumeWorkOnRestart() || this.isOffered(dispatchId))
++    if (!this.hold(dispatchId, fail, offered, plannedAtRest)) {
+       return false
+     }
+     const worker = this.held.get(dispatchId)!
+@@ -208,14 +210,19 @@ export class TerminalWorkerRestartResume extends RestartResumeHolds {
+     return claim !== null
+   }
+
+-  private hold(dispatchId: string, fail: () => void, offered = false): boolean {
++  private hold(
++    dispatchId: string,
++    fail: () => void,
++    offered = false,
++    plannedAtRest = false
++  ): boolean {
+     if (this.held.has(dispatchId)) {
+       return true
+     }
+     const stage = offered ? WORKER_RESTART_OFFERED_STAGE : WORKER_RESTART_RESUMED_STAGE
+     // Offered before: held again without news that would bring a closed toast back.
+     const raise = offered && !this.isOffered(dispatchId)
+-    const claim = claimLostWorkerRestart(this.deps.getDb(), dispatchId, stage)
++    const claim = claimLostWorkerRestart(this.deps.getDb(), dispatchId, stage, plannedAtRest)
+     if (!claim) {
+       return false
+     }
+diff --git a/src/main/runtime/session-lifecycle/projection/restart-agent-pane-in-place.ts b/src/main/runtime/session-lifecycle/projection/restart-agent-pane-in-place.ts
+index 42a10b0f..c5985a08 100644
+--- a/src/main/runtime/session-lifecycle/projection/restart-agent-pane-in-place.ts
++++ b/src/main/runtime/session-lifecycle/projection/restart-agent-pane-in-place.ts
+@@ -25,6 +25,12 @@ export type AgentPaneRestartResult =
+   | { ok: false; reason: AgentPaneRestartRefusal }
+
+ export abstract class OrcaRuntimeWithRestartAgentPaneInPlace extends OrcaRuntimeWithResumeAgentSessionInWorkspace {
++  abstract beginWorkerConversationReplacement(
++    ptyId: string,
++    agent: string | undefined,
++    session: AgentProviderSessionMetadata | undefined
++  ): ((stopped: boolean) => void) | undefined
++
+   private readonly agentPaneRestartsByPaneKey = new Set<string>()
+   protected abstract readonly sleepResumeRecords: WorktreeSleepResumeRecorder
+
+@@ -147,6 +153,11 @@ export abstract class OrcaRuntimeWithRestartAgentPaneInPlace extends OrcaRuntime
+       }
+       try {
+         // 'replaced' keeps the pane's surface through the exit for the new terminal to take.
++        const settleWorker = this.beginWorkerConversationReplacement(
++          ptyId,
++          session.agent,
++          session.providerSession
++        )
+         const settleStop = this.intentionalPtyStops.mark(
+           ptyId,
+           'replaced',
+@@ -155,6 +166,7 @@ export abstract class OrcaRuntimeWithRestartAgentPaneInPlace extends OrcaRuntime
+         try {
+           stopped = await this.ptyController.stopAndWait(ptyId)
+         } finally {
++          settleWorker?.(stopped)
+           settleStop(stopped)
+         }
+         if (!stopped) {
+diff --git a/src/main/runtime/terminal/lifecycle/pty-exit-lifecycle.ts b/src/main/runtime/terminal/lifecycle/pty-exit-lifecycle.ts
+index fd2b6492..da5fe4ae 100644
+--- a/src/main/runtime/terminal/lifecycle/pty-exit-lifecycle.ts
++++ b/src/main/runtime/terminal/lifecycle/pty-exit-lifecycle.ts
+@@ -130,6 +130,7 @@ export abstract class OrcaRuntimeWithOnPtyExit extends RuntimeTerminalWorkerMode
+     this.advancePtyLifecycleGeneration(ptyId)
+     let retirement: Promise<void> | undefined
+     let preservesIntentionallyStoppedSurface = false
++    let workerConversationResuming = false
+     try {
+       const exactSurfaceByKey = new Map<
+         string,
+@@ -167,9 +168,12 @@ export abstract class OrcaRuntimeWithOnPtyExit extends RuntimeTerminalWorkerMode
+       }
+       const exactSurfaces = [...exactSurfaceByKey.values()]
+       // Why both kinds: a sleep keeps its wake hint, and a restart's replacement takes the pane.
+-      preservesIntentionallyStoppedSurface =
+-        this.intentionalPtyStops.claimExit(ptyId, exitIncarnationId ?? pty?.incarnationId).length >
+-        0
++      const kinds = this.intentionalPtyStops.claimExit(
++        ptyId,
++        exitIncarnationId ?? pty?.incarnationId
++      )
++      preservesIntentionallyStoppedSurface = kinds.length > 0
++      workerConversationResuming = kinds.includes('worker-resume')
+       advertisedUrlWatcher.unbindPty(ptyId)
+       this.mobileSubscribers.delete(ptyId)
+       this.terminalViewSubscribers.clearSubscribers(ptyId)
+@@ -309,7 +313,8 @@ export abstract class OrcaRuntimeWithOnPtyExit extends RuntimeTerminalWorkerMode
+     }
+     for (const surface of preservesAbnormalSshSurface ? [] : exitedSurfaces) {
+       this.failActiveDispatchOnExit(surface.handle, surface.paneKey, exitCause, lastOutput, {
+-        paneRespawning: options.paneRespawning === true && pty?.connectionId == null
++        paneRespawning: options.paneRespawning === true && pty?.connectionId == null,
++        workerConversationResuming
+       })
+     }
+     // A restart, sleep or recovery in place keeps a coordinator's Runs; any other end retires them.
+diff --git a/src/main/runtime/terminal/lifecycle/pty-exit-worker-observation.ts b/src/main/runtime/terminal/lifecycle/pty-exit-worker-observation.ts
+index 19e5e733..81cc9b7d 100644
+--- a/src/main/runtime/terminal/lifecycle/pty-exit-worker-observation.ts
++++ b/src/main/runtime/terminal/lifecycle/pty-exit-worker-observation.ts
+@@ -16,15 +16,51 @@ import { retireCoordinatorPaneRuns } from '../../orchestration/db/runs/retired-c
+ import type { TerminalSurfaceCloseTarget } from '../../../../shared/workspace-layout/terminal-surfaces/terminal-surface-close-target'
+ import { collectLeafIds } from '../../../../shared/workspace-layout/terminal-topology/terminal-pane-layout-tree'
+
++import { matchesProcessIncarnation } from '../../orchestration/terminal-authority/release/worker-terminal-process-liveness'
++import type { AgentProviderSessionMetadata } from '../../../../shared/agent-session/lifecycle/agent-session-resume'
++import { agentProviderSessionsEqual } from '../../../../shared/agent-session/lifecycle/resume/agent-provider-session-equality'
++import { readClaimableWorkerAtRest } from '../../orchestration/db/worker-dispatch/worker-restart-resume'
++
+ /** A worker's terminal ending or losing its agent, told to the Dispatch it runs. */
+ export abstract class RuntimePtyExitWorkerObservation extends RuntimePtyExitSurfaceReads {
++  /** An account restart can stop a supervised worker only at rest, with its exact local
++   * conversation and process identified. The ordinary replacement marker still preserves the pane. */
++  beginWorkerConversationReplacement(
++    ptyId: string,
++    agent: string | undefined,
++    session: AgentProviderSessionMetadata | undefined
++  ): ((stopped: boolean) => void) | undefined {
++    const pty = this.ptysById.get(ptyId)
++    const pane = this.paneOfPty(pty).paneKey
++    const db = this.getExistingOrchestrationDb()
++    if (!db || !pane) return undefined
++    const handle = this.getTerminalHandleForPaneKey(pane)
++    const dispatch = handle && db.getActiveDispatchForTerminal(handle, pane)
++    if (!dispatch || !db.getWorkerDispatch(dispatch.id)) return undefined
++    const claim = readClaimableWorkerAtRest(db, dispatch.id)
++    if (
++      !pty?.connected ||
++      pty.connectionId ||
++      !pty.incarnationId ||
++      !claim ||
++      dispatch.assignee_handle !== handle ||
++      !dispatch.process_incarnation ||
++      !matchesProcessIncarnation(ptyId, pty.incarnationId, dispatch.process_incarnation) ||
++      claim.session.agent !== agent ||
++      !agentProviderSessionsEqual(agent, claim.session.providerSession, session)
++    ) {
++      throw new Error('worker_conversation_restart_unavailable')
++    }
++    return this.intentionalPtyStops.mark(ptyId, 'worker-resume', pty.incarnationId)
++  }
++
+   /** Observe exits here, so a Dispatch settles without waiting for coordinator polling. */
+   protected failActiveDispatchOnExit(
+     handle: string,
+     paneKey: string | null,
+     cause: TerminalExitCause,
+     lastOutput?: string,
+-    options: { paneRespawning?: boolean } = {}
++    options: { paneRespawning?: boolean; workerConversationResuming?: boolean } = {}
+   ): void {
+     const db = this._orchestrationDb
+     if (!db) {
+@@ -34,7 +70,7 @@ export abstract class RuntimePtyExitWorkerObservation extends RuntimePtyExitSurf
+     const fail = (): void =>
+       this.observeWorkerTerminalExit(db, handle, paneKey, processIncarnation, cause, lastOutput)
+     // Its pane is starting again where the window's restore resumes the conversation: the Dispatch waits for it.
+-    const respawning = options.paneRespawning && paneKey
++    const respawning = (options.paneRespawning || options.workerConversationResuming) && paneKey
+     const dispatch = respawning ? db.getActiveDispatchForTerminal(handle, paneKey) : undefined
+     if (
+       respawning &&
+@@ -43,7 +79,8 @@ export abstract class RuntimePtyExitWorkerObservation extends RuntimePtyExitSurf
+         dispatch.id,
+         respawning,
+         processIncarnation,
+-        fail
++        fail,
++        options.workerConversationResuming
+       )
+     ) {
+       return
+diff --git a/src/main/runtime/terminal/stop/terminal-intentional-stops.ts b/src/main/runtime/terminal/stop/terminal-intentional-stops.ts
+index 1c2119bb..40d648ca 100644
+--- a/src/main/runtime/terminal/stop/terminal-intentional-stops.ts
++++ b/src/main/runtime/terminal/stop/terminal-intentional-stops.ts
+@@ -1,6 +1,6 @@
+ import { SYNTHETIC_KILL_EXIT_DUPLICATE_WINDOW_MS } from '../../../ipc/pty/delivery/visibility-state'
+
+ /** Preserve pane bindings across intentional exits: reversible keeps a wake hint; replaced awaits immediate or reconnect-time replacement. */
+-export type TerminalIntentionalStopKind = 'reversible' | 'replaced'
++export type TerminalIntentionalStopKind = 'reversible' | 'replaced' | 'worker-resume'
+
+ type IntentionalStopOwners = { inFlight: number; stopped: boolean }

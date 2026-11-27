@@ -1,0 +1,80 @@
+$ PROBE_TYPECHECK=1 docs/account-switch-host-probe/run-probe.sh ~/orca/research/orca-v1.4.272-switch-probe-repro   # 2026-11-24, fresh clone
+warning: refs/tags/v1.4.272 0b3df86f19867d09012d2f97b41859343f231b98 is not a commit!
+
+== setup: v1.4.272 at 6272306c5a5a59ed1c6b604896610bfadde180cc in /Users/cagatay/orca/research/orca-v1.4.272-switch-probe-repro
+== 0. installed 1.4.272 unpacked modules vs tagged source (read-only)
+{"file":"out/shared/agent-usage/rate-limits/rate-limit-spent-windows.js","installedSha256":"5eed64484972867c7b9bb2f26556c5b85459a562cbd3fb2f6ebfbce6d63d32e2","matchesTaggedSourceAfterWhitespaceNormalization":true}
+{"file":"out/shared/agent-launch/startup/agent-resume-argv.js","installedSha256":"8453bc536071bdaad1a9aa8c3a58a595383217c5794f88ecc9e7e00f72f2b280","matchesTaggedSourceAfterWhitespaceNormalization":true}
+{"file":"out/shared/shell/launch/agents/claude-shell-function.js","installedSha256":"d3ec218d719d6519c3f14a83eab3add1e8791e992a7e15ca2cf744e980cb5fb6","matchesTaggedSourceAfterWhitespaceNormalization":true}
+== 1. stock host: switch semantics, orchestration through a replaced pane, restart queue
+[probe] queue after duplicate trigger {"pty-w1":"claude"}
+[probe] pane env at spawn (selected=acct_a) {"pointer":"$T/orca-data/claude-profiles/selected-host","CLAUDE_CONFIG_DIR":"$T/orca-data/claude-profiles/acct_a/home"}
+[probe] running pane (started before switch) [{"at":"start","configDir":"$T/orca-data/claude-profiles/acct_a/home"},{"at":"exit","configDir":"$T/orca-data/claude-profiles/acct_a/home"}]
+[probe] restarted pane after switch {"configDir":"$T/orca-data/claude-profiles/acct_b/home","argv":["--resume","sess-worker-1"],"cwd":"/private$T/worktree-original"}
+[probe] unrelated fresh launch after switch {"configDir":"$T/orca-data/claude-profiles/acct_b/home"}
+[probe] pane override {"configDir":"$T/orca-data/claude-profiles/acct_b/home"}
+[probe] merge projects acct_a "linked"
+[probe] merge projects acct_b "linked"
+[probe] folder from transcript path under B {"kind":"account","accountId":"acct_b"}
+[probe] folder from transcript path under A {"kind":"account","accountId":"acct_a"}
+[probe] claude resume "claude '--resume' 'sess-worker-1'"
+[probe] codex resume "codex '-c' 'disable_paste_burst=true' 'resume' 'thread-1'"
+[probe] 100% included {"paidLeft":{"room":true,"spentUntil":"undefined"},"overageOff":{"room":false,"spentUntil":"number"},"overageEmpty":{"room":false,"spentUntil":"number"}}
+[probe] worker dispatch {"before":"dispatched","after":"failed","error":null}
+[probe] mail written by the exit [{"type":"escalation","subject":"Worker exited without reporting","to":"run:run_1e2b11bc3776"}]
+[probe] pane handle after replacement {"handleNow":"term_3028f77a-5fc8-444f-ae2c-61e149bee9fa","oldHandleLivePane":null}
+[probe] unrelated dispatch {"status":"dispatched","pane":"tab_u:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}
+[probe] run after replaced coordinator exit {"handle":"term_c","pane":"tab_c:cccccccc-cccc-4ccc-8ccc-cccccccccccc"}
+ Test Files  3 passed (3)
+      Tests  8 passed (8)
+== 2. seam expectations against the stock host (these are expected to FAIL)
+[probe] pane W env {"pointer":"$T/orca-data/claude-profiles/selected-host","CLAUDE_CONFIG_DIR":"$T/orca-data/claude-profiles/acct_a/home","marker":"acct_b","KEEP":"1"}
+[probe] W/U across host selections a→b→a {"W":["$T/orca-data/claude-profiles/acct_a/home","$T/orca-data/claude-profiles/acct_b/home","$T/orca-data/claude-profiles/acct_a/home"],"U":["$T/orca-data/claude-profiles/acct_a/home","$T/orca-data/claude-profiles/acct_b/home","$T/orca-data/claude-profiles/acct_a/home"],"Wargv":["--resume","sess-worker-1"],"Wcwd":"$T/worktree-original","pinReachedAgent":"acct_b"}
+[probe] [rwor=false] after replaced exit {"status":"failed","stage":"process_exited","mail":[{"type":"escalation","subject":"Worker exited without reporting","to_handle":"run:run_28153248c105"}]}
+[probe] [rwor=false] rebinding {"afterOther":{"assignee":"term_w","held":false},"bound":{"status":"failed","assignee":"term_w","pane":"tab_w:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","incarnation":"pty-w1:inc-w1"},"paneHandle":"term_2ad283ab-2ee8-4a5c-aaf9-61b319b1201e","staleTermWResolvesTo":null,"stage":"process_exited","mailNow":[{"type":"escalation","subject":"Worker exited without reporting","to_handle":"run:run_28153248c105"}]}
+[probe] [rwor=false] unrelated worker {"before":"dispatched","after":"dispatched","assignee":"term_u"}
+[probe] [rwor=true] after replaced exit {"status":"failed","stage":"process_exited","mail":[{"type":"escalation","subject":"Worker exited without reporting","to_handle":"run:run_6e7d1b6a9870"}]}
+[probe] [rwor=true] rebinding {"afterOther":{"assignee":"term_w","held":false},"bound":{"status":"failed","assignee":"term_w","pane":"tab_w:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","incarnation":"pty-w1:inc-w1"},"paneHandle":"term_640ce374-7584-4f53-b283-0aeb4073dff8","staleTermWResolvesTo":null,"stage":"process_exited","mailNow":[{"type":"escalation","subject":"Worker exited without reporting","to_handle":"run:run_6e7d1b6a9870"}]}
+[probe] [rwor=true] unrelated worker {"before":"dispatched","after":"dispatched","assignee":"term_u"}
+     × the spawn preflight merge pins pane W to acct_b; an unrelated concurrent launch keeps the default; later switches move only the unpinned pane 465ms
+     × refuses an unknown account or a WSL target instead of falling back 2ms
+     × replaced exit holds the Dispatch; only the pane's own conversation rebinds it (Resume work on restart=false) 301ms
+     × replaced exit holds the Dispatch; only the pane's own conversation rebinds it (Resume work on restart=true) 278ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+== 3. with the targeted seam applied
+[probe] pane env at spawn (selected=acct_a) {"pointer":"$T/orca-data/claude-profiles/selected-host","CLAUDE_CONFIG_DIR":"$T/orca-data/claude-profiles/acct_a/home"}
+[probe] running pane (started before switch) [{"at":"start","configDir":"$T/orca-data/claude-profiles/acct_a/home"},{"at":"exit","configDir":"$T/orca-data/claude-profiles/acct_a/home"}]
+[probe] restarted pane after switch {"configDir":"$T/orca-data/claude-profiles/acct_b/home","argv":["--resume","sess-worker-1"],"cwd":"/private$T/worktree-original"}
+[probe] unrelated fresh launch after switch {"configDir":"$T/orca-data/claude-profiles/acct_b/home"}
+[probe] pane override {"configDir":"$T/orca-data/claude-profiles/acct_b/home"}
+[probe] merge projects acct_a "linked"
+[probe] merge projects acct_b "linked"
+[probe] folder from transcript path under B {"kind":"account","accountId":"acct_b"}
+[probe] folder from transcript path under A {"kind":"account","accountId":"acct_a"}
+[probe] claude resume "claude '--resume' 'sess-worker-1'"
+[probe] codex resume "codex '-c' 'disable_paste_burst=true' 'resume' 'thread-1'"
+[probe] 100% included {"paidLeft":{"room":true,"spentUntil":"undefined"},"overageOff":{"room":false,"spentUntil":"number"},"overageEmpty":{"room":false,"spentUntil":"number"}}
+[probe] worker dispatch {"before":"dispatched","after":"failed","error":null}
+[probe] mail written by the exit [{"type":"escalation","subject":"Worker exited without reporting","to":"run:run_01e8ffa8dc43"}]
+[probe] pane handle after replacement {"handleNow":"term_73efd8c3-5d09-47dc-aab6-80a89458684e","oldHandleLivePane":null}
+[probe] unrelated dispatch {"status":"dispatched","pane":"tab_u:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}
+[probe] run after replaced coordinator exit {"handle":"term_c","pane":"tab_c:cccccccc-cccc-4ccc-8ccc-cccccccccccc"}
+[probe] pane W env {"pointer":"$T/orca-data/claude-profiles/pinned/acct_b","CLAUDE_CONFIG_DIR":"$T/orca-data/claude-profiles/acct_b/home","marker":null,"KEEP":"1"}
+[probe] W/U across host selections a→b→a {"W":["$T/orca-data/claude-profiles/acct_b/home","$T/orca-data/claude-profiles/acct_b/home","$T/orca-data/claude-profiles/acct_b/home"],"U":["$T/orca-data/claude-profiles/acct_a/home","$T/orca-data/claude-profiles/acct_b/home","$T/orca-data/claude-profiles/acct_a/home"],"Wargv":["--resume","sess-worker-1"],"Wcwd":"$T/worktree-original","pinReachedAgent":null}
+[probe] [rwor=false] after replaced exit {"status":"dispatched","stage":"restart_offered","mail":[]}
+[probe] [rwor=false] rebinding {"afterOther":{"assignee":"term_w","held":true},"bound":{"status":"dispatched","assignee":"term_b18bbfc7-3de8-4bea-b153-7be366704c30","pane":"tab_w:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","incarnation":"pty-w2:inc-w2"},"paneHandle":"term_b18bbfc7-3de8-4bea-b153-7be366704c30","staleTermWResolvesTo":"term_b18bbfc7-3de8-4bea-b153-7be366704c30","stage":"restart_offered","mailNow":[]}
+[probe] [rwor=false] unrelated worker {"before":"dispatched","after":"dispatched","assignee":"term_u"}
+[probe] [rwor=true] after replaced exit {"status":"dispatched","stage":"restart_resumed","mail":[]}
+[probe] [rwor=true] rebinding {"afterOther":{"assignee":"term_w","held":true},"bound":{"status":"dispatched","assignee":"term_9b5d7c8c-1d50-4150-9e2a-734d85bd4a19","pane":"tab_w:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","incarnation":"pty-w2:inc-w2"},"paneHandle":"term_9b5d7c8c-1d50-4150-9e2a-734d85bd4a19","staleTermWResolvesTo":"term_9b5d7c8c-1d50-4150-9e2a-734d85bd4a19","stage":"restart_resumed","mailNow":[]}
+[probe] [rwor=true] unrelated worker {"before":"dispatched","after":"dispatched","assignee":"term_u"}
+ Test Files  3 passed (3)
+      Tests  11 passed (11)
+== 4. stock tests around the patched files, with the seam applied
+ Test Files  14 passed (14)
+      Tests  77 passed (77)
+== 5. typecheck (node, web) with seam and probes
+typecheck:node ok
+typecheck:web ok
+exit 0
